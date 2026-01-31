@@ -78,11 +78,17 @@ func (t *Transformer) transformModule(m ModuleBlockV1) internal.InternalModule {
 	}
 
 	// Transform inputs - store as HCL expression strings
-	if m.Inputs != nil {
-		attrs, _ := m.Inputs.JustAttributes()
-		for name, attr := range attrs {
-			// Store the expression text
-			im.Inputs[name] = exprToString(attr.Expr)
+	if m.InputsExpr != nil {
+		// Try to get the expression value to extract key-value pairs
+		val, diags := m.InputsExpr.Value(nil)
+		if !diags.HasErrors() && (val.Type().IsObjectType() || val.Type().IsMapType()) {
+			for k, v := range val.AsValueMap() {
+				im.Inputs[k] = ctyValueToString(v)
+			}
+		}
+	} else if m.InputsEvaluated != nil {
+		for k, v := range m.InputsEvaluated {
+			im.Inputs[k] = ctyValueToString(v)
 		}
 	}
 
@@ -116,7 +122,7 @@ func (t *Transformer) transformEnvironment(env *EnvironmentBlockV1) internal.Int
 	ie.Hooks.Deployment = t.transformHooks(env.DeploymentHooks)
 	ie.Hooks.Function = t.transformHooks(env.FunctionHooks)
 	ie.Hooks.Service = t.transformHooks(env.ServiceHooks)
-	ie.Hooks.Ingress = t.transformHooks(env.IngressHooks)
+	ie.Hooks.Route = t.transformHooks(env.RouteHooks)
 	ie.Hooks.Cronjob = t.transformHooks(env.CronjobHooks)
 	ie.Hooks.Secret = t.transformHooks(env.SecretHooks)
 	ie.Hooks.DockerBuild = t.transformHooks(env.DockerBuildHooks)
@@ -138,9 +144,18 @@ func (t *Transformer) transformHooks(hooks []HookBlockV1) []internal.InternalHoo
 			ih.Modules = append(ih.Modules, t.transformModule(m))
 		}
 
-		// Transform outputs
-		if h.Outputs != nil {
-			for name, attr := range h.Outputs.Attributes {
+		// Transform outputs - can be from expression or attributes
+		if h.OutputsExpr != nil {
+			// Attribute syntax: outputs = { ... }
+			val, diags := h.OutputsExpr.Value(nil)
+			if !diags.HasErrors() && (val.Type().IsObjectType() || val.Type().IsMapType()) {
+				for k, v := range val.AsValueMap() {
+					ih.Outputs[k] = ctyValueToString(v)
+				}
+			}
+		} else if h.OutputsAttrs != nil {
+			// Block syntax: outputs { ... }
+			for name, attr := range h.OutputsAttrs {
 				ih.Outputs[name] = exprToString(attr.Expr)
 			}
 		}
@@ -161,21 +176,32 @@ func exprToString(expr hcl.Expression) string {
 	// Try to evaluate as a simple value
 	val, diags := expr.Value(nil)
 	if !diags.HasErrors() {
-		switch {
-		case val.Type() == cty.String:
-			return val.AsString()
-		case val.Type() == cty.Number:
-			return val.AsBigFloat().String()
-		case val.Type() == cty.Bool:
-			if val.True() {
-				return "true"
-			}
-			return "false"
-		}
+		return ctyValueToString(val)
 	}
 
 	// Return placeholder for complex expressions
 	return "<expression>"
+}
+
+// ctyValueToString converts a cty.Value to its string representation.
+func ctyValueToString(val cty.Value) string {
+	if val.IsNull() {
+		return ""
+	}
+	switch {
+	case val.Type() == cty.String:
+		return val.AsString()
+	case val.Type() == cty.Number:
+		return val.AsBigFloat().String()
+	case val.Type() == cty.Bool:
+		if val.True() {
+			return "true"
+		}
+		return "false"
+	default:
+		// For complex types, return the Go string representation
+		return val.GoString()
+	}
 }
 
 // ctyValueToGo converts a cty.Value to a Go interface{}.

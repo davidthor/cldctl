@@ -193,13 +193,11 @@ Deploy the API first, then deploy frontends that depend on it:
 
 ```bash
 # Deploy API
-arcctl component deploy api -e staging \
-  --config ghcr.io/myorg/api-with-cors:v1.0.0 \
+arcctl deploy ghcr.io/myorg/api-with-cors:v1.0.0 -e staging \
   --var jwt_secret=$JWT_SECRET
 
 # Deploy frontend (automatically links to API)
-arcctl component deploy frontend -e staging \
-  --config ghcr.io/myorg/frontend-app:v1.0.0
+arcctl deploy ghcr.io/myorg/frontend-app:v1.0.0 -e staging
 ```
 
 When the frontend deploys, arcctl:

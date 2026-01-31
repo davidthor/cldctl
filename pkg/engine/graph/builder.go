@@ -184,9 +184,9 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		_ = b.graph.AddNode(node)
 	}
 
-	// Add routes (ingress)
+	// Add routes
 	for _, route := range comp.Routes() {
-		node := NewNode(NodeTypeIngress, componentName, route.Name())
+		node := NewNode(NodeTypeRoute, componentName, route.Name())
 		node.SetInput("type", route.Type())
 		node.SetInput("internal", route.Internal())
 		node.SetInput("rules", route.Rules())
@@ -297,7 +297,7 @@ func (b *Builder) resolveDepReference(componentName, ref string) string {
 	case "services":
 		nodeType = NodeTypeService
 	case "routes":
-		nodeType = NodeTypeIngress
+		nodeType = NodeTypeRoute
 	case "functions":
 		nodeType = NodeTypeFunction
 	default:

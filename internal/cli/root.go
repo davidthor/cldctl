@@ -53,6 +53,9 @@ func init() {
 	rootCmd.AddCommand(newEnvironmentCmd())
 	rootCmd.AddCommand(newUpCmd())
 	rootCmd.AddCommand(newVersionCmd())
+
+	// Add deploy as a top-level alias for 'component deploy'
+	rootCmd.AddCommand(newDeployCmd())
 }
 
 func initConfig() {

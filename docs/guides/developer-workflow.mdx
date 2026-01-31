@@ -210,13 +210,11 @@ arcctl component tag ghcr.io/myorg/my-app:v1.0.0 ghcr.io/myorg/my-app:production
 
 ```bash
 # Deploy from OCI artifact
-arcctl component deploy my-app -e staging \
-  --config ghcr.io/myorg/my-app:v1.0.0 \
+arcctl deploy ghcr.io/myorg/my-app:v1.0.0 -e staging \
   --var log_level=debug
 
 # Deploy from local source (for testing)
-arcctl component deploy my-app -e staging \
-  --config . \
+arcctl deploy ./my-app -e staging \
   --var log_level=debug
 ```
 
@@ -234,8 +232,7 @@ arcctl component get my-app -e staging
 
 ```bash
 # Deploy new version
-arcctl component deploy my-app -e staging \
-  --config ghcr.io/myorg/my-app:v1.1.0
+arcctl deploy ghcr.io/myorg/my-app:v1.1.0 -e staging
 ```
 
 arcctl will show a diff of changes:
@@ -255,8 +252,7 @@ Plan: 0 to create, 1 to update, 0 to destroy
 Deploy the previous version:
 
 ```bash
-arcctl component deploy my-app -e staging \
-  --config ghcr.io/myorg/my-app:v1.0.0
+arcctl deploy ghcr.io/myorg/my-app:v1.0.0 -e staging
 ```
 
 ## Testing Strategies
@@ -285,8 +281,7 @@ Create ephemeral environments for pull request testing:
 arcctl env create preview-$PR_NUMBER --datacenter aws-staging --if-not-exists
 
 # Deploy PR build
-arcctl component deploy my-app -e preview-$PR_NUMBER \
-  --config ghcr.io/myorg/my-app:pr-$PR_NUMBER
+arcctl deploy ghcr.io/myorg/my-app:pr-$PR_NUMBER -e preview-$PR_NUMBER
 
 # Get preview URL
 arcctl env get preview-$PR_NUMBER
@@ -298,15 +293,13 @@ Test in staging before production:
 
 ```bash
 # Deploy to staging
-arcctl component deploy my-app -e staging \
-  --config ghcr.io/myorg/my-app:v1.1.0
+arcctl deploy ghcr.io/myorg/my-app:v1.1.0 -e staging
 
 # Run smoke tests
 ./scripts/smoke-test.sh staging
 
 # Promote to production
-arcctl component deploy my-app -e production \
-  --config ghcr.io/myorg/my-app:v1.1.0
+arcctl deploy ghcr.io/myorg/my-app:v1.1.0 -e production
 ```
 
 ## Best Practices
@@ -400,10 +393,10 @@ arcctl component deploy my-app -e production \
 
 ```bash
 # Show command help
-arcctl component deploy --help
+arcctl deploy --help
 
 # Verbose output for debugging
-arcctl component deploy my-app -e staging --config . --verbose
+arcctl deploy ./my-app -e staging --verbose
 ```
 
 ## Next Steps

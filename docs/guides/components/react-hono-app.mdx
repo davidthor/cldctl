@@ -228,8 +228,7 @@ CMD ["npm", "run", "migrate:up"]
 arcctl component build . -t ghcr.io/myorg/react-hono-app:v1.0.0
 arcctl component push ghcr.io/myorg/react-hono-app:v1.0.0
 
-arcctl component deploy react-hono-app -e staging \
-  --config ghcr.io/myorg/react-hono-app:v1.0.0 \
+arcctl deploy ghcr.io/myorg/react-hono-app:v1.0.0 -e staging \
   --var jwt_secret=my-secret-key
 ```
 

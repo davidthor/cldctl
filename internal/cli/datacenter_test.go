@@ -42,7 +42,7 @@ func TestNewDatacenterCmd(t *testing.T) {
 		"push <repo:tag>",
 		"list",
 		"get <name>",
-		"deploy <name>",
+		"deploy <name> <config>",
 		"destroy <name>",
 		"validate [path]",
 	}
@@ -151,14 +151,8 @@ func TestDatacenterGetCmd_Flags(t *testing.T) {
 func TestDatacenterDeployCmd_Flags(t *testing.T) {
 	cmd := newDatacenterDeployCmd()
 
-	if cmd.Use != "deploy <name>" {
-		t.Errorf("expected use 'deploy <name>', got '%s'", cmd.Use)
-	}
-
-	// Check required flags
-	configFlag := cmd.Flags().Lookup("config")
-	if configFlag == nil {
-		t.Error("expected --config flag")
+	if cmd.Use != "deploy <name> <config>" {
+		t.Errorf("expected use 'deploy <name> <config>', got '%s'", cmd.Use)
 	}
 
 	// Check optional flags
@@ -167,11 +161,6 @@ func TestDatacenterDeployCmd_Flags(t *testing.T) {
 		if cmd.Flags().Lookup(flagName) == nil {
 			t.Errorf("expected --%s flag", flagName)
 		}
-	}
-
-	// Check shorthands
-	if cmd.Flags().ShorthandLookup("c") == nil {
-		t.Error("expected -c shorthand for --config")
 	}
 }
 

@@ -250,8 +250,7 @@ arcctl dc deploy vercel-prod \
 
 # Deploy a Next.js app
 arcctl env create staging --datacenter vercel-prod
-arcctl component deploy my-nextjs-app -e staging \
-  --config ghcr.io/myorg/my-nextjs-app:v1.0.0
+arcctl deploy ghcr.io/myorg/my-nextjs-app:v1.0.0 -e staging
 ```
 
 ## Ideal Use Cases

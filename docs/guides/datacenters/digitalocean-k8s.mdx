@@ -241,7 +241,7 @@ arcctl dc deploy do-production \
 
 # Create environment and deploy
 arcctl env create staging --datacenter do-production
-arcctl component deploy my-app -e staging --config ghcr.io/myorg/my-app:v1.0.0
+arcctl deploy ghcr.io/myorg/my-app:v1.0.0 -e staging
 ```
 
 ## Cost Optimization

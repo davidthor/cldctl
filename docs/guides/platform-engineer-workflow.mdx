@@ -412,15 +412,13 @@ arcctl dc push ghcr.io/myorg/aws-datacenter:v1.0.0
 
 ```bash
 # Deploy with variables
-arcctl dc deploy aws-production \
-  --config ghcr.io/myorg/aws-datacenter:v1.0.0 \
+arcctl dc deploy aws-production ghcr.io/myorg/aws-datacenter:v1.0.0 \
   --var cluster_name=prod-cluster \
   --var region=us-east-1 \
   --var domain=prod.example.com
 
 # Deploy with variable file
-arcctl dc deploy aws-production \
-  --config ghcr.io/myorg/aws-datacenter:v1.0.0 \
+arcctl dc deploy aws-production ghcr.io/myorg/aws-datacenter:v1.0.0 \
   --var-file ./vars/production.dcvars
 ```
 

@@ -113,9 +113,8 @@ jobs:
           arcctl component push ${{ secrets.ECR_REGISTRY }}/my-app:${{ github.sha }} --yes
           
           # Deploy to staging
-          arcctl component deploy my-app \
+          arcctl deploy ${{ secrets.ECR_REGISTRY }}/my-app:${{ github.sha }} \
             -e staging \
-            --config ${{ secrets.ECR_REGISTRY }}/my-app:${{ github.sha }} \
             --auto-approve
 ```
 
@@ -157,9 +156,8 @@ jobs:
           
           arcctl component push ghcr.io/${{ github.repository }}:pr-${{ github.event.number }} --yes
           
-          arcctl component deploy my-app \
+          arcctl deploy ghcr.io/${{ github.repository }}:pr-${{ github.event.number }} \
             -e preview-${{ github.event.number }} \
-            --config ghcr.io/${{ github.repository }}:pr-${{ github.event.number }} \
             --auto-approve
 
       - name: Get preview URL
@@ -224,7 +222,7 @@ deploy-staging:
   image: golang:1.22
   script:
     - go install github.com/architect-io/arcctl@latest
-    - arcctl component deploy my-app -e staging --config $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA --auto-approve
+    - arcctl deploy $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA -e staging --auto-approve
   only:
     - main
   environment:
@@ -243,7 +241,7 @@ deploy-production:
   image: golang:1.22
   script:
     - go install github.com/architect-io/arcctl@latest
-    - arcctl component deploy my-app -e production --config $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA --auto-approve
+    - arcctl deploy $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA -e production --auto-approve
   only:
     - tags
   environment:
@@ -293,8 +291,8 @@ jobs:
       - run:
           name: Deploy to staging
           command: |
-            arcctl component deploy my-app -e staging \
-              --config ghcr.io/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME:$CIRCLE_SHA1 \
+            arcctl deploy ghcr.io/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME:$CIRCLE_SHA1 \
+              -e staging \
               --auto-approve
 
 workflows:
@@ -354,13 +352,11 @@ Use `--auto-approve` in CI but be cautious:
 
 ```bash
 # Good: Deploy specific version
-arcctl component deploy my-app -e staging \
-  --config ghcr.io/myorg/my-app:$CI_COMMIT_SHA \
+arcctl deploy ghcr.io/myorg/my-app:$CI_COMMIT_SHA -e staging \
   --auto-approve
 
 # Avoid: Deploy latest (non-deterministic)
-arcctl component deploy my-app -e staging \
-  --config ghcr.io/myorg/my-app:latest \
+arcctl deploy ghcr.io/myorg/my-app:latest -e staging \
   --auto-approve
 ```
 
@@ -374,9 +370,9 @@ Never commit secrets. Use CI/CD secret variables:
   env:
     API_KEY: ${{ secrets.API_KEY }}
   run: |
-    arcctl component deploy my-app -e staging \
-      --config ghcr.io/myorg/my-app:v1.0.0 \
-      --var api_key=$API_KEY
+    arcctl deploy ghcr.io/myorg/my-app:v1.0.0 -e staging \
+      --var api_key=$API_KEY \
+      --auto-approve
 ```
 
 ### State Locking

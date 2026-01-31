@@ -36,7 +36,7 @@ environment {
   database { ... }
   deployment { ... }
   service { ... }
-  ingress { ... }
+  route { ... }
 }
 ```
 
@@ -49,10 +49,12 @@ Each hook handles a component resource type:
 | `database` | Provision databases | `host`, `port`, `url`, `username`, `password` |
 | `databaseMigration` | Run migrations | `id`, `status` |
 | `bucket` | Object storage | `endpoint`, `bucket`, `accessKeyId`, `secretAccessKey` |
+| `encryptionKey` | Encryption keys | RSA/ECDSA: `privateKey`, `publicKey`, `privateKeyBase64`, `publicKeyBase64`; Symmetric: `key`, `keyBase64` |
+| `smtp` | Email sending | `host`, `port`, `username`, `password` |
 | `deployment` | Container workloads | `id` |
 | `function` | Serverless functions | `id`, `endpoint` |
 | `service` | Internal networking | `host`, `port`, `url` |
-| `ingress` | External routing | `url`, `host`, `port` |
+| `route` | External routing | `url`, `host`, `port` |
 | `dockerBuild` | Build images | `image` |
 | `cronjob` | Scheduled tasks | `id` |
 

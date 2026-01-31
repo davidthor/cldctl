@@ -121,7 +121,8 @@
             "group": "Overview",
             "pages": [
               "cli/overview",
-              "cli/up"
+              "cli/up",
+              "cli/deploy"
             ]
           },
           {
@@ -155,7 +156,6 @@
               "cli/environment/list",
               "cli/environment/get",
               "cli/environment/update",
-              "cli/environment/apply",
               "cli/environment/destroy"
             ]
           }

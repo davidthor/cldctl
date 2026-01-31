@@ -236,13 +236,13 @@ arcctl up
 
 ```bash
 # Deploy the datacenter
-arcctl dc deploy local-dev --config ./local-docker
+arcctl dc deploy local-dev ./local-docker
 
 # Create environment
 arcctl env create my-env --datacenter local-dev
 
 # Deploy component
-arcctl component deploy my-app -e my-env --config ./
+arcctl deploy ./my-app -e my-env
 ```
 
 ## State Management

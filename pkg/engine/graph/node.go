@@ -9,16 +9,18 @@ import (
 type NodeType string
 
 const (
-	NodeTypeDatabase   NodeType = "database"
-	NodeTypeBucket     NodeType = "bucket"
-	NodeTypeDeployment NodeType = "deployment"
-	NodeTypeFunction   NodeType = "function"
-	NodeTypeService    NodeType = "service"
-	NodeTypeIngress    NodeType = "ingress"
-	NodeTypeCronjob    NodeType = "cronjob"
-	NodeTypeSecret     NodeType = "secret"
-	NodeTypeDockerBuild NodeType = "dockerBuild"
-	NodeTypeMigration  NodeType = "migration"
+	NodeTypeDatabase      NodeType = "database"
+	NodeTypeBucket        NodeType = "bucket"
+	NodeTypeEncryptionKey NodeType = "encryptionKey"
+	NodeTypeSMTP          NodeType = "smtp"
+	NodeTypeDeployment    NodeType = "deployment"
+	NodeTypeFunction      NodeType = "function"
+	NodeTypeService       NodeType = "service"
+	NodeTypeRoute         NodeType = "route"
+	NodeTypeCronjob       NodeType = "cronjob"
+	NodeTypeSecret        NodeType = "secret"
+	NodeTypeDockerBuild   NodeType = "dockerBuild"
+	NodeTypeMigration     NodeType = "migration"
 )
 
 // Node represents a resource in the dependency graph.

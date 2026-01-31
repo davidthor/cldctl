@@ -107,7 +107,7 @@ environment {
 | `deployment` | `id` |
 | `function` | `id`, `endpoint` |
 | `service` | `host`, `port`, `url` |
-| `ingress` | `url`, `host`, `port` |
+| `route` | `url`, `host`, `port` |
 
 ### Hook Expression Context
 - `variable.<name>` - Datacenter variables

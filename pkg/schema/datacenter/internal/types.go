@@ -69,7 +69,7 @@ type InternalHooks struct {
 	Deployment        []InternalHook
 	Function          []InternalHook
 	Service           []InternalHook
-	Ingress           []InternalHook
+	Route             []InternalHook
 	Cronjob           []InternalHook
 	Secret            []InternalHook
 	DockerBuild       []InternalHook

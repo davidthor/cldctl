@@ -1,0 +1,56 @@
+# Native module for scheduled tasks in local development
+# Uses a lightweight cron container or suspends the job
+plugin: native
+type: docker
+
+inputs:
+  name:
+    type: string
+    required: true
+    description: Cronjob name
+  schedule:
+    type: string
+    required: true
+    description: Cron schedule expression
+  image:
+    type: string
+    required: true
+    description: Docker image to run
+  command:
+    type: list
+    description: Command to execute
+  environment:
+    type: map
+    default: {}
+    description: Environment variables
+  suspended:
+    type: boolean
+    default: true
+    description: Whether the cronjob is suspended (default true for local dev)
+
+# In local development, cronjobs are typically suspended
+# This creates a record of the job but doesn't actively run it
+# Developers can manually trigger jobs when needed
+
+resources:
+  # Create a suspended cronjob entry
+  cronjob:
+    type: local:cronjob
+    properties:
+      name: "${inputs.name}"
+      schedule: "${inputs.schedule}"
+      image: "${inputs.image}"
+      command: "${inputs.command}"
+      environment: "${inputs.environment}"
+      suspended: "${inputs.suspended}"
+
+outputs:
+  id:
+    value: "${resources.cronjob.id}"
+    description: Cronjob identifier
+  schedule:
+    value: "${inputs.schedule}"
+    description: Cron schedule
+  suspended:
+    value: "${inputs.suspended}"
+    description: Whether the cronjob is suspended

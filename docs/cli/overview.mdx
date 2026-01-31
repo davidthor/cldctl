@@ -39,6 +39,7 @@ arcctl [command] [subcommand] [arguments] [flags]
 | Command | Description |
 |---------|-------------|
 | [`arcctl up`](/cli/up) | Quick start for local development |
+| [`arcctl deploy`](/cli/deploy) | Deploy a component to an environment |
 
 ### Component Commands
 
@@ -71,8 +72,7 @@ arcctl [command] [subcommand] [arguments] [flags]
 | [`arcctl environment create`](/cli/environment/create) | Create an environment |
 | [`arcctl environment list`](/cli/environment/list) | List environments |
 | [`arcctl environment get`](/cli/environment/get) | Get environment details |
-| [`arcctl environment update`](/cli/environment/update) | Update environment configuration |
-| [`arcctl environment apply`](/cli/environment/apply) | Apply environment configuration file |
+| [`arcctl environment update`](/cli/environment/update) | Update environment (supports config files) |
 | [`arcctl environment destroy`](/cli/environment/destroy) | Destroy an environment |
 
 ## Command Aliases
@@ -81,10 +81,16 @@ For convenience, arcctl supports shorthand aliases:
 
 | Full Command | Alias |
 |--------------|-------|
+| `arcctl component deploy` | `arcctl deploy` |
 | `arcctl datacenter` | `arcctl dc` |
 | `arcctl environment` | `arcctl env` |
+| `arcctl component` | `arcctl comp` |
 
 ```bash
+# These are equivalent:
+arcctl component deploy ./my-app -e staging
+arcctl deploy ./my-app -e staging
+
 # These are equivalent:
 arcctl datacenter build . -t ghcr.io/myorg/dc:v1.0.0
 arcctl dc build . -t ghcr.io/myorg/dc:v1.0.0
@@ -101,7 +107,7 @@ arcctl supports multiple state backends for storing deployment state:
 ### Local Backend (Default)
 
 ```bash
-arcctl component deploy my-app -e staging --config ./
+arcctl deploy ./my-app -e staging
 ```
 
 State is stored in `~/.arcctl/state/`.
@@ -109,7 +115,7 @@ State is stored in `~/.arcctl/state/`.
 ### S3 Backend
 
 ```bash
-arcctl component deploy my-app -e staging --config ./ \
+arcctl deploy ./my-app -e staging \
   --backend s3 \
   --backend-config bucket=my-arcctl-state \
   --backend-config region=us-east-1 \
@@ -119,7 +125,7 @@ arcctl component deploy my-app -e staging --config ./ \
 ### GCS Backend
 
 ```bash
-arcctl component deploy my-app -e staging --config ./ \
+arcctl deploy ./my-app -e staging \
   --backend gcs \
   --backend-config bucket=my-arcctl-state \
   --backend-config prefix=arcctl
@@ -128,7 +134,7 @@ arcctl component deploy my-app -e staging --config ./ \
 ### Azure Backend
 
 ```bash
-arcctl component deploy my-app -e staging --config ./ \
+arcctl deploy ./my-app -e staging \
   --backend azurerm \
   --backend-config storage_account_name=myaccount \
   --backend-config container_name=arcctl-state \
@@ -144,7 +150,7 @@ export ARCCTL_BACKEND=s3
 export ARCCTL_BACKEND_S3_BUCKET=my-arcctl-state
 export ARCCTL_BACKEND_S3_REGION=us-east-1
 
-arcctl component deploy my-app -e staging --config ./
+arcctl deploy ./my-app -e staging
 ```
 
 ## Output Formats

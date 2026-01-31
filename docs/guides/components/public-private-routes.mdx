@@ -218,8 +218,7 @@ Users access the admin panel through:
 arcctl component build . -t ghcr.io/myorg/nextjs-with-admin:v1.0.0
 arcctl component push ghcr.io/myorg/nextjs-with-admin:v1.0.0
 
-arcctl component deploy shop -e production \
-  --config ghcr.io/myorg/nextjs-with-admin:v1.0.0 \
+arcctl deploy ghcr.io/myorg/nextjs-with-admin:v1.0.0 -e production \
   --var admin_secret=$ADMIN_SECRET
 ```
 

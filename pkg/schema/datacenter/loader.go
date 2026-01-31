@@ -203,11 +203,13 @@ type hooksWrapper struct {
 func (h *hooksWrapper) Database() []Hook          { return wrapHooks(h.h.Database) }
 func (h *hooksWrapper) DatabaseMigration() []Hook { return wrapHooks(h.h.DatabaseMigration) }
 func (h *hooksWrapper) Bucket() []Hook            { return wrapHooks(h.h.Bucket) }
+func (h *hooksWrapper) EncryptionKey() []Hook     { return wrapHooks(h.h.EncryptionKey) }
+func (h *hooksWrapper) SMTP() []Hook              { return wrapHooks(h.h.SMTP) }
 func (h *hooksWrapper) DatabaseUser() []Hook      { return wrapHooks(h.h.DatabaseUser) }
 func (h *hooksWrapper) Deployment() []Hook        { return wrapHooks(h.h.Deployment) }
 func (h *hooksWrapper) Function() []Hook          { return wrapHooks(h.h.Function) }
 func (h *hooksWrapper) Service() []Hook           { return wrapHooks(h.h.Service) }
-func (h *hooksWrapper) Ingress() []Hook           { return wrapHooks(h.h.Ingress) }
+func (h *hooksWrapper) Route() []Hook             { return wrapHooks(h.h.Route) }
 func (h *hooksWrapper) Cronjob() []Hook           { return wrapHooks(h.h.Cronjob) }
 func (h *hooksWrapper) Secret() []Hook            { return wrapHooks(h.h.Secret) }
 func (h *hooksWrapper) DockerBuild() []Hook       { return wrapHooks(h.h.DockerBuild) }

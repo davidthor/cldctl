@@ -159,9 +159,7 @@ arcctl env create staging
 ### 2. Deploy the Component
 
 ```bash
-arcctl component deploy my-app \
-  -e staging \
-  --config ghcr.io/myorg/my-app:v1.0.0
+arcctl deploy ghcr.io/myorg/my-app:v1.0.0 -e staging
 ```
 
 ### 3. Check Status

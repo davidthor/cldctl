@@ -264,7 +264,7 @@ arcctl dc deploy preview-cluster \
 
 # Create preview environments (instant, cheap!)
 arcctl env create preview-123 --datacenter preview-cluster
-arcctl component deploy my-app -e preview-123 --config ghcr.io/myorg/my-app:pr-123
+arcctl deploy ghcr.io/myorg/my-app:pr-123 -e preview-123
 ```
 
 ## Cleanup

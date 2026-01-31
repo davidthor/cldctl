@@ -81,9 +81,8 @@ components:
     arcctl env create preview-${{ github.event.number }} \
       --datacenter aws-staging --if-not-exists
     
-    arcctl component deploy my-app \
-      -e preview-${{ github.event.number }} \
-      --config ghcr.io/myorg/my-app:pr-${{ github.event.number }}
+    arcctl deploy ghcr.io/myorg/my-app:pr-${{ github.event.number }} \
+      -e preview-${{ github.event.number }}
 
 - name: Cleanup Preview
   if: github.event.action == 'closed'
@@ -301,14 +300,12 @@ Pattern for promoting through environments:
 
 ```bash
 # 1. Deploy to staging
-arcctl component deploy web-app -e staging \
-  --config ghcr.io/myorg/web-app:v1.6.0
+arcctl deploy ghcr.io/myorg/web-app:v1.6.0 -e staging
 
 # 2. Test in staging...
 
 # 3. Promote to production (same artifact)
-arcctl component deploy web-app -e production \
-  --config ghcr.io/myorg/web-app:v1.6.0
+arcctl deploy ghcr.io/myorg/web-app:v1.6.0 -e production
 ```
 
 Using the same artifact ensures consistency across environments.

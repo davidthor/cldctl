@@ -63,12 +63,13 @@ components:
 ## How Environments Work
 
 1. **Define the environment** - Create an `environment.yml` file specifying components and configuration
-2. **Apply the environment** - Use `arcctl env apply` to deploy all components
-3. **Manage lifecycle** - Update, scale, and destroy as needed
+2. **Create the environment** - Use `arcctl env create` to initialize
+3. **Apply updates** - Use `arcctl env update <name> <config-file>` to deploy/update all components
+4. **Manage lifecycle** - Update, scale, and destroy as needed
 
 ```mermaid
 flowchart LR
-    A[environment.yml] --> B[arcctl env apply]
+    A[environment.yml] --> B[arcctl env update]
     B --> C[Datacenter]
     C --> D[Cloud Resources]
     D --> E[Running Application]
@@ -83,7 +84,7 @@ You can deploy components in two ways:
 Deploy multiple components with shared configuration:
 
 ```bash
-arcctl env apply -f staging.yml
+arcctl env update staging staging.yml
 ```
 
 ### Individual Component Deploy
@@ -91,7 +92,7 @@ arcctl env apply -f staging.yml
 Deploy a single component directly:
 
 ```bash
-arcctl component deploy my-app -e staging --config ghcr.io/myorg/my-app:v1.0.0
+arcctl deploy ghcr.io/myorg/my-app:v1.0.0 -e staging
 ```
 
 The environment file approach is recommended for:

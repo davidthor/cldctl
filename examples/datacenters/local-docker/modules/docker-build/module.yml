@@ -1,0 +1,45 @@
+# Native module for building Docker images locally
+plugin: native
+type: docker
+
+inputs:
+  context:
+    type: string
+    required: true
+    description: Build context path
+  dockerfile:
+    type: string
+    default: "Dockerfile"
+    description: Dockerfile path relative to context
+  target:
+    type: string
+    description: Build target stage
+  args:
+    type: map
+    default: {}
+    description: Build arguments
+  tag:
+    type: string
+    required: true
+    description: Image tag
+
+resources:
+  image:
+    type: docker:build
+    properties:
+      context: "${inputs.context}"
+      dockerfile: "${inputs.dockerfile}"
+      target: "${inputs.target}"
+      args: "${inputs.args}"
+      tags:
+        - "${inputs.tag}"
+      # Use cache for faster rebuilds
+      cache: true
+
+outputs:
+  image:
+    value: "${inputs.tag}"
+    description: Built image tag
+  image_id:
+    value: "${resources.image.id}"
+    description: Image ID

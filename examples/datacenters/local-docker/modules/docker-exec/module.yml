@@ -1,0 +1,48 @@
+# Native module for running one-time Docker containers (migrations, scripts, etc.)
+plugin: native
+type: docker
+
+inputs:
+  name:
+    type: string
+    required: true
+    description: Container name
+  image:
+    type: string
+    required: true
+    description: Docker image to run
+  command:
+    type: list
+    description: Command to execute
+  network:
+    type: string
+    required: true
+    description: Docker network to join
+  environment:
+    type: map
+    default: {}
+    description: Environment variables
+
+resources:
+  container:
+    type: docker:container
+    properties:
+      image: "${inputs.image}"
+      name: "${inputs.name}"
+      network: "${inputs.network}"
+      command: "${inputs.command}"
+      environment: "${inputs.environment}"
+      # Run once and exit - don't restart
+      restart: "no"
+      # Remove container after completion
+      auto_remove: false
+      # Wait for container to complete
+      wait: true
+
+outputs:
+  container_id:
+    value: "${resources.container.id}"
+    description: Docker container ID
+  exit_code:
+    value: "${resources.container.exit_code}"
+    description: Container exit code

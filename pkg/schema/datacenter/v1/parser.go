@@ -142,11 +142,9 @@ func (p *Parser) parseVariable(block *hcl.Block) (*VariableBlockV1, hcl.Diagnost
 	}
 
 	if attr, ok := content.Attributes["type"]; ok {
-		val, valDiags := attr.Expr.Value(hclCtx)
-		diags = append(diags, valDiags...)
-		if !valDiags.HasErrors() {
-			variable.Type = val.AsString()
-		}
+		// Type is a type constraint (string, number, bool, list, map, etc.)
+		// not an expression to evaluate. Extract it as a keyword.
+		variable.Type = hcl.ExprAsKeyword(attr.Expr)
 	}
 
 	if attr, ok := content.Attributes["description"]; ok {
@@ -190,6 +188,7 @@ func (p *Parser) parseModule(block *hcl.Block) (*ModuleBlockV1, hcl.Diagnostics)
 			{Name: "plugin"},
 			{Name: "when"},
 			{Name: "environment"},
+			{Name: "inputs"},
 		},
 		Blocks: []hcl.BlockHeaderSchema{
 			{Type: "inputs"},
@@ -250,16 +249,29 @@ func (p *Parser) parseModule(block *hcl.Block) (*ModuleBlockV1, hcl.Diagnostics)
 		}
 	}
 
-	// Parse inputs block
-	for _, inputsBlock := range content.Blocks.OfType("inputs") {
-		module.Inputs = inputsBlock.Body
-		// Also extract evaluated inputs if context is available
+	// Parse inputs - can be either an attribute (inputs = {...}) or a block (inputs {...})
+	if attr, ok := content.Attributes["inputs"]; ok {
+		// Attribute syntax: inputs = { ... }
+		module.InputsExpr = attr.Expr
+		// Try to evaluate the inputs if context is available
+		val, valDiags := attr.Expr.Value(hclCtx)
+		if !valDiags.HasErrors() && val.Type().IsObjectType() {
+			module.InputsEvaluated = val.AsValueMap()
+		}
+	} else if inputsBlocks := content.Blocks.OfType("inputs"); len(inputsBlocks) > 0 {
+		// Block syntax: inputs { ... } - only process first block
+		inputsBlock := inputsBlocks[0]
 		attrs, attrDiags := inputsBlock.Body.JustAttributes()
 		diags = append(diags, attrDiags...)
 		if len(attrs) > 0 {
-			module.InputsEvaluated, _ = BuildInputsFromAttributes(attrs, hclCtx)
+			module.InputsEvaluated = make(map[string]cty.Value)
+			for name, attr := range attrs {
+				val, valDiags := attr.Expr.Value(hclCtx)
+				if !valDiags.HasErrors() {
+					module.InputsEvaluated[name] = val
+				}
+			}
 		}
-		// Only process the first inputs block
 	}
 
 	// Parse volume blocks
@@ -327,11 +339,13 @@ func (p *Parser) parseEnvironment(block *hcl.Block) (*EnvironmentBlockV1, hcl.Di
 			{Type: "database"},
 			{Type: "databaseMigration"},
 			{Type: "bucket"},
+			{Type: "encryptionKey"},
+			{Type: "smtp"},
 			{Type: "databaseUser"},
 			{Type: "deployment"},
 			{Type: "function"},
 			{Type: "service"},
-			{Type: "ingress"},
+			{Type: "route"},
 			{Type: "cronjob"},
 			{Type: "secret"},
 			{Type: "dockerBuild"},
@@ -359,11 +373,13 @@ func (p *Parser) parseEnvironment(block *hcl.Block) (*EnvironmentBlockV1, hcl.Di
 		"database":          &env.DatabaseHooks,
 		"databaseMigration": &env.DatabaseMigrationHooks,
 		"bucket":            &env.BucketHooks,
+		"encryptionKey":     &env.EncryptionKeyHooks,
+		"smtp":              &env.SMTPHooks,
 		"databaseUser":      &env.DatabaseUserHooks,
 		"deployment":        &env.DeploymentHooks,
 		"function":          &env.FunctionHooks,
 		"service":           &env.ServiceHooks,
-		"ingress":           &env.IngressHooks,
+		"route":             &env.RouteHooks,
 		"cronjob":           &env.CronjobHooks,
 		"secret":            &env.SecretHooks,
 		"dockerBuild":       &env.DockerBuildHooks,
@@ -389,6 +405,7 @@ func (p *Parser) parseHook(block *hcl.Block) (*HookBlockV1, hcl.Diagnostics) {
 	hookSchema := &hcl.BodySchema{
 		Attributes: []hcl.AttributeSchema{
 			{Name: "when"},
+			{Name: "outputs"},
 		},
 		Blocks: []hcl.BlockHeaderSchema{
 			{Type: "module", LabelNames: []string{"name"}},
@@ -432,15 +449,18 @@ func (p *Parser) parseHook(block *hcl.Block) (*HookBlockV1, hcl.Diagnostics) {
 		}
 	}
 
-	// Parse outputs
-	for _, outputsBlock := range content.Blocks.OfType("outputs") {
+	// Parse outputs - can be either an attribute (outputs = {...}) or a block (outputs {...})
+	if attr, ok := content.Attributes["outputs"]; ok {
+		// Attribute syntax: outputs = { ... }
+		hook.OutputsExpr = attr.Expr
+	} else if outputsBlocks := content.Blocks.OfType("outputs"); len(outputsBlocks) > 0 {
+		// Block syntax: outputs { ... } - only process first block
+		outputsBlock := outputsBlocks[0]
 		attrs, attrDiags := outputsBlock.Body.JustAttributes()
 		diags = append(diags, attrDiags...)
-		hook.Outputs = &OutputsBlockV1{
-			Attributes: attrs,
-			Body:       outputsBlock.Body,
+		if len(attrs) > 0 {
+			hook.OutputsAttrs = attrs
 		}
-		break
 	}
 
 	return hook, diags

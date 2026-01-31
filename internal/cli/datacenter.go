@@ -62,10 +62,24 @@ When building a datacenter, arcctl bundles all IaC modules:
 				path = args[0]
 			}
 
-			// Determine datacenter.hcl location
+			// Determine datacenter file location
 			dcFile := file
 			if dcFile == "" {
-				dcFile = filepath.Join(path, "datacenter.hcl")
+				// Check if path is a file or directory
+				info, err := os.Stat(path)
+				if err != nil {
+					return fmt.Errorf("failed to access path: %w", err)
+				}
+				if info.IsDir() {
+					// Look for datacenter file in directory
+					// Try datacenter.dc first, then datacenter.hcl
+					dcFile = filepath.Join(path, "datacenter.dc")
+					if _, err := os.Stat(dcFile); os.IsNotExist(err) {
+						dcFile = filepath.Join(path, "datacenter.hcl")
+					}
+				} else {
+					dcFile = path
+				}
 			}
 
 			// Load and validate the datacenter
@@ -477,7 +491,6 @@ func newDatacenterGetCmd() *cobra.Command {
 
 func newDatacenterDeployCmd() *cobra.Command {
 	var (
-		configRef     string
 		variables     []string
 		varFile       string
 		autoApprove   bool
@@ -486,14 +499,17 @@ func newDatacenterDeployCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "deploy <name>",
+		Use:   "deploy <name> <config>",
 		Short: "Deploy a datacenter",
 		Long: `Deploy or update a datacenter.
 
-The datacenter can be specified as either an OCI image reference or a local path.`,
-		Args: cobra.ExactArgs(1),
+Arguments:
+  name    Name for the deployed datacenter
+  config  Datacenter config: OCI image reference or local path`,
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dcName := args[0]
+			configRef := args[1]
 			ctx := context.Background()
 
 			// Create state manager
@@ -533,11 +549,24 @@ The datacenter can be specified as either an OCI image reference or a local path
 			// Check if this is an OCI reference or local path
 			isLocalPath := !strings.Contains(configRef, ":") || strings.HasPrefix(configRef, "./") || strings.HasPrefix(configRef, "/")
 
-			if isLocalPath {
-				// Load datacenter from local path
-				dcFile := filepath.Join(configRef, "datacenter.hcl")
-				loader := datacenter.NewLoader()
-				dc, err := loader.Load(dcFile)
+		if isLocalPath {
+			// Load datacenter from local path
+			// Check if configRef is a file or directory
+			dcFile := configRef
+			info, err := os.Stat(configRef)
+			if err != nil {
+				return fmt.Errorf("failed to access config path: %w", err)
+			}
+			if info.IsDir() {
+				// Look for datacenter file in directory
+				// Try datacenter.dc first, then datacenter.hcl
+				dcFile = filepath.Join(configRef, "datacenter.dc")
+				if _, err := os.Stat(dcFile); os.IsNotExist(err) {
+					dcFile = filepath.Join(configRef, "datacenter.hcl")
+				}
+			}
+			loader := datacenter.NewLoader()
+			dc, err := loader.Load(dcFile)
 				if err != nil {
 					return fmt.Errorf("failed to load datacenter: %w", err)
 				}
@@ -591,13 +620,11 @@ The datacenter can be specified as either an OCI image reference or a local path
 		},
 	}
 
-	cmd.Flags().StringVarP(&configRef, "config", "c", "", "Datacenter config: OCI image or local path (required)")
 	cmd.Flags().StringArrayVar(&variables, "var", nil, "Set variable (key=value)")
 	cmd.Flags().StringVar(&varFile, "var-file", "", "Load variables from file")
 	cmd.Flags().BoolVar(&autoApprove, "auto-approve", false, "Skip confirmation prompt")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
-	_ = cmd.MarkFlagRequired("config")
 
 	return cmd
 }
@@ -702,20 +729,33 @@ func newDatacenterValidateCmd() *cobra.Command {
 		Long:  `Validate a datacenter configuration file without deploying.`,
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := "datacenter.hcl"
-			if len(args) > 0 {
-				if strings.HasSuffix(args[0], ".hcl") {
-					path = args[0]
-				} else {
-					path = filepath.Join(args[0], "datacenter.hcl")
-				}
-			}
+			var dcPath string
 			if file != "" {
-				path = file
+				dcPath = file
+			} else if len(args) > 0 {
+				dcPath = args[0]
+			} else {
+				dcPath = "."
+			}
+
+			// Check if path is a file or directory
+			info, err := os.Stat(dcPath)
+			if err != nil {
+				return fmt.Errorf("failed to access path: %w", err)
+			}
+
+			dcFile := dcPath
+			if info.IsDir() {
+				// Look for datacenter file in directory
+				// Try datacenter.dc first, then datacenter.hcl
+				dcFile = filepath.Join(dcPath, "datacenter.dc")
+				if _, err := os.Stat(dcFile); os.IsNotExist(err) {
+					dcFile = filepath.Join(dcPath, "datacenter.hcl")
+				}
 			}
 
 			loader := datacenter.NewLoader()
-			if err := loader.Validate(path); err != nil {
+			if err := loader.Validate(dcFile); err != nil {
 				return fmt.Errorf("validation failed: %w", err)
 			}
 
@@ -848,10 +888,12 @@ func collectAllModules(dc datacenter.Datacenter, dcPath string) map[string]modul
 		collectHookModules(env.Hooks().Database(), modules, dcPath)
 		collectHookModules(env.Hooks().DatabaseMigration(), modules, dcPath)
 		collectHookModules(env.Hooks().Bucket(), modules, dcPath)
+		collectHookModules(env.Hooks().EncryptionKey(), modules, dcPath)
+		collectHookModules(env.Hooks().SMTP(), modules, dcPath)
 		collectHookModules(env.Hooks().Deployment(), modules, dcPath)
 		collectHookModules(env.Hooks().Function(), modules, dcPath)
 		collectHookModules(env.Hooks().Service(), modules, dcPath)
-		collectHookModules(env.Hooks().Ingress(), modules, dcPath)
+		collectHookModules(env.Hooks().Route(), modules, dcPath)
 		collectHookModules(env.Hooks().Cronjob(), modules, dcPath)
 		collectHookModules(env.Hooks().Secret(), modules, dcPath)
 		collectHookModules(env.Hooks().DockerBuild(), modules, dcPath)

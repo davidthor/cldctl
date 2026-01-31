@@ -1,0 +1,69 @@
+# Native module for generating encryption keys
+# Supports RSA, ECDSA, and symmetric key types
+plugin: native
+type: crypto
+
+inputs:
+  name:
+    type: string
+    required: true
+    description: Key identifier
+  key_type:
+    type: string
+    required: true
+    description: Key type (rsa, ecdsa, symmetric)
+  key_size:
+    type: number
+    description: Key size in bits (RSA 2048/4096, ECDSA 256/384/521, symmetric 128/256)
+
+resources:
+  # RSA key pair
+  rsa_key:
+    type: crypto:rsa_key
+    when: "${inputs.key_type == 'rsa'}"
+    properties:
+      name: "${inputs.name}"
+      bits: "${coalesce(inputs.key_size, 2048)}"
+  
+  # ECDSA key pair
+  ecdsa_key:
+    type: crypto:ecdsa_key
+    when: "${inputs.key_type == 'ecdsa'}"
+    properties:
+      name: "${inputs.name}"
+      curve: "${inputs.key_size == 384 ? 'P-384' : inputs.key_size == 521 ? 'P-521' : 'P-256'}"
+  
+  # Symmetric key
+  symmetric_key:
+    type: crypto:symmetric_key
+    when: "${inputs.key_type == 'symmetric'}"
+    properties:
+      name: "${inputs.name}"
+      bits: "${coalesce(inputs.key_size, 256)}"
+
+outputs:
+  # RSA/ECDSA outputs (asymmetric keys)
+  privateKey:
+    value: "${inputs.key_type == 'rsa' ? resources.rsa_key.private_key_pem : inputs.key_type == 'ecdsa' ? resources.ecdsa_key.private_key_pem : ''}"
+    sensitive: true
+    description: Private key in PEM format
+  publicKey:
+    value: "${inputs.key_type == 'rsa' ? resources.rsa_key.public_key_pem : inputs.key_type == 'ecdsa' ? resources.ecdsa_key.public_key_pem : ''}"
+    description: Public key in PEM format
+  privateKeyBase64:
+    value: "${inputs.key_type == 'rsa' ? resources.rsa_key.private_key_base64 : inputs.key_type == 'ecdsa' ? resources.ecdsa_key.private_key_base64 : ''}"
+    sensitive: true
+    description: Private key in base64
+  publicKeyBase64:
+    value: "${inputs.key_type == 'rsa' ? resources.rsa_key.public_key_base64 : inputs.key_type == 'ecdsa' ? resources.ecdsa_key.public_key_base64 : ''}"
+    description: Public key in base64
+  
+  # Symmetric key outputs
+  key:
+    value: "${inputs.key_type == 'symmetric' ? resources.symmetric_key.key : ''}"
+    sensitive: true
+    description: Symmetric key (hex encoded)
+  keyBase64:
+    value: "${inputs.key_type == 'symmetric' ? resources.symmetric_key.key_base64 : ''}"
+    sensitive: true
+    description: Symmetric key in base64

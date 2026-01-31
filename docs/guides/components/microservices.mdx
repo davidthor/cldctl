@@ -242,8 +242,7 @@ dependencies:
 
 ```bash
 # Deploy entire stack (dependencies resolved automatically)
-arcctl component deploy gateway -e staging \
-  --config ./gateway \
+arcctl deploy ./gateway -e staging \
   --var jwt_secret=$JWT_SECRET
 ```
 
@@ -251,10 +250,10 @@ arcctl component deploy gateway -e staging \
 
 ```bash
 # Deploy just auth
-arcctl component deploy auth -e staging --config ./auth
+arcctl deploy ./auth -e staging
 
 # Deploy orders (auto-deploys auth if not present)
-arcctl component deploy orders -e staging --config ./orders
+arcctl deploy ./orders -e staging
 ```
 
 ## Service Communication

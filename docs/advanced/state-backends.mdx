@@ -24,10 +24,10 @@ Default backend for development:
 
 ```bash
 # Uses default path (~/.arcctl/state/)
-arcctl component deploy my-app -e staging --config ./
+arcctl deploy ./my-app -e staging
 
 # Custom path
-arcctl component deploy my-app -e staging --config ./ \
+arcctl deploy ./my-app -e staging \
   --backend local \
   --backend-config path=/custom/state/path
 ```
@@ -37,7 +37,7 @@ arcctl component deploy my-app -e staging --config ./ \
 For AWS-based teams with DynamoDB locking:
 
 ```bash
-arcctl component deploy my-app -e staging --config ./ \
+arcctl deploy ./my-app -e staging \
   --backend s3 \
   --backend-config bucket=my-arcctl-state \
   --backend-config region=us-east-1 \
@@ -60,7 +60,7 @@ arcctl component deploy my-app -e staging --config ./ \
 For GCP-based teams:
 
 ```bash
-arcctl component deploy my-app -e staging --config ./ \
+arcctl deploy ./my-app -e staging \
   --backend gcs \
   --backend-config bucket=my-arcctl-state \
   --backend-config prefix=arcctl
@@ -79,7 +79,7 @@ arcctl component deploy my-app -e staging --config ./ \
 For Azure-based teams:
 
 ```bash
-arcctl component deploy my-app -e staging --config ./ \
+arcctl deploy ./my-app -e staging \
   --backend azurerm \
   --backend-config storage_account_name=myaccount \
   --backend-config container_name=arcctl-state \
@@ -184,7 +184,7 @@ Only use force unlock when you're certain no other operation is running. Breakin
     ARCCTL_BACKEND_S3_REGION: us-east-1
     ARCCTL_BACKEND_S3_DYNAMODB_TABLE: arcctl-locks
   run: |
-    arcctl component deploy my-app -e staging --config ghcr.io/myorg/my-app:${{ github.sha }}
+    arcctl deploy ghcr.io/myorg/my-app:${{ github.sha }} -e staging --auto-approve
 ```
 
 ## Next Steps

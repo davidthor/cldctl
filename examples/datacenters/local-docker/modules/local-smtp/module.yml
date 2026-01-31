@@ -1,0 +1,48 @@
+# Native module for local SMTP server using MailHog
+# MailHog captures all outgoing emails and provides a web UI for viewing
+plugin: native
+type: docker
+
+inputs:
+  name:
+    type: string
+    required: true
+    description: SMTP server name
+  network:
+    type: string
+    required: true
+    description: Docker network to join
+
+resources:
+  container:
+    type: docker:container
+    properties:
+      image: "mailhog/mailhog:latest"
+      name: "${inputs.name}"
+      network: "${inputs.network}"
+      ports:
+        # SMTP port
+        - container: 1025
+          host: auto
+        # Web UI port
+        - container: 8025
+          host: auto
+      restart: unless-stopped
+
+outputs:
+  host:
+    value: "localhost"
+    description: SMTP host
+  port:
+    value: "${resources.container.ports[0].host}"
+    description: SMTP port
+  username:
+    value: ""
+    description: SMTP username (none required for MailHog)
+  password:
+    value: ""
+    sensitive: true
+    description: SMTP password (none required for MailHog)
+  web_url:
+    value: "http://localhost:${resources.container.ports[1].host}"
+    description: MailHog web UI URL for viewing captured emails

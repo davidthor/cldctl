@@ -57,7 +57,7 @@ func TestNewComponentCmd(t *testing.T) {
 		"pull <repo:tag>",
 		"list",
 		"get <name>",
-		"deploy <name>",
+		"deploy <source>",
 		"destroy <name>",
 		"validate [path]",
 	}
@@ -181,17 +181,13 @@ func TestComponentGetCmd_Flags(t *testing.T) {
 func TestComponentDeployCmd_Flags(t *testing.T) {
 	cmd := newComponentDeployCmd()
 
-	if cmd.Use != "deploy <name>" {
-		t.Errorf("expected use 'deploy <name>', got '%s'", cmd.Use)
+	if cmd.Use != "deploy <source>" {
+		t.Errorf("expected use 'deploy <source>', got '%s'", cmd.Use)
 	}
 
 	// Check required flags
-	requiredFlags := []string{"environment", "config"}
-	for _, flagName := range requiredFlags {
-		flag := cmd.Flags().Lookup(flagName)
-		if flag == nil {
-			t.Errorf("expected --%s flag", flagName)
-		}
+	if cmd.Flags().Lookup("environment") == nil {
+		t.Error("expected --environment flag")
 	}
 
 	// Check optional flags
@@ -205,9 +201,6 @@ func TestComponentDeployCmd_Flags(t *testing.T) {
 	// Check shorthands
 	if cmd.Flags().ShorthandLookup("e") == nil {
 		t.Error("expected -e shorthand for --environment")
-	}
-	if cmd.Flags().ShorthandLookup("c") == nil {
-		t.Error("expected -c shorthand for --config")
 	}
 }
 
@@ -425,5 +418,70 @@ func TestFormatTimeAgo(t *testing.T) {
 		if result != test.contains {
 			t.Errorf("formatTimeAgo(%v) = %q, expected %q", test.input, result, test.contains)
 		}
+	}
+}
+
+func TestDeriveComponentName(t *testing.T) {
+	tests := []struct {
+		source      string
+		isLocalPath bool
+		expected    string
+	}{
+		// Local paths
+		{"./my-app", true, "my-app"},
+		{"./my-app/", true, "my-app"},
+		{"/home/user/projects/my-app", true, "my-app"},
+		{"./my-app/architect.yml", true, "my-app"},
+		{"./my-app/architect.yaml", true, "my-app"},
+		{"my-component", true, "my-component"},
+
+		// OCI references
+		{"ghcr.io/myorg/myapp:v1.0.0", false, "myapp"},
+		{"docker.io/library/nginx:latest", false, "nginx"},
+		{"myregistry.com/team/service:sha-abc123", false, "service"},
+		{"ghcr.io/org/repo@sha256:abcd1234", false, "repo"},
+		{"nginx:latest", false, "nginx"},
+		{"myapp", false, "myapp"},
+	}
+
+	for _, test := range tests {
+		result := deriveComponentName(test.source, test.isLocalPath)
+		if result != test.expected {
+			t.Errorf("deriveComponentName(%q, %v) = %q, expected %q",
+				test.source, test.isLocalPath, result, test.expected)
+		}
+	}
+}
+
+func TestIsInteractive_CIEnvVars(t *testing.T) {
+	// Save original env vars
+	originalCI := os.Getenv("CI")
+	originalGitHub := os.Getenv("GITHUB_ACTIONS")
+
+	// Cleanup
+	defer func() {
+		if originalCI != "" {
+			os.Setenv("CI", originalCI)
+		} else {
+			os.Unsetenv("CI")
+		}
+		if originalGitHub != "" {
+			os.Setenv("GITHUB_ACTIONS", originalGitHub)
+		} else {
+			os.Unsetenv("GITHUB_ACTIONS")
+		}
+	}()
+
+	// Test with CI=true
+	os.Setenv("CI", "true")
+	if isInteractive() {
+		t.Error("isInteractive() should return false when CI=true")
+	}
+
+	// Test with GITHUB_ACTIONS=true
+	os.Unsetenv("CI")
+	os.Setenv("GITHUB_ACTIONS", "true")
+	if isInteractive() {
+		t.Error("isInteractive() should return false when GITHUB_ACTIONS=true")
 	}
 }

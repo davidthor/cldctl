@@ -3310,7 +3310,7 @@ Create a new datacenter or update an existing one by applying a datacenter confi
 **Synopsis:**
 
 ```bash
-arcctl datacenter deploy <name> --config <config-ref> [options]
+arcctl datacenter deploy <name> <config> [options]
 ```
 
 **Arguments:**
@@ -3339,21 +3339,21 @@ State backend can be configured via command flags or environment variables, simi
 
 ```bash
 # Local state (default) - stores in current working directory
-arcctl datacenter deploy my-dc --config ./dc
+arcctl datacenter deploy my-dc ./dc
 # State written to: .arcctl/my-dc/
 
 # Custom local state path via flag
-arcctl datacenter deploy my-dc --config ./dc \
+arcctl datacenter deploy my-dc ./dc \
   --backend local \
   --backend-config path=./custom/state/path
 
 # Custom local state path via env var
 export ARCCTL_BACKEND=local
 export ARCCTL_BACKEND_LOCAL_PATH=./custom/state/path
-arcctl datacenter deploy my-dc --config ./dc
+arcctl datacenter deploy my-dc ./dc
 
 # S3 backend via flags
-arcctl datacenter deploy my-dc --config ./dc \
+arcctl datacenter deploy my-dc ./dc \
   --backend s3 \
   --backend-config bucket=my-arcctl-state \
   --backend-config region=us-east-1 \
@@ -3364,7 +3364,7 @@ export ARCCTL_BACKEND=s3
 export ARCCTL_BACKEND_S3_BUCKET=my-arcctl-state
 export ARCCTL_BACKEND_S3_REGION=us-east-1
 export ARCCTL_BACKEND_S3_KEY=datacenters/my-dc
-arcctl datacenter deploy my-dc --config ./dc
+arcctl datacenter deploy my-dc ./dc
 ```
 
 **Environment Variable Pattern:**
@@ -3396,12 +3396,12 @@ The `--config` flag accepts two formats:
 
 1. **Local path**: Path to a directory containing `datacenter.dc`
    ```bash
-   arcctl datacenter deploy my-dc --config ./datacenters/aws-prod
+   arcctl datacenter deploy my-dc ./datacenters/aws-prod
    ```
 
 2. **OCI image reference**: A built datacenter artifact in `repo:tag` format
    ```bash
-   arcctl datacenter deploy my-dc --config ghcr.io/myorg/aws-prod:v1.0.0
+   arcctl datacenter deploy my-dc ghcr.io/myorg/aws-prod:v1.0.0
    ```
 
 **Behavior:**
@@ -3411,7 +3411,7 @@ The `--config` flag accepts two formats:
 3. **Apply Phase**: Executes each datacenter-level module in dependency order, updating state as each completes
 
 ```
-$ arcctl datacenter deploy aws-production --config ghcr.io/myorg/aws-prod:v1.0.0
+$ arcctl datacenter deploy aws-production ghcr.io/myorg/aws-prod:v1.0.0
 
 Datacenter: aws-production
 Config: ghcr.io/myorg/aws-prod:v1.0.0
@@ -3494,10 +3494,10 @@ arcctl datacenter deploy my-dc \
 
 ```bash
 # Deploy from local config
-arcctl datacenter deploy my-datacenter --config ./datacenters/aws-prod
+arcctl datacenter deploy my-datacenter ./datacenters/aws-prod
 
 # Deploy from OCI artifact
-arcctl datacenter deploy my-datacenter --config ghcr.io/myorg/aws-prod:v1.0.0
+arcctl datacenter deploy my-datacenter ghcr.io/myorg/aws-prod:v1.0.0
 
 # Deploy with variables
 arcctl datacenter deploy my-datacenter \
@@ -4044,7 +4044,7 @@ Locks are advisory and include:
 - Operation being performed
 
 ```
-$ arcctl datacenter deploy my-dc --config ./dc
+$ arcctl datacenter deploy my-dc ./dc
 
 Error: State is locked
 
@@ -4064,24 +4064,24 @@ State backend is configured per-command via `--backend` and `--backend-config` f
 
 ```bash
 # State stored in .arcctl/<datacenter-name>/
-arcctl datacenter deploy my-dc --config ./dc
+arcctl datacenter deploy my-dc ./dc
 
 # Custom local path via flags
-arcctl datacenter deploy my-dc --config ./dc \
+arcctl datacenter deploy my-dc ./dc \
   --backend local \
   --backend-config path=/var/lib/arcctl/state
 
 # Custom local path via env vars
 export ARCCTL_BACKEND=local
 export ARCCTL_BACKEND_LOCAL_PATH=/var/lib/arcctl/state
-arcctl datacenter deploy my-dc --config ./dc
+arcctl datacenter deploy my-dc ./dc
 ```
 
 **Remote State via Flags:**
 
 ```bash
 # S3 backend
-arcctl datacenter deploy my-dc --config ./dc \
+arcctl datacenter deploy my-dc ./dc \
   --backend s3 \
   --backend-config bucket=my-arcctl-state \
   --backend-config region=us-east-1
@@ -4094,7 +4094,7 @@ export ARCCTL_BACKEND=s3
 export ARCCTL_BACKEND_S3_BUCKET=my-arcctl-state
 export ARCCTL_BACKEND_S3_REGION=us-east-1
 
-arcctl datacenter deploy my-dc --config ./dc
+arcctl datacenter deploy my-dc ./dc
 ```
 
 Supported backends:
@@ -4645,7 +4645,7 @@ Changes:    +3 create, ~1 update, -0 destroy
 Use `--output json` for machine-readable output that can power custom dashboards, notifications, or integrations:
 
 ```bash
-arcctl dc deploy my-dc --config ./dc --output json
+arcctl dc deploy my-dc ./dc --output json
 ```
 
 **Output Structure:**
@@ -4706,10 +4706,10 @@ Use `--plan` to generate the execution plan without applying changes:
 
 ```bash
 # View plan in terminal
-arcctl dc deploy my-dc --config ./dc --plan
+arcctl dc deploy my-dc ./dc --plan
 
 # Export plan as JSON
-arcctl dc deploy my-dc --config ./dc --plan --output json > plan.json
+arcctl dc deploy my-dc ./dc --plan --output json > plan.json
 ```
 
 This is useful for:
@@ -4741,12 +4741,12 @@ jobs:
       # On PRs, show plan only
       - name: Plan
         if: github.event_name == 'pull_request'
-        run: arcctl dc deploy my-dc --config ./dc --plan
+        run: arcctl dc deploy my-dc ./dc --plan
       
       # On main, apply changes
       - name: Deploy
         if: github.ref == 'refs/heads/main'
-        run: arcctl dc deploy my-dc --config ./dc --auto-approve
+        run: arcctl dc deploy my-dc ./dc --auto-approve
         env:
           ARCCTL_BACKEND: s3
           ARCCTL_BACKEND_S3_BUCKET: ${{ secrets.STATE_BUCKET }}
@@ -4763,14 +4763,14 @@ stages:
 plan:
   stage: plan
   script:
-    - arcctl dc deploy my-dc --config ./dc --plan
+    - arcctl dc deploy my-dc ./dc --plan
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 
 deploy:
   stage: deploy
   script:
-    - arcctl dc deploy my-dc --config ./dc --auto-approve
+    - arcctl dc deploy my-dc ./dc --auto-approve
   environment:
     name: production
   rules:

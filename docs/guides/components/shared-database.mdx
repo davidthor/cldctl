@@ -228,17 +228,17 @@ components:
 ```
 
 ```bash
-arcctl env apply -f environment.yml
+arcctl env update production environment.yml
 ```
 
 ### Deploy Individually
 
 ```bash
 # Deploy main app (includes database)
-arcctl component deploy main -e production --config ./app
+arcctl deploy ./app -e production
 
 # Deploy admin (shares the same database)
-arcctl component deploy admin -e production --config ./admin
+arcctl deploy ./admin -e production
 ```
 
 ## Use Cases

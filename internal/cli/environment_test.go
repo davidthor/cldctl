@@ -40,9 +40,8 @@ func TestNewEnvironmentCmd(t *testing.T) {
 		"list",
 		"get <name>",
 		"create <name>",
-		"update <name>",
+		"update <name> [config-file]",
 		"destroy <name>",
-		"apply",
 		"validate [path]",
 	}
 
@@ -123,16 +122,21 @@ func TestEnvironmentCreateCmd_Flags(t *testing.T) {
 func TestEnvironmentUpdateCmd_Flags(t *testing.T) {
 	cmd := newEnvironmentUpdateCmd()
 
-	if cmd.Use != "update <name>" {
-		t.Errorf("expected use 'update <name>', got '%s'", cmd.Use)
+	if cmd.Use != "update <name> [config-file]" {
+		t.Errorf("expected use 'update <name> [config-file]', got '%s'", cmd.Use)
 	}
 
 	// Check flags
-	flags := []string{"datacenter", "backend", "backend-config"}
+	flags := []string{"datacenter", "auto-approve", "backend", "backend-config"}
 	for _, flagName := range flags {
 		if cmd.Flags().Lookup(flagName) == nil {
 			t.Errorf("expected --%s flag", flagName)
 		}
+	}
+
+	// Check shorthands
+	if cmd.Flags().ShorthandLookup("d") == nil {
+		t.Error("expected -d shorthand for --datacenter")
 	}
 }
 
@@ -149,33 +153,6 @@ func TestEnvironmentDestroyCmd_Flags(t *testing.T) {
 		if cmd.Flags().Lookup(flagName) == nil {
 			t.Errorf("expected --%s flag", flagName)
 		}
-	}
-}
-
-func TestEnvironmentApplyCmd_Flags(t *testing.T) {
-	cmd := newEnvironmentApplyCmd()
-
-	if cmd.Use != "apply" {
-		t.Errorf("expected use 'apply', got '%s'", cmd.Use)
-	}
-
-	// Check required flags
-	fileFlag := cmd.Flags().Lookup("file")
-	if fileFlag == nil {
-		t.Error("expected --file flag")
-	}
-
-	// Check optional flags
-	optionalFlags := []string{"auto-approve", "backend", "backend-config"}
-	for _, flagName := range optionalFlags {
-		if cmd.Flags().Lookup(flagName) == nil {
-			t.Errorf("expected --%s flag", flagName)
-		}
-	}
-
-	// Check shorthands
-	if cmd.Flags().ShorthandLookup("f") == nil {
-		t.Error("expected -f shorthand for --file")
 	}
 }
 

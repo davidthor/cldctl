@@ -86,8 +86,7 @@ deployments:
 ### CLI
 
 ```bash
-arcctl component deploy my-app -e staging \
-  --config ghcr.io/myorg/my-app:v1.0.0 \
+arcctl deploy ghcr.io/myorg/my-app:v1.0.0 -e staging \
   --var log_level=debug \
   --var api_key=sk-xxx
 ```
@@ -103,8 +102,7 @@ api_key=sk-xxx-staging
 ```
 
 ```bash
-arcctl component deploy my-app -e staging \
-  --config ghcr.io/myorg/my-app:v1.0.0 \
+arcctl deploy ghcr.io/myorg/my-app:v1.0.0 -e staging \
   --var-file ./staging.dcvars
 ```
 

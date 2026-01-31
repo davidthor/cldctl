@@ -1,0 +1,24 @@
+# Native module for creating a Docker network
+plugin: native
+type: docker
+
+inputs:
+  name:
+    type: string
+    required: true
+    description: Network name
+
+resources:
+  network:
+    type: docker:network
+    properties:
+      name: "${inputs.name}"
+      driver: bridge
+
+outputs:
+  name:
+    value: "${inputs.name}"
+    description: Network name
+  id:
+    value: "${resources.network.id}"
+    description: Network ID

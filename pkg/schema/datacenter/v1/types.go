@@ -26,17 +26,17 @@ type VariableBlockV1 struct {
 
 // ModuleBlockV1 represents a module block.
 type ModuleBlockV1 struct {
-	Name            string            `hcl:"name,label"`
-	Build           string            `hcl:"build,optional"`
-	Source          string            `hcl:"source,optional"`
-	Plugin          string            `hcl:"plugin,optional"`
-	Inputs          hcl.Body          `hcl:"inputs,block"`
-	InputsEvaluated map[string]cty.Value `hcl:"-"` // Evaluated inputs
-	Environment     map[string]string `hcl:"environment,optional"`
-	When            string            `hcl:"when,optional"`
-	WhenExpr        hcl.Expression    `hcl:"-"` // Raw when expression for runtime evaluation
-	Volumes         []VolumeBlockV1   `hcl:"volume,block"`
-	Remain          hcl.Body          `hcl:",remain"`
+	Name            string               `hcl:"name,label"`
+	Build           string               `hcl:"build,optional"`
+	Source          string               `hcl:"source,optional"`
+	Plugin          string               `hcl:"plugin,optional"`
+	InputsExpr      hcl.Expression       `hcl:"-"`             // Raw inputs expression for runtime evaluation
+	InputsEvaluated map[string]cty.Value `hcl:"-"`             // Evaluated inputs
+	Environment     map[string]string    `hcl:"environment,optional"`
+	When            string               `hcl:"when,optional"`
+	WhenExpr        hcl.Expression       `hcl:"-"`             // Raw when expression for runtime evaluation
+	Volumes         []VolumeBlockV1      `hcl:"volume,block"`
+	Remain          hcl.Body             `hcl:",remain"`
 }
 
 // VolumeBlockV1 represents a volume mount block.
@@ -58,7 +58,7 @@ type EnvironmentBlockV1 struct {
 	DeploymentHooks        []HookBlockV1   `hcl:"deployment,block"`
 	FunctionHooks          []HookBlockV1   `hcl:"function,block"`
 	ServiceHooks           []HookBlockV1   `hcl:"service,block"`
-	IngressHooks           []HookBlockV1   `hcl:"ingress,block"`
+	RouteHooks             []HookBlockV1   `hcl:"route,block"`
 	CronjobHooks           []HookBlockV1   `hcl:"cronjob,block"`
 	SecretHooks            []HookBlockV1   `hcl:"secret,block"`
 	DockerBuildHooks       []HookBlockV1   `hcl:"dockerBuild,block"`
@@ -67,11 +67,12 @@ type EnvironmentBlockV1 struct {
 
 // HookBlockV1 represents a resource hook block.
 type HookBlockV1 struct {
-	When     string          `hcl:"when,optional"`
-	WhenExpr hcl.Expression  `hcl:"-"` // Raw when expression for runtime evaluation
-	Modules  []ModuleBlockV1 `hcl:"module,block"`
-	Outputs  *OutputsBlockV1 `hcl:"outputs,block"`
-	Remain   hcl.Body        `hcl:",remain"`
+	When        string          `hcl:"when,optional"`
+	WhenExpr    hcl.Expression  `hcl:"-"` // Raw when expression for runtime evaluation
+	Modules     []ModuleBlockV1 `hcl:"module,block"`
+	OutputsExpr hcl.Expression  `hcl:"-"` // Raw outputs expression for runtime evaluation (attribute syntax)
+	OutputsAttrs hcl.Attributes `hcl:"-"` // Raw outputs attributes for runtime evaluation (block syntax)
+	Remain      hcl.Body        `hcl:",remain"`
 }
 
 // OutputsBlockV1 represents the outputs block in a hook.

@@ -252,8 +252,7 @@ arcctl component build . -t ghcr.io/myorg/nestjs-worker:v1.0.0
 arcctl component push ghcr.io/myorg/nestjs-worker:v1.0.0
 
 # Deploy
-arcctl component deploy nestjs-worker -e production \
-  --config ghcr.io/myorg/nestjs-worker:v1.0.0 \
+arcctl deploy ghcr.io/myorg/nestjs-worker:v1.0.0 -e production \
   --var worker_concurrency=10
 ```
 

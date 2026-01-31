@@ -152,6 +152,67 @@ environment {
     }
   }
   
+  # Encryption key hook - generate cryptographic keys
+  encryptionKey {
+    when = node.inputs.keyType == "rsa" || node.inputs.keyType == "ecdsa"
+    
+    module "asymmetric_key" {
+      plugin = "native"
+      build  = "./modules/encryption-key"
+      inputs = {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        key_type = node.inputs.keyType
+        key_size = node.inputs.keySize
+      }
+    }
+    
+    outputs = {
+      privateKey       = module.asymmetric_key.privateKey
+      publicKey        = module.asymmetric_key.publicKey
+      privateKeyBase64 = module.asymmetric_key.privateKeyBase64
+      publicKeyBase64  = module.asymmetric_key.publicKeyBase64
+    }
+  }
+  
+  # Encryption key hook - symmetric keys
+  encryptionKey {
+    when = node.inputs.keyType == "symmetric"
+    
+    module "symmetric_key" {
+      plugin = "native"
+      build  = "./modules/encryption-key"
+      inputs = {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        key_type = "symmetric"
+        key_size = node.inputs.keySize
+      }
+    }
+    
+    outputs = {
+      key       = module.symmetric_key.key
+      keyBase64 = module.symmetric_key.keyBase64
+    }
+  }
+  
+  # SMTP hook - local email testing with MailHog
+  smtp {
+    module "mailhog" {
+      plugin = "native"
+      build  = "./modules/local-smtp"
+      inputs = {
+        name    = "${environment.name}-${node.component}-${node.name}"
+        network = variable.network_name
+      }
+    }
+    
+    outputs = {
+      host     = module.mailhog.host
+      port     = module.mailhog.port
+      username = module.mailhog.username
+      password = module.mailhog.password
+    }
+  }
+  
   # Deployment hook - run as Docker container
   deployment {
     module "container" {
@@ -217,11 +278,11 @@ environment {
     }
   }
   
-  # Ingress hook - for local dev, just expose the port directly
-  ingress {
-    module "ingress" {
+  # Route hook - for local dev, just expose the port directly
+  route {
+    module "route" {
       plugin = "native"
-      build  = "./modules/local-ingress"
+      build  = "./modules/local-route"
       inputs = {
         name     = node.name
         type     = node.inputs.type
@@ -232,11 +293,9 @@ environment {
     }
     
     outputs = {
-      url      = module.ingress.url
-      hosts    = [variable.host]
-      protocol = "http"
-      host     = variable.host
-      port     = module.ingress.port
+      url  = module.route.url
+      host = module.route.host
+      port = module.route.port
     }
   }
   

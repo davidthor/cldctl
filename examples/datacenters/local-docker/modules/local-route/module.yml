@@ -1,0 +1,55 @@
+# Native module for local routing (simple port forwarding/proxy)
+# In local development, routes expose services on a port
+plugin: native
+type: docker
+
+inputs:
+  name:
+    type: string
+    required: true
+    description: Route name
+  type:
+    type: string
+    default: "http"
+    description: Route type (http, grpc, tcp)
+  rules:
+    type: list
+    required: true
+    description: Routing rules (service targets and paths)
+  internal:
+    type: boolean
+    default: false
+    description: Whether this is internal only
+  host:
+    type: string
+    default: "localhost"
+    description: Host to bind to
+
+resources:
+  # Use nginx or traefik as a simple reverse proxy for local development
+  proxy:
+    type: docker:container
+    properties:
+      image: "nginx:alpine"
+      name: "${inputs.name}-route"
+      ports:
+        - container: 80
+          host: auto
+      # Generate nginx config from rules
+      volumes:
+        - name: "${inputs.name}-config"
+          path: /etc/nginx/conf.d
+      environment:
+        ROUTE_RULES: "${jsonencode(inputs.rules)}"
+      restart: unless-stopped
+
+outputs:
+  url:
+    value: "http://${inputs.host}:${resources.proxy.ports[0].host}"
+    description: Route URL
+  port:
+    value: "${resources.proxy.ports[0].host}"
+    description: Route port
+  host:
+    value: "${inputs.host}"
+    description: Route host

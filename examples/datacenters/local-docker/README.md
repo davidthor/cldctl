@@ -18,10 +18,15 @@ A lightweight datacenter for local development using arcctl's native plugin. Opt
 | MySQL | Docker container (`mysql:8`) |
 | Redis | Docker container (`redis:7-alpine`) |
 | Buckets | MinIO container (S3-compatible) |
+| Encryption Keys | Generated locally (RSA, ECDSA, symmetric) |
+| SMTP | MailHog container (email capture with web UI) |
 | Deployments | Docker containers |
 | Functions | Local processes |
 | Services | Port mapping lookup |
-| Ingress | Direct port exposure |
+| Routes | nginx reverse proxy |
+| Cronjobs | Suspended by default (manual trigger) |
+| Docker Builds | Local image builds |
+| Migrations | One-time Docker containers |
 
 ## Usage
 
@@ -40,7 +45,7 @@ arcctl up
 
 ```bash
 # Deploy the datacenter
-arcctl dc deploy local-dev --config ./local-docker
+arcctl dc deploy local-dev ./local-docker
 
 # Create an environment
 arcctl env create my-env --datacenter local-dev
@@ -90,7 +95,7 @@ Despite being lightweight, state IS persisted:
 
 ```
 local-docker/
-├── datacenter.hcl           # Main datacenter configuration
+├── datacenter.dc            # Main datacenter configuration
 ├── modules/
 │   ├── docker-postgres/     # PostgreSQL in Docker
 │   ├── docker-mysql/        # MySQL in Docker
@@ -98,8 +103,14 @@ local-docker/
 │   ├── docker-deployment/   # Container deployments
 │   ├── docker-bucket/       # MinIO for S3 storage
 │   ├── docker-service/      # Service discovery
-│   ├── process-function/    # Local process functions
-│   └── ...
+│   ├── docker-network/      # Docker network creation
+│   ├── docker-exec/         # One-time container execution (migrations)
+│   ├── docker-build/        # Local Docker image builds
+│   ├── encryption-key/      # RSA, ECDSA, and symmetric key generation
+│   ├── local-smtp/          # MailHog email testing
+│   ├── local-route/         # nginx reverse proxy for routing
+│   ├── local-cronjob/       # Suspended cronjob tracking
+│   └── process-function/    # Local process functions
 └── README.md
 ```
 

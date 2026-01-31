@@ -138,8 +138,7 @@ environment {
 ### CLI
 
 ```bash
-arcctl dc deploy my-datacenter \
-  --config ghcr.io/myorg/datacenter:v1.0.0 \
+arcctl dc deploy my-datacenter ghcr.io/myorg/datacenter:v1.0.0 \
   --var cluster_name=prod-cluster \
   --var region=us-west-2
 ```
@@ -157,8 +156,7 @@ enable_monitoring=true
 ```
 
 ```bash
-arcctl dc deploy my-datacenter \
-  --config ghcr.io/myorg/datacenter:v1.0.0 \
+arcctl dc deploy my-datacenter ghcr.io/myorg/datacenter:v1.0.0 \
   --var-file ./production.dcvars
 ```
 

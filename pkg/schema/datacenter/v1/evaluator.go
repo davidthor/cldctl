@@ -51,45 +51,49 @@ func (e *Evaluator) EvaluateWhen(expr hcl.Expression) (bool, error) {
 	return !val.IsNull(), nil
 }
 
-// EvaluateInputs evaluates the inputs block with the current context.
-func (e *Evaluator) EvaluateInputs(body hcl.Body) (map[string]interface{}, error) {
-	if body == nil {
+// EvaluateInputs evaluates the inputs expression with the current context.
+func (e *Evaluator) EvaluateInputs(expr hcl.Expression) (map[string]interface{}, error) {
+	if expr == nil {
 		return nil, nil
 	}
 
 	hclCtx := e.ctx.ToHCLContext()
-	attrs, diags := body.JustAttributes()
+	val, diags := expr.Value(hclCtx)
 	if diags.HasErrors() {
-		return nil, fmt.Errorf("failed to get inputs: %s", diags.Error())
+		return nil, fmt.Errorf("failed to evaluate inputs: %s", diags.Error())
+	}
+
+	if !val.Type().IsObjectType() && !val.Type().IsMapType() {
+		return nil, fmt.Errorf("inputs must be an object or map, got %s", val.Type().FriendlyName())
 	}
 
 	result := make(map[string]interface{})
-	for name, attr := range attrs {
-		val, valDiags := attr.Expr.Value(hclCtx)
-		if valDiags.HasErrors() {
-			return nil, fmt.Errorf("failed to evaluate input %s: %s", name, valDiags.Error())
-		}
-		result[name] = fromCtyValue(val)
+	for k, v := range val.AsValueMap() {
+		result[k] = fromCtyValue(v)
 	}
 
 	return result, nil
 }
 
-// EvaluateOutputs evaluates the outputs block with the current context.
-func (e *Evaluator) EvaluateOutputs(outputs *OutputsBlockV1) (map[string]interface{}, error) {
-	if outputs == nil {
+// EvaluateOutputs evaluates the outputs expression with the current context.
+func (e *Evaluator) EvaluateOutputs(expr hcl.Expression) (map[string]interface{}, error) {
+	if expr == nil {
 		return nil, nil
 	}
 
 	hclCtx := e.ctx.ToHCLContext()
-	result := make(map[string]interface{})
+	val, diags := expr.Value(hclCtx)
+	if diags.HasErrors() {
+		return nil, fmt.Errorf("failed to evaluate outputs: %s", diags.Error())
+	}
 
-	for name, attr := range outputs.Attributes {
-		val, diags := attr.Expr.Value(hclCtx)
-		if diags.HasErrors() {
-			return nil, fmt.Errorf("failed to evaluate output %s: %s", name, diags.Error())
-		}
-		result[name] = fromCtyValue(val)
+	if !val.Type().IsObjectType() && !val.Type().IsMapType() {
+		return nil, fmt.Errorf("outputs must be an object or map, got %s", val.Type().FriendlyName())
+	}
+
+	result := make(map[string]interface{})
+	for k, v := range val.AsValueMap() {
+		result[k] = fromCtyValue(v)
 	}
 
 	return result, nil
@@ -108,7 +112,7 @@ func (e *Evaluator) EvaluateModule(module *ModuleBlockV1) (*EvaluatedModule, err
 	}
 
 	// Evaluate inputs
-	inputs, err := e.EvaluateInputs(module.Inputs)
+	inputs, err := e.EvaluateInputs(module.InputsExpr)
 	if err != nil {
 		return nil, fmt.Errorf("module %s inputs: %w", module.Name, err)
 	}
@@ -149,18 +153,42 @@ func (e *Evaluator) EvaluateHook(hook *HookBlockV1) (*EvaluatedHook, error) {
 		}
 	}
 
-	// Store outputs block for later evaluation (after modules complete)
-	result.OutputsBlock = hook.Outputs
+	// Store outputs for later evaluation (after modules complete)
+	result.OutputsExpr = hook.OutputsExpr
+	result.OutputsAttrs = hook.OutputsAttrs
 
 	return result, nil
 }
 
-// FinalizeOutputs evaluates the outputs block after modules have completed.
+// FinalizeOutputs evaluates the outputs expression after modules have completed.
 func (e *Evaluator) FinalizeOutputs(hook *EvaluatedHook) (map[string]interface{}, error) {
-	if hook.OutputsBlock == nil {
+	if hook.OutputsExpr != nil {
+		return e.EvaluateOutputs(hook.OutputsExpr)
+	}
+	if hook.OutputsAttrs != nil {
+		return e.EvaluateOutputsFromAttrs(hook.OutputsAttrs)
+	}
+	return nil, nil
+}
+
+// EvaluateOutputsFromAttrs evaluates outputs from HCL attributes (block syntax).
+func (e *Evaluator) EvaluateOutputsFromAttrs(attrs hcl.Attributes) (map[string]interface{}, error) {
+	if attrs == nil {
 		return nil, nil
 	}
-	return e.EvaluateOutputs(hook.OutputsBlock)
+
+	hclCtx := e.ctx.ToHCLContext()
+	result := make(map[string]interface{})
+
+	for name, attr := range attrs {
+		val, diags := attr.Expr.Value(hclCtx)
+		if diags.HasErrors() {
+			return nil, fmt.Errorf("failed to evaluate output %s: %s", name, diags.Error())
+		}
+		result[name] = fromCtyValue(val)
+	}
+
+	return result, nil
 }
 
 // FindMatchingHook finds and evaluates the first matching hook from a list.
@@ -189,7 +217,8 @@ type EvaluatedModule struct {
 // EvaluatedHook represents a hook that has been evaluated and is ready to run.
 type EvaluatedHook struct {
 	Modules      []*EvaluatedModule
-	OutputsBlock *OutputsBlockV1
+	OutputsExpr  hcl.Expression
+	OutputsAttrs hcl.Attributes
 }
 
 // SetNodeContext sets the current node context for evaluation.

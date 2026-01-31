@@ -66,11 +66,13 @@ type Hooks interface {
 	Database() []Hook
 	DatabaseMigration() []Hook
 	Bucket() []Hook
+	EncryptionKey() []Hook
+	SMTP() []Hook
 	DatabaseUser() []Hook
 	Deployment() []Hook
 	Function() []Hook
 	Service() []Hook
-	Ingress() []Hook
+	Route() []Hook
 	Cronjob() []Hook
 	Secret() []Hook
 	DockerBuild() []Hook

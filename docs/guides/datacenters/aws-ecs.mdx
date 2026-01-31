@@ -248,8 +248,7 @@ arcctl dc deploy aws-production \
 arcctl env create staging --datacenter aws-production
 
 # Deploy components
-arcctl component deploy my-app -e staging \
-  --config ghcr.io/myorg/my-app:v1.0.0
+arcctl deploy ghcr.io/myorg/my-app:v1.0.0 -e staging
 ```
 
 ## Cost Optimization

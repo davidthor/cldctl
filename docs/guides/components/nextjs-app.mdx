@@ -151,8 +151,7 @@ arcctl component build . -t ghcr.io/myorg/nextjs-app:v1.0.0
 arcctl component push ghcr.io/myorg/nextjs-app:v1.0.0
 
 # Deploy
-arcctl component deploy nextjs-app -e production \
-  --config ghcr.io/myorg/nextjs-app:v1.0.0 \
+arcctl deploy ghcr.io/myorg/nextjs-app:v1.0.0 -e production \
   --var log_level=warn
 ```
 
