@@ -42,14 +42,19 @@
               "datacenters/overview",
               "datacenters/variables",
               "datacenters/modules",
-              "datacenters/database-hook",
-              "datacenters/deployment-hook",
-              "datacenters/function-hook",
-              "datacenters/service-hook",
-              "datacenters/ingress-hook",
-              "datacenters/bucket-hook",
-              "datacenters/docker-build-hook",
-              "datacenters/cronjob-hook",
+              {
+                "group": "Hooks",
+                "pages": [
+                  "datacenters/database-hook",
+                  "datacenters/deployment-hook",
+                  "datacenters/function-hook",
+                  "datacenters/service-hook",
+                  "datacenters/ingress-hook",
+                  "datacenters/bucket-hook",
+                  "datacenters/docker-build-hook",
+                  "datacenters/cronjob-hook"
+                ]
+              },
               "datacenters/expressions"
             ]
           },
