@@ -126,8 +126,6 @@ Choose deployments when:
 ## Complete Example
 
 ```yaml
-name: my-app
-
 databases:
   main:
     type: postgres:^15
@@ -143,7 +141,6 @@ functions:
     framework: nextjs
     environment:
       DATABASE_URL: ${{ databases.main.url }}
-      NEXT_PUBLIC_API_URL: ${{ services.api.url }}
     memory: "1024Mi"
     timeout: 60
 
@@ -156,13 +153,7 @@ functions:
     memory: "512Mi"
     timeout: 30
 
-services:
-  web:
-    function: web
-  
-  api:
-    function: api
-
+# Routes can point directly to functions - no services needed
 routes:
   main:
     type: http
@@ -172,11 +163,11 @@ routes:
               type: PathPrefix
               value: /api
         backendRefs:
-          - service: api
+          - function: api
       - matches:
           - path:
               type: PathPrefix
               value: /
         backendRefs:
-          - service: web
+          - function: web
 ```

@@ -111,6 +111,7 @@ functions:
       # Frontend only needs publishable key
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ dependencies.stripe.outputs.publishable_key }}
 
+# Services are only needed for deployments
 services:
   api:
     deployment: api
@@ -120,9 +121,7 @@ services:
     deployment: webhook-handler
     port: 3001
 
-  web:
-    function: web
-
+# Routes can point directly to functions
 routes:
   main:
     type: http
@@ -151,7 +150,7 @@ routes:
               type: PathPrefix
               value: /
         backendRefs:
-          - service: web
+          - function: web
 ```
 
 ### 3. Next.js + Stripe Example
@@ -177,14 +176,11 @@ functions:
       # Client-side (prefixed with NEXT_PUBLIC_)
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ dependencies.stripe.outputs.publishable_key }}
 
-services:
-  web:
-    function: web
-
+# Routes can point directly to functions
 routes:
   main:
     type: http
-    service: web
+    function: web
 ```
 
 ### 4. Microservices with Shared Stripe

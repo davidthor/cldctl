@@ -49,7 +49,7 @@ func (v *Validator) Validate(schema *SchemaV1) []ValidationError {
 	errs = append(errs, v.validateServices(schema.Services, schema.Deployments, schema.Functions)...)
 
 	// Validate routes
-	errs = append(errs, v.validateRoutes(schema.Routes, schema.Services)...)
+	errs = append(errs, v.validateRoutes(schema.Routes, schema.Services, schema.Functions)...)
 
 	// Validate cronjobs
 	errs = append(errs, v.validateCronjobs(schema.Cronjobs)...)
@@ -297,16 +297,13 @@ func (v *Validator) validateFunctions(functions map[string]FunctionV1) []Validat
 	return errs
 }
 
-func (v *Validator) validateServices(services map[string]ServiceV1, deployments map[string]DeploymentV1, functions map[string]FunctionV1) []ValidationError {
+func (v *Validator) validateServices(services map[string]ServiceV1, deployments map[string]DeploymentV1, _ map[string]FunctionV1) []ValidationError {
 	var errs []ValidationError
 
 	for name, svc := range services {
 		// Count how many targets are specified
 		targets := 0
 		if svc.Deployment != "" {
-			targets++
-		}
-		if svc.Function != "" {
 			targets++
 		}
 		if svc.URL != "" {
@@ -316,17 +313,17 @@ func (v *Validator) validateServices(services map[string]ServiceV1, deployments 
 		if targets == 0 {
 			errs = append(errs, ValidationError{
 				Field:   fmt.Sprintf("services.%s", name),
-				Message: "one of deployment, function, or url is required",
+				Message: "deployment or url is required",
 			})
 		}
 		if targets > 1 {
 			errs = append(errs, ValidationError{
 				Field:   fmt.Sprintf("services.%s", name),
-				Message: "deployment, function, and url are mutually exclusive",
+				Message: "deployment and url are mutually exclusive",
 			})
 		}
 
-		// Validate references
+		// Validate deployment reference
 		if svc.Deployment != "" {
 			if _, ok := deployments[svc.Deployment]; !ok {
 				errs = append(errs, ValidationError{
@@ -335,20 +332,12 @@ func (v *Validator) validateServices(services map[string]ServiceV1, deployments 
 				})
 			}
 		}
-		if svc.Function != "" {
-			if _, ok := functions[svc.Function]; !ok {
-				errs = append(errs, ValidationError{
-					Field:   fmt.Sprintf("services.%s.function", name),
-					Message: fmt.Sprintf("function %q not found", svc.Function),
-				})
-			}
-		}
 	}
 
 	return errs
 }
 
-func (v *Validator) validateRoutes(routes map[string]RouteV1, services map[string]ServiceV1) []ValidationError {
+func (v *Validator) validateRoutes(routes map[string]RouteV1, services map[string]ServiceV1, functions map[string]FunctionV1) []ValidationError {
 	var errs []ValidationError
 
 	validTypes := []string{"http", "grpc"}
@@ -384,6 +373,24 @@ func (v *Validator) validateRoutes(routes map[string]RouteV1, services map[strin
 			})
 		}
 
+		// Validate simplified form references
+		if route.Service != "" {
+			if _, ok := services[route.Service]; !ok {
+				errs = append(errs, ValidationError{
+					Field:   fmt.Sprintf("routes.%s.service", name),
+					Message: fmt.Sprintf("service %q not found", route.Service),
+				})
+			}
+		}
+		if route.Function != "" {
+			if _, ok := functions[route.Function]; !ok {
+				errs = append(errs, ValidationError{
+					Field:   fmt.Sprintf("routes.%s.function", name),
+					Message: fmt.Sprintf("function %q not found", route.Function),
+				})
+			}
+		}
+
 		// Validate backend references in rules
 		for i, rule := range route.Rules {
 			for j, backend := range rule.BackendRefs {
@@ -392,6 +399,22 @@ func (v *Validator) validateRoutes(routes map[string]RouteV1, services map[strin
 						Field:   fmt.Sprintf("routes.%s.rules[%d].backendRefs[%d]", name, i, j),
 						Message: "either service or function is required",
 					})
+				}
+				if backend.Service != "" {
+					if _, ok := services[backend.Service]; !ok {
+						errs = append(errs, ValidationError{
+							Field:   fmt.Sprintf("routes.%s.rules[%d].backendRefs[%d].service", name, i, j),
+							Message: fmt.Sprintf("service %q not found", backend.Service),
+						})
+					}
+				}
+				if backend.Function != "" {
+					if _, ok := functions[backend.Function]; !ok {
+						errs = append(errs, ValidationError{
+							Field:   fmt.Sprintf("routes.%s.rules[%d].backendRefs[%d].function", name, i, j),
+							Message: fmt.Sprintf("function %q not found", backend.Function),
+						})
+					}
 				}
 			}
 		}

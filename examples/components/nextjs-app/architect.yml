@@ -1,5 +1,7 @@
 # Example: Next.js application with PostgreSQL and S3 storage
 # A typical full-stack Next.js app with database and file uploads
+#
+# Note: Routes can point directly to functions - no service wrapper needed.
 
 variables:
   log_level:
@@ -37,18 +39,8 @@ functions:
     memory: "1024Mi"
     timeout: 30
 
-services:
-  web:
-    function: web
-
+# Routes can point directly to functions
 routes:
   main:
     type: http
-    rules:
-      - name: all-traffic
-        matches:
-          - path:
-              type: PathPrefix
-              value: /
-        backendRefs:
-          - service: web
+    function: web

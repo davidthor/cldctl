@@ -93,9 +93,10 @@ type FunctionV1 struct {
 }
 
 // ServiceV1 represents a service in the v1 schema.
+// Services expose deployments for internal communication.
+// Note: Functions don't need services - routes can point directly to functions.
 type ServiceV1 struct {
-	Deployment string `yaml:"deployment,omitempty" json:"deployment,omitempty"`
-	Function   string `yaml:"function,omitempty" json:"function,omitempty"`
+	Deployment string `yaml:"deployment" json:"deployment"`
 	URL        string `yaml:"url,omitempty" json:"url,omitempty"`
 	Port       int    `yaml:"port,omitempty" json:"port,omitempty"`
 	Protocol   string `yaml:"protocol,omitempty" json:"protocol,omitempty"`

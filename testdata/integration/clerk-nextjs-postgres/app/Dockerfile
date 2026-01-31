@@ -19,6 +19,10 @@ RUN pnpm install --frozen-lockfile
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# Build arguments for environment variables needed at build time
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+
 # Enable corepack for pnpm
 RUN corepack enable && corepack prepare pnpm@10.28.0 --activate
 

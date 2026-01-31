@@ -4,8 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/architect-io/arcctl/pkg/schema/component"
@@ -16,13 +20,13 @@ import (
 
 func newUpCmd() *cobra.Command {
 	var (
-		file       string
-		name       string
-		variables  []string
-		varFile    string
-		detach     bool
-		noOpen     bool
-		port       int
+		file      string
+		name      string
+		variables []string
+		varFile   string
+		detach    bool
+		noOpen    bool
+		port      int
 	)
 
 	cmd := &cobra.Command{
@@ -46,10 +50,16 @@ The up command:
 				path = args[0]
 			}
 
+			// Get absolute path for reliable operations
+			absPath, err := filepath.Abs(path)
+			if err != nil {
+				return fmt.Errorf("failed to resolve path: %w", err)
+			}
+
 			// Determine architect.yml location
 			componentFile := file
 			if componentFile == "" {
-				componentFile = filepath.Join(path, "architect.yml")
+				componentFile = filepath.Join(absPath, "architect.yml")
 			}
 
 			// Load the component
@@ -62,8 +72,6 @@ The up command:
 			// Determine environment name from flag or derive from directory name
 			envName := name
 			if envName == "" {
-				// Use the directory name as the base for the environment name
-				absPath, _ := filepath.Abs(path)
 				dirName := filepath.Base(absPath)
 				envName = fmt.Sprintf("%s-dev", dirName)
 			}
@@ -88,7 +96,8 @@ The up command:
 				}
 			}
 
-			fmt.Printf("Component: %s\n", filepath.Base(path))
+			componentName := filepath.Base(absPath)
+			fmt.Printf("Component: %s\n", componentName)
 			fmt.Printf("Environment: %s (local)\n", envName)
 			fmt.Println()
 
@@ -104,7 +113,6 @@ The up command:
 			dcName := "local"
 			dc, err := mgr.GetDatacenter(ctx, dcName)
 			if err != nil {
-				// Create local datacenter
 				dc = &types.DatacenterState{
 					Name:         dcName,
 					Version:      "local",
@@ -120,7 +128,6 @@ The up command:
 			// Create or get environment
 			env, err := mgr.GetEnvironment(ctx, envName)
 			if err != nil {
-				// Create new environment
 				env = &types.EnvironmentState{
 					Name:       envName,
 					Datacenter: dcName,
@@ -130,7 +137,6 @@ The up command:
 					Components: make(map[string]*types.ComponentState),
 				}
 
-				// Add environment to datacenter
 				dc.Environments = append(dc.Environments, envName)
 				dc.UpdatedAt = time.Now()
 				if err := mgr.SaveDatacenter(ctx, dc); err != nil {
@@ -138,44 +144,144 @@ The up command:
 				}
 			}
 
-			// Provision resources
+			// Initialize Docker provisioner
+			basePort := port
+			if basePort == 0 {
+				basePort = 8080
+			}
+			provisioner := NewDockerProvisioner(envName, basePort)
+
+			// Ensure Docker network exists
+			fmt.Println("[network] Creating Docker network...")
+			if err := provisioner.EnsureNetwork(ctx); err != nil {
+				return fmt.Errorf("failed to create network: %w", err)
+			}
+
+			// Collect database connection info for deployments
+			dbConnections := make(map[string]*DatabaseConnection)
+
+			// Provision databases
 			for _, db := range comp.Databases() {
-				fmt.Printf("[provision] Creating database %q...\n", db.Name())
-				// TODO: Implement actual database provisioning
-			}
-
-			for _, bucket := range comp.Buckets() {
-				fmt.Printf("[provision] Creating bucket %q...\n", bucket.Name())
-				// TODO: Implement actual bucket provisioning
-			}
-
-			// Build and deploy
-			for _, depl := range comp.Deployments() {
-				if depl.Build() != nil {
-					fmt.Printf("[build] Building deployment %q...\n", depl.Name())
-					// TODO: Implement actual Docker build
+				fmt.Printf("[provision] Creating database %q (%s)...\n", db.Name(), db.Type())
+				conn, err := provisioner.ProvisionDatabase(ctx, db, componentName)
+				if err != nil {
+					return fmt.Errorf("failed to provision database %q: %w", db.Name(), err)
 				}
-				fmt.Printf("[deploy] Starting deployment %q...\n", depl.Name())
-				// TODO: Implement actual deployment
+				dbConnections[db.Name()] = conn
+				fmt.Printf("[provision] Database %q ready at localhost:%d\n", db.Name(), conn.Port)
+			}
+
+			// Provision buckets (placeholder - would need MinIO or similar)
+			for _, bucket := range comp.Buckets() {
+				fmt.Printf("[provision] Bucket %q not yet implemented (skipping)\n", bucket.Name())
+			}
+
+			// Build and deploy containers (deployments and functions)
+			var appPort int
+
+			// Helper function to build environment variables
+			buildEnv := func() map[string]string {
+				env := make(map[string]string)
+				// Add database URLs
+				for dbName, conn := range dbConnections {
+					containerDBHost := fmt.Sprintf("%s-%s-%s", envName, componentName, dbName)
+					containerURL := fmt.Sprintf("postgres://app:%s@%s:5432/%s?sslmode=disable",
+						conn.Password, containerDBHost, conn.Database)
+					env["DATABASE_URL"] = containerURL
+					env[fmt.Sprintf("DB_%s_URL", strings.ToUpper(dbName))] = containerURL
+					env[fmt.Sprintf("DB_%s_HOST", strings.ToUpper(dbName))] = containerDBHost
+					env[fmt.Sprintf("DB_%s_PORT", strings.ToUpper(dbName))] = "5432"
+					env[fmt.Sprintf("DB_%s_USER", strings.ToUpper(dbName))] = conn.Username
+					env[fmt.Sprintf("DB_%s_PASSWORD", strings.ToUpper(dbName))] = conn.Password
+					env[fmt.Sprintf("DB_%s_NAME", strings.ToUpper(dbName))] = conn.Database
+				}
+				// Add user-provided variables
+				for k, v := range vars {
+					env[k] = v
+				}
+				return env
+			}
+
+			// Helper function to build and run a workload (deployment or function)
+			buildAndRun := func(name string, build component.Build, image string, resourceType string) error {
+				workloadEnv := buildEnv()
+
+				var imageTag string
+				if build != nil {
+					buildCtx := build.Context()
+					if !filepath.IsAbs(buildCtx) {
+						buildCtx = filepath.Join(absPath, buildCtx)
+					}
+
+					dockerfile := ""
+					explicitDockerfile := build.Dockerfile()
+					if explicitDockerfile != "" && explicitDockerfile != "Dockerfile" {
+						if !filepath.IsAbs(explicitDockerfile) {
+							dockerfile = filepath.Join(buildCtx, explicitDockerfile)
+						} else {
+							dockerfile = explicitDockerfile
+						}
+					}
+
+					// Collect build args (NEXT_PUBLIC_* vars need to be available at build time)
+					buildArgs := make(map[string]string)
+					for k, v := range vars {
+						if strings.HasPrefix(k, "NEXT_PUBLIC_") {
+							buildArgs[k] = v
+						}
+					}
+
+					fmt.Printf("[build] Building %s %q from %s...\n", resourceType, name, buildCtx)
+					var err error
+					imageTag, err = provisioner.BuildImage(ctx, name, buildCtx, dockerfile, buildArgs)
+					if err != nil {
+						return fmt.Errorf("failed to build %s %q: %w", resourceType, name, err)
+					}
+					fmt.Printf("[build] Built image %s\n", imageTag)
+				} else if image != "" {
+					imageTag = image
+				} else {
+					fmt.Printf("[%s] %s %q has no build context or image (skipping)\n", resourceType, resourceType, name)
+					return nil
+				}
+
+				containerPort := 3000 // Default for Next.js/Node apps
+				ports := map[int]int{containerPort: 0}
+
+				fmt.Printf("[%s] Starting %s %q...\n", resourceType, resourceType, name)
+				_, hostPort, err := provisioner.RunContainer(ctx, name, imageTag, componentName, workloadEnv, ports)
+				if err != nil {
+					return fmt.Errorf("failed to run %s %q: %w", resourceType, name, err)
+				}
+				appPort = hostPort
+				fmt.Printf("[%s] %s %q running on port %d\n", resourceType, resourceType, name, hostPort)
+				return nil
+			}
+
+			// Process functions (preferred for Next.js apps)
+			for _, fn := range comp.Functions() {
+				if err := buildAndRun(fn.Name(), fn.Build(), fn.Image(), "function"); err != nil {
+					return err
+				}
+			}
+
+			// Process deployments
+			for _, depl := range comp.Deployments() {
+				if err := buildAndRun(depl.Name(), depl.Build(), depl.Image(), "deployment"); err != nil {
+					return err
+				}
 			}
 
 			// Expose routes
-			localPort := port
-			if localPort == 0 {
-				localPort = 8080
-			}
-
 			routeURLs := make(map[string]string)
 			for _, route := range comp.Routes() {
-				url := fmt.Sprintf("http://localhost:%d", localPort)
+				url := fmt.Sprintf("http://localhost:%d", appPort)
 				routeURLs[route.Name()] = url
 				fmt.Printf("[expose] Route %q available at %s\n", route.Name(), url)
-				localPort++
 			}
 
 			fmt.Println()
 			if len(routeURLs) > 0 {
-				// Get first URL as primary
 				var primaryURL string
 				for _, url := range routeURLs {
 					primaryURL = url
@@ -184,9 +290,8 @@ The up command:
 				fmt.Printf("Application running at %s\n", primaryURL)
 
 				// Open browser unless --no-open is specified
-				if !noOpen {
-					// TODO: Implement browser opening
-					_ = primaryURL
+				if !noOpen && !detach {
+					openBrowser(primaryURL)
 				}
 			}
 
@@ -195,10 +300,7 @@ The up command:
 			env.UpdatedAt = time.Now()
 			env.Variables = vars
 
-			// Add component to environment - use directory name as component name
-			absPath, _ := filepath.Abs(path)
-			componentName := filepath.Base(absPath)
-			env.Components[componentName] = &types.ComponentState{
+			compState := &types.ComponentState{
 				Name:       componentName,
 				Version:    "local",
 				Source:     path,
@@ -206,7 +308,9 @@ The up command:
 				Variables:  vars,
 				DeployedAt: time.Now(),
 				UpdatedAt:  time.Now(),
+				Resources:  provisioner.ProvisionedResources(),
 			}
+			env.Components[componentName] = compState
 
 			if err := mgr.SaveEnvironment(ctx, env); err != nil {
 				return fmt.Errorf("failed to save environment state: %w", err)
@@ -215,13 +319,30 @@ The up command:
 			if detach {
 				fmt.Println()
 				fmt.Println("Running in background. To stop:")
-				fmt.Printf("  arcctl env destroy %s\n", envName)
+				fmt.Printf("  arcctl destroy environment %s\n", envName)
 			} else {
 				fmt.Println()
-				fmt.Println("Watching for changes... (Ctrl+C to stop)")
-				// TODO: Implement file watching
-				// For now, just wait
-				select {}
+				fmt.Println("Press Ctrl+C to stop...")
+
+				// Handle graceful shutdown
+				sigChan := make(chan os.Signal, 1)
+				signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+				<-sigChan
+
+				fmt.Println()
+				fmt.Println("Shutting down...")
+
+				// Cleanup containers
+				if err := CleanupByEnvName(ctx, envName); err != nil {
+					fmt.Printf("Warning: failed to cleanup containers: %v\n", err)
+				}
+
+				// Update state
+				env.Status = types.EnvironmentStatusPending
+				env.UpdatedAt = time.Now()
+				_ = mgr.SaveEnvironment(ctx, env)
+
+				fmt.Println("Stopped.")
 			}
 
 			return nil
@@ -237,6 +358,22 @@ The up command:
 	cmd.Flags().IntVar(&port, "port", 0, "Override the port for local access (default: 8080)")
 
 	return cmd
+}
+
+// openBrowser opens the default browser to the given URL.
+func openBrowser(url string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "linux":
+		cmd = exec.Command("xdg-open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		return
+	}
+	_ = cmd.Start()
 }
 
 // Helper functions for up command

@@ -6,17 +6,15 @@
 #   - Access Clerk credentials via dependencies.<name>.outputs.<field>
 #   - Share consistent auth configuration across the environment
 #
+# Note: Clerk automatically infers the domain from the publishable key,
+# so only the API keys are required.
+#
 # Usage:
 #   1. Deploy this component once per environment
 #   2. Have your applications depend on it
 #   3. Access values via ${{ dependencies.clerk.outputs.publishable_key }}
 
 variables:
-  # Required: Your Clerk instance domain
-  domain:
-    description: "Clerk frontend API domain (e.g., my-app.clerk.accounts.dev)"
-    required: true
-
   # Required: API keys from your Clerk dashboard
   publishable_key:
     description: "Clerk publishable key (pk_test_... or pk_live_...)"
@@ -36,10 +34,6 @@ variables:
 # Outputs expose values to dependent components
 # Access via: ${{ dependencies.clerk.outputs.<name> }}
 outputs:
-  domain:
-    description: "Clerk frontend API domain"
-    value: ${{ variables.domain }}
-
   publishable_key:
     description: "Clerk publishable key for frontend SDKs"
     value: ${{ variables.publishable_key }}

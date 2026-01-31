@@ -117,11 +117,11 @@ type Function interface {
 	Timeout() int
 }
 
-// Service represents internal service exposure.
+// Service represents internal service exposure for deployments.
+// Note: Functions don't need services - routes can point directly to functions.
 type Service interface {
 	Name() string
 	Deployment() string
-	Function() string
 	URL() string
 	Port() int
 	Protocol() string

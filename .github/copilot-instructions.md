@@ -67,19 +67,48 @@ type StateReader interface {
 
 ## Component Configuration (architect.yml)
 
-Components use YAML with `${{ }}` expressions:
+Components use YAML with `${{ }}` expressions.
+
+### Functions vs Deployments
+
+Use **functions** for:
+- **Next.js applications** (always use `framework: nextjs`)
+- Serverless workloads with variable traffic
+- Applications that benefit from scale-to-zero
+
+Use **deployments** for:
+- Long-running services (workers, background processors)
+- Stateful applications requiring persistent connections
+
+### Next.js Application (Recommended)
 
 ```yaml
-name: my-app
-
+# Next.js apps should use functions, not deployments
+# Routes can point directly to functions - no service wrapper needed
 databases:
   main:
-    type: postgres:^15
-    migrations:
-      build:
-        context: ./migrations
-      command: ["npm", "run", "migrate"]
+    type: postgres:^16
 
+functions:
+  web:
+    build:
+      context: .
+    framework: nextjs
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+    memory: "1024Mi"
+    timeout: 30
+
+routes:
+  main:
+    type: http
+    function: web
+```
+
+### Traditional Deployment
+
+```yaml
+# For long-running services like workers or APIs
 deployments:
   api:
     build:

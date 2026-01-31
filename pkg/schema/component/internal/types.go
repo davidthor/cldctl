@@ -126,13 +126,13 @@ type InternalFunction struct {
 	Timeout int // seconds
 }
 
-// InternalService represents internal service exposure.
+// InternalService represents internal service exposure for deployments.
+// Note: Functions don't need services - routes can point directly to functions.
 type InternalService struct {
 	Name string
 
 	// Target (one of these is set)
 	Deployment string // Target deployment name
-	Function   string // Target function name
 	URL        string // External URL (virtual service)
 
 	// Configuration

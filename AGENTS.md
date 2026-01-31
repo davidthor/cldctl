@@ -75,12 +75,48 @@ Components describe application requirements using YAML with `${{ }}` expression
 Component names are determined by the OCI tag at build time (e.g., `ghcr.io/org/my-app:v1`).
 If a `README.md` exists in the component directory, it's bundled into the artifact for documentation.
 
+### Functions vs Deployments
+
+Use **functions** for:
+- **Next.js applications** (always use `framework: nextjs`)
+- Serverless workloads with variable traffic
+- Applications that benefit from scale-to-zero
+- Request/response oriented services
+
+Use **deployments** for:
+- Long-running services (workers, background processors)
+- Stateful applications requiring persistent connections
+- Applications with specific replica requirements
+
+### Next.js Application (Recommended Pattern)
+
 ```yaml
-# architect.yml
+# architect.yml - Next.js apps should use functions
+# Routes can point directly to functions - no service wrapper needed
 databases:
   main:
-    type: postgres:^15
+    type: postgres:^16
 
+functions:
+  web:
+    build:
+      context: .
+    framework: nextjs
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+    memory: "1024Mi"
+    timeout: 30
+
+routes:
+  main:
+    type: http
+    function: web
+```
+
+### Traditional Deployment Pattern
+
+```yaml
+# architect.yml - For long-running services
 deployments:
   api:
     build:

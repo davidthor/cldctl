@@ -59,3 +59,29 @@ make build    # Build the CLI
 make test     # Run unit tests
 make lint     # Run linter
 ```
+
+## Component Best Practices
+
+### Functions vs Deployments
+
+- **Next.js apps**: Always use `functions` with `framework: nextjs`
+- **Serverless workloads**: Use `functions` for scale-to-zero benefits
+- **Long-running services**: Use `deployments` for workers, background processors
+- **Routes**: Can point directly to functions (no service wrapper needed)
+
+```yaml
+# Next.js (use functions)
+functions:
+  web:
+    build:
+      context: .
+    framework: nextjs
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+
+# Routes point directly to functions
+routes:
+  main:
+    type: http
+    function: web
+```

@@ -59,25 +59,13 @@ functions:
       ADMIN_SECRET: ${{ variables.admin_secret }}
     memory: "1024Mi"
 
-services:
-  storefront:
-    function: storefront
-
-  admin:
-    function: admin
+# Routes can point directly to functions - no services needed
 
 # Public route - accessible from the internet
 routes:
   public:
     type: http
-    rules:
-      - name: storefront
-        matches:
-          - path:
-              type: PathPrefix
-              value: /
-        backendRefs:
-          - service: storefront
+    function: storefront  # Simplified form
 
   # Private route - only accessible within the VPC
   private:
@@ -90,7 +78,7 @@ routes:
               type: PathPrefix
               value: /
         backendRefs:
-          - service: admin
+          - function: admin
         filters:
           - type: RequestHeaderModifier
             requestHeaderModifier:

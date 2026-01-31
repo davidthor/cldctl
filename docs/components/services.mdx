@@ -1,11 +1,15 @@
 ---
 title: "Services"
-description: "Expose deployments and functions for internal traffic"
+description: "Expose deployments for internal traffic"
 ---
 
 # Services
 
-Services expose deployments or functions for internal traffic within your component and to other components. They provide stable endpoints for inter-service communication.
+Services expose deployments for internal traffic within your component and to other components. They provide stable endpoints for inter-service communication.
+
+<Note>
+**Functions don't need services.** Routes can point directly to functions. Services are only needed for deployments (long-running processes) that need internal service discovery.
+</Note>
 
 ## Basic Usage
 
@@ -21,7 +25,6 @@ services:
 | Property | Type | Description |
 |----------|------|-------------|
 | `deployment` | string | Target deployment name |
-| `function` | string | Target function name |
 | `url` | string | External URL for virtual services |
 | `port` | number | Service port |
 | `protocol` | string | Protocol (`http`, `https`, `tcp`, `grpc`) |
@@ -38,16 +41,6 @@ services:
     deployment: api
     port: 8080
     protocol: http
-```
-
-### Function Service
-
-Expose a function:
-
-```yaml
-services:
-  web:
-    function: web
 ```
 
 ### External/Virtual Service
@@ -138,8 +131,6 @@ services:
 ## Complete Example
 
 ```yaml
-name: my-app
-
 deployments:
   api:
     build:
@@ -160,10 +151,12 @@ functions:
   web:
     build:
       context: ./web
+    framework: nextjs
     environment:
       API_URL: ${{ services.api.url }}
 
 services:
+  # Services are for deployments
   api:
     deployment: api
     port: 8080
@@ -179,9 +172,6 @@ services:
     port: 9000
     protocol: tcp
 
-  web:
-    function: web
-
   # External service
   payment-gateway:
     url: https://api.stripe.com
@@ -189,5 +179,19 @@ services:
 routes:
   main:
     type: http
-    service: web
+    rules:
+      - name: api
+        matches:
+          - path:
+              type: PathPrefix
+              value: /api
+        backendRefs:
+          - service: api
+      - name: web
+        matches:
+          - path:
+              type: PathPrefix
+              value: /
+        backendRefs:
+          - function: web  # Routes can point directly to functions
 ```

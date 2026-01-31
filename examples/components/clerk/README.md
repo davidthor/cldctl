@@ -6,6 +6,8 @@ A configuration passthrough component for [Clerk.com](https://clerk.com) - a mod
 
 Clerk is a SaaS authentication service (no self-hosted option). This component centralizes Clerk configuration across your environment, allowing multiple applications to share consistent auth settings.
 
+**Note:** Clerk automatically infers the domain from the publishable key, so only the API keys are required.
+
 ### Why Use This Pattern?
 
 1. **Single Source of Truth**: Configure Clerk credentials once, use everywhere
@@ -19,7 +21,6 @@ Clerk is a SaaS authentication service (no self-hosted option). This component c
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `domain` | Yes | Your Clerk frontend API domain (e.g., `my-app.clerk.accounts.dev`) |
 | `publishable_key` | Yes | Clerk publishable key (`pk_test_...` or `pk_live_...`) |
 | `secret_key` | Yes | Clerk secret key (`sk_test_...` or `sk_live_...`) - **sensitive** |
 | `webhook_secret` | No | Webhook signing secret - **sensitive** |
@@ -28,7 +29,6 @@ Clerk is a SaaS authentication service (no self-hosted option). This component c
 
 | Output | Description |
 |--------|-------------|
-| `domain` | Clerk frontend API domain |
 | `publishable_key` | Publishable key for frontend SDKs |
 | `secret_key` | Secret key for backend verification (**sensitive**) |
 | `webhook_secret` | Webhook signing secret (**sensitive**) |
@@ -41,20 +41,16 @@ Configure Clerk in your `environment.yml`:
 
 ```yaml
 # environment.yml
-name: production
-datacenter: ghcr.io/myorg/aws-datacenter:v1
-
 components:
   clerk:
-    component: ghcr.io/myorg/clerk:v1
+    source: ghcr.io/myorg/clerk:v1
     variables:
-      domain: my-app.clerk.accounts.dev
       publishable_key: pk_live_xxxxxxxxxxxxx
       secret_key: ${{ secrets.clerk_secret_key }}
       webhook_secret: ${{ secrets.clerk_webhook_secret }}
 
   my-app:
-    component: ghcr.io/myorg/my-app:v1
+    source: ghcr.io/myorg/my-app:v1
 ```
 
 ### 2. Dependent Application
@@ -66,14 +62,13 @@ In your application's `architect.yml`, declare Clerk as a dependency and access 
 
 dependencies:
   clerk:
-    component: ghcr.io/myorg/clerk:v1
+    component: clerk
 
 deployments:
   api:
     build:
       context: ./api
     environment:
-      CLERK_DOMAIN: ${{ dependencies.clerk.outputs.domain }}
       CLERK_SECRET_KEY: ${{ dependencies.clerk.outputs.secret_key }}
       CLERK_WEBHOOK_SECRET: ${{ dependencies.clerk.outputs.webhook_secret }}
 
@@ -88,14 +83,13 @@ functions:
       NEXT_PUBLIC_CLERK_SIGN_IN_URL: /sign-in
       NEXT_PUBLIC_CLERK_SIGN_UP_URL: /sign-up
 
+# Services are only needed for deployments
 services:
   api:
     deployment: api
     port: 3000
 
-  web:
-    function: web
-
+# Routes can point directly to functions
 routes:
   main:
     type: http
@@ -115,17 +109,8 @@ routes:
               type: PathPrefix
               value: /
         backendRefs:
-          - service: web
+          - function: web  # Direct reference to function
 ```
-
-## Clerk Endpoints Reference
-
-| Endpoint | URL Pattern |
-|----------|-------------|
-| Frontend API | `https://{domain}` |
-| Backend API | `https://api.clerk.com` |
-| JWKS | `https://{domain}/.well-known/jwks.json` |
-| OpenID Config | `https://{domain}/.well-known/openid-configuration` |
 
 ## Design Notes
 
@@ -146,16 +131,16 @@ Use separate environments for test and live Clerk keys:
 # environments/staging/environment.yml
 components:
   clerk:
+    source: ../components/clerk
     variables:
-      domain: my-app-staging.clerk.accounts.dev
       publishable_key: pk_test_xxx
       secret_key: ${{ secrets.clerk_secret_key_test }}
 
 # environments/production/environment.yml
 components:
   clerk:
+    source: ghcr.io/myorg/clerk:v1
     variables:
-      domain: my-app.clerk.accounts.dev
       publishable_key: pk_live_xxx
       secret_key: ${{ secrets.clerk_secret_key_live }}
 ```

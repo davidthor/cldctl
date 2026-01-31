@@ -250,7 +250,6 @@ func (t *Transformer) transformService(name string, svc ServiceV1) internal.Inte
 	return internal.InternalService{
 		Name:       name,
 		Deployment: svc.Deployment,
-		Function:   svc.Function,
 		URL:        svc.URL,
 		Port:       svc.Port,
 		Protocol:   defaultString(svc.Protocol, "http"),

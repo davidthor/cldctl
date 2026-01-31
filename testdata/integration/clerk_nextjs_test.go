@@ -27,21 +27,21 @@ import (
 // - arcctl deployment
 //
 // Required environment variables:
-//   - CLERK_DOMAIN: Clerk frontend API domain
 //   - CLERK_PUBLISHABLE_KEY: Clerk publishable key (pk_test_... or pk_live_...)
 //   - CLERK_SECRET_KEY: Clerk secret key (sk_test_... or sk_live_...)
 //
 // Optional environment variables:
 //   - ARCCTL_BINARY: Path to arcctl binary (default: searches PATH or builds)
 //   - TEST_TIMEOUT: Maximum time to wait for deployment (default: 5m)
+//
+// Note: Clerk infers the domain from the publishable key, so CLERK_DOMAIN is not required.
 func TestClerkNextJSPostgres(t *testing.T) {
 	// Check required environment variables
-	clerkDomain := os.Getenv("CLERK_DOMAIN")
 	clerkPublishableKey := os.Getenv("CLERK_PUBLISHABLE_KEY")
 	clerkSecretKey := os.Getenv("CLERK_SECRET_KEY")
 
-	if clerkDomain == "" || clerkPublishableKey == "" || clerkSecretKey == "" {
-		t.Skip("Skipping integration test: CLERK_DOMAIN, CLERK_PUBLISHABLE_KEY, and CLERK_SECRET_KEY must be set")
+	if clerkPublishableKey == "" || clerkSecretKey == "" {
+		t.Skip("Skipping integration test: CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY must be set")
 	}
 
 	// Validate Clerk key formats
@@ -85,7 +85,6 @@ func TestClerkNextJSPostgres(t *testing.T) {
 	// Step 1: Deploy the environment
 	t.Log("Step 1: Deploying environment with arcctl...")
 	deployEnvironment(t, ctx, arcctlBinary, testDir, envName, map[string]string{
-		"CLERK_DOMAIN":          clerkDomain,
 		"CLERK_PUBLISHABLE_KEY": clerkPublishableKey,
 		"CLERK_SECRET_KEY":      clerkSecretKey,
 	})

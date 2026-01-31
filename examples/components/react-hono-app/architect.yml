@@ -57,20 +57,19 @@ functions:
       VITE_API_URL: ${{ services.api.url }}
     memory: "512Mi"
 
+# Services are only needed for deployments
 services:
   api:
     deployment: api
     port: 3000
     protocol: http
 
-  frontend:
-    function: frontend
-
+# Routes can point directly to functions
 routes:
   main:
     type: http
     rules:
-      # API routes
+      # API routes (point to service for deployment)
       - name: api
         matches:
           - path:
@@ -86,11 +85,11 @@ routes:
                 type: ReplacePrefixMatch
                 replacePrefixMatch: /
       
-      # Frontend routes (catch-all)
+      # Frontend routes (point directly to function)
       - name: frontend
         matches:
           - path:
               type: PathPrefix
               value: /
         backendRefs:
-          - service: frontend
+          - function: frontend

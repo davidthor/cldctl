@@ -2,6 +2,7 @@ package graph
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -23,6 +24,10 @@ func NewBuilder(environment, datacenter string) *Builder {
 // AddComponent adds a component's resources to the graph.
 // The componentName is provided externally since component specs no longer contain names.
 func (b *Builder) AddComponent(componentName string, comp component.Component) error {
+	// Get the component's base directory for resolving relative paths
+	// This is crucial for OCI-pulled components where build contexts need to be
+	// resolved relative to the extracted artifact location
+	compDir := filepath.Dir(comp.SourcePath())
 
 	// Add databases
 	for _, db := range comp.Databases() {
@@ -47,8 +52,8 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 			// If migrations have a build, add docker build node
 			if db.Migrations().Build() != nil {
 				buildNode := NewNode(NodeTypeDockerBuild, componentName, db.Name()+"-migration-build")
-				buildNode.SetInput("context", db.Migrations().Build().Context())
-				buildNode.SetInput("dockerfile", db.Migrations().Build().Dockerfile())
+				buildNode.SetInput("context", resolveBuildContext(compDir, db.Migrations().Build().Context()))
+				buildNode.SetInput("dockerfile", resolveBuildContext(compDir, db.Migrations().Build().Dockerfile()))
 				buildNode.SetInput("args", db.Migrations().Build().Args())
 
 				migNode.AddDependency(buildNode.ID)
@@ -90,8 +95,8 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		// If has build, add docker build node
 		if deploy.Build() != nil {
 			buildNode := NewNode(NodeTypeDockerBuild, componentName, deploy.Name()+"-build")
-			buildNode.SetInput("context", deploy.Build().Context())
-			buildNode.SetInput("dockerfile", deploy.Build().Dockerfile())
+			buildNode.SetInput("context", resolveBuildContext(compDir, deploy.Build().Context()))
+			buildNode.SetInput("dockerfile", resolveBuildContext(compDir, deploy.Build().Dockerfile()))
 			buildNode.SetInput("target", deploy.Build().Target())
 			buildNode.SetInput("args", deploy.Build().Args())
 
@@ -132,8 +137,8 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		// If has build, add docker build node
 		if fn.Build() != nil {
 			buildNode := NewNode(NodeTypeDockerBuild, componentName, fn.Name()+"-build")
-			buildNode.SetInput("context", fn.Build().Context())
-			buildNode.SetInput("dockerfile", fn.Build().Dockerfile())
+			buildNode.SetInput("context", resolveBuildContext(compDir, fn.Build().Context()))
+			buildNode.SetInput("dockerfile", resolveBuildContext(compDir, fn.Build().Dockerfile()))
 			buildNode.SetInput("args", fn.Build().Args())
 
 			node.AddDependency(buildNode.ID)
@@ -156,13 +161,13 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		_ = b.graph.AddNode(node)
 	}
 
-	// Add services
+	// Add services (for deployments only - functions don't need services)
 	for _, svc := range comp.Services() {
 		node := NewNode(NodeTypeService, componentName, svc.Name())
 		node.SetInput("port", svc.Port())
 		node.SetInput("protocol", svc.Protocol())
 
-		// Service depends on its target
+		// Service depends on its deployment
 		if svc.Deployment() != "" {
 			targetID := fmt.Sprintf("%s/deployment/%s", componentName, svc.Deployment())
 			node.AddDependency(targetID)
@@ -171,14 +176,6 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 			}
 			node.SetInput("target", svc.Deployment())
 			node.SetInput("targetType", "deployment")
-		} else if svc.Function() != "" {
-			targetID := fmt.Sprintf("%s/function/%s", componentName, svc.Function())
-			node.AddDependency(targetID)
-			if target := b.graph.GetNode(targetID); target != nil {
-				target.AddDependent(node.ID)
-			}
-			node.SetInput("target", svc.Function())
-			node.SetInput("targetType", "function")
 		}
 
 		_ = b.graph.AddNode(node)
@@ -191,7 +188,27 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		node.SetInput("internal", route.Internal())
 		node.SetInput("rules", route.Rules())
 
-		// Routes depend on services they reference
+		// Routes can depend on services or functions
+		// Check simplified form first
+		if route.Service() != "" {
+			targetID := fmt.Sprintf("%s/service/%s", componentName, route.Service())
+			node.AddDependency(targetID)
+			if target := b.graph.GetNode(targetID); target != nil {
+				target.AddDependent(node.ID)
+			}
+			node.SetInput("target", route.Service())
+			node.SetInput("targetType", "service")
+		} else if route.Function() != "" {
+			targetID := fmt.Sprintf("%s/function/%s", componentName, route.Function())
+			node.AddDependency(targetID)
+			if target := b.graph.GetNode(targetID); target != nil {
+				target.AddDependent(node.ID)
+			}
+			node.SetInput("target", route.Function())
+			node.SetInput("targetType", "function")
+		}
+
+		// Check rules form
 		for _, rule := range route.Rules() {
 			for _, backend := range rule.BackendRefs() {
 				if backend.Service() != "" {
@@ -200,9 +217,16 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 					if target := b.graph.GetNode(targetID); target != nil {
 						target.AddDependent(node.ID)
 					}
+				}
+				if backend.Function() != "" {
+					targetID := fmt.Sprintf("%s/function/%s", componentName, backend.Function())
+					node.AddDependency(targetID)
+					if target := b.graph.GetNode(targetID); target != nil {
+						target.AddDependent(node.ID)
+					}
+				}
 			}
 		}
-	}
 
 		_ = b.graph.AddNode(node)
 	}
@@ -223,8 +247,8 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		// If has build, add docker build node
 		if cron.Build() != nil {
 			buildNode := NewNode(NodeTypeDockerBuild, componentName, cron.Name()+"-build")
-			buildNode.SetInput("context", cron.Build().Context())
-			buildNode.SetInput("dockerfile", cron.Build().Dockerfile())
+			buildNode.SetInput("context", resolveBuildContext(compDir, cron.Build().Context()))
+			buildNode.SetInput("dockerfile", resolveBuildContext(compDir, cron.Build().Dockerfile()))
 			buildNode.SetInput("args", cron.Build().Args())
 
 			node.AddDependency(buildNode.ID)
@@ -305,4 +329,21 @@ func (b *Builder) resolveDepReference(componentName, ref string) string {
 	}
 
 	return fmt.Sprintf("%s/%s/%s", componentName, nodeType, resourceName)
+}
+
+// resolveBuildContext resolves a build context path to an absolute path.
+// This is important for OCI-pulled components where relative paths need to be
+// resolved relative to the extracted artifact location, not the current working directory.
+func resolveBuildContext(compDir, path string) string {
+	if path == "" {
+		return ""
+	}
+
+	// If already absolute, return as-is
+	if filepath.IsAbs(path) {
+		return path
+	}
+
+	// Resolve relative path against component directory
+	return filepath.Join(compDir, path)
 }

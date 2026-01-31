@@ -281,7 +281,6 @@ type serviceWrapper struct {
 
 func (s *serviceWrapper) Name() string       { return s.svc.Name }
 func (s *serviceWrapper) Deployment() string { return s.svc.Deployment }
-func (s *serviceWrapper) Function() string   { return s.svc.Function }
 func (s *serviceWrapper) URL() string        { return s.svc.URL }
 func (s *serviceWrapper) Port() int          { return s.svc.Port }
 func (s *serviceWrapper) Protocol() string   { return s.svc.Protocol }

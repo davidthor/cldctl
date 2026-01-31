@@ -422,7 +422,9 @@ functions:
 
 ##### Services
 
-Expose deployments or functions for internal traffic within the environment.
+Expose deployments for internal traffic within the environment.
+
+> **Note:** Functions don't need services. Routes can point directly to functions. Services are only needed for deployments (long-running processes) that require internal service discovery.
 
 ```yaml
 services:
@@ -430,10 +432,6 @@ services:
     deployment: api # Target deployment name
     port: 8080 # Port the deployment listens on
     protocol: http # Optional. Protocol (http, https, tcp, grpc)
-
-  web:
-    function: web # Target function name
-    protocol: http # Optional. Protocol (http, https)
 
   # External/virtual service (for migration or egress)
   legacy-api:

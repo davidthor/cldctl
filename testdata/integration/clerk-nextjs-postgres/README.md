@@ -22,9 +22,10 @@ The test deploys:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `CLERK_DOMAIN` | Clerk frontend API domain | `my-app.clerk.accounts.dev` |
 | `CLERK_PUBLISHABLE_KEY` | Clerk publishable key | `pk_test_...` |
 | `CLERK_SECRET_KEY` | Clerk secret key | `sk_test_...` |
+
+**Note:** Clerk automatically infers the domain from the publishable key, so `CLERK_DOMAIN` is not required.
 
 ### Optional Environment Variables
 
@@ -39,7 +40,6 @@ The test deploys:
 
 ```bash
 # Set Clerk credentials
-export CLERK_DOMAIN="your-app.clerk.accounts.dev"
 export CLERK_PUBLISHABLE_KEY="pk_test_..."
 export CLERK_SECRET_KEY="sk_test_..."
 

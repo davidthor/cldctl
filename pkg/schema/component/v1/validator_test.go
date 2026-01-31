@@ -95,6 +95,12 @@ func TestValidator_Validate(t *testing.T) {
 		{
 			name: "route with valid type and service",
 			schema: &SchemaV1{
+				Deployments: map[string]DeploymentV1{
+					"api": {Image: "nginx:latest"},
+				},
+				Services: map[string]ServiceV1{
+					"api": {Deployment: "api", Port: 8080},
+				},
 				Routes: map[string]RouteV1{
 					"main": {Type: "http", Service: "api"},
 				},
@@ -104,8 +110,35 @@ func TestValidator_Validate(t *testing.T) {
 		{
 			name: "route with invalid type",
 			schema: &SchemaV1{
+				Deployments: map[string]DeploymentV1{
+					"api": {Image: "nginx:latest"},
+				},
+				Services: map[string]ServiceV1{
+					"api": {Deployment: "api", Port: 8080},
+				},
 				Routes: map[string]RouteV1{
 					"main": {Type: "invalid", Service: "api"},
+				},
+			},
+			wantErrors: 1,
+		},
+		{
+			name: "route with valid function",
+			schema: &SchemaV1{
+				Functions: map[string]FunctionV1{
+					"web": {Build: &BuildV1{Context: "."}, Framework: "nextjs"},
+				},
+				Routes: map[string]RouteV1{
+					"main": {Type: "http", Function: "web"},
+				},
+			},
+			wantErrors: 0,
+		},
+		{
+			name: "route with missing function",
+			schema: &SchemaV1{
+				Routes: map[string]RouteV1{
+					"main": {Type: "http", Function: "missing"},
 				},
 			},
 			wantErrors: 1,

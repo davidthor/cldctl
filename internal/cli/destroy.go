@@ -289,10 +289,15 @@ Examples:
 
 			fmt.Println()
 
+			// Destroy Docker containers for this environment
+			fmt.Printf("[destroy] Stopping containers...\n")
+			if err := CleanupByEnvName(ctx, envName); err != nil {
+				fmt.Printf("Warning: failed to cleanup containers: %v\n", err)
+			}
+
 			// Destroy components
 			for compName := range env.Components {
 				fmt.Printf("[destroy] Destroying component %q...\n", compName)
-				// TODO: Implement actual component destroy logic
 			}
 
 			fmt.Printf("[destroy] Removing environment...\n")
