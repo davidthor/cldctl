@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/architect-io/arcctl/pkg/oci"
+	"github.com/architect-io/arcctl/pkg/registry"
 	"github.com/architect-io/arcctl/pkg/schema/component"
 	"github.com/architect-io/arcctl/pkg/state"
 	"github.com/architect-io/arcctl/pkg/state/backend"
@@ -22,12 +23,13 @@ func newComponentCmd() *cobra.Command {
 		Use:     "component",
 		Aliases: []string{"comp"},
 		Short:   "Manage components",
-		Long:    `Commands for building, tagging, pushing, and deploying components.`,
+		Long:    `Commands for building, tagging, pushing, pulling, and deploying components.`,
 	}
 
 	cmd.AddCommand(newComponentBuildCmd())
 	cmd.AddCommand(newComponentTagCmd())
 	cmd.AddCommand(newComponentPushCmd())
+	cmd.AddCommand(newComponentPullCmd())
 	cmd.AddCommand(newComponentListCmd())
 	cmd.AddCommand(newComponentGetCmd())
 	cmd.AddCommand(newComponentDeployCmd())
@@ -44,7 +46,6 @@ func newComponentBuildCmd() *cobra.Command {
 		file         string
 		platform     string
 		noCache      bool
-		yes          bool
 		dryRun       bool
 	)
 
@@ -127,17 +128,11 @@ When building a component, arcctl creates multiple artifacts:
 				}
 			}
 
-			// Display what will be built
-			fmt.Println("The following artifacts will be created:")
-			fmt.Println()
-			fmt.Println("  Root Artifact:")
-			fmt.Printf("    %s\n", tag)
-			fmt.Println()
-
+			// Display child artifacts if any
 			if len(childArtifacts) > 0 {
-				fmt.Println("  Child Artifacts:")
+				fmt.Println("Child artifacts to build:")
 				for resource, ref := range childArtifacts {
-					fmt.Printf("    %-24s → %s\n", resource, ref)
+					fmt.Printf("  %-24s → %s\n", resource, ref)
 				}
 				fmt.Println()
 			}
@@ -145,18 +140,6 @@ When building a component, arcctl creates multiple artifacts:
 			if dryRun {
 				fmt.Println("Dry run - no artifacts were built.")
 				return nil
-			}
-
-			// Confirm unless --yes is provided
-			if !yes {
-				fmt.Print("Proceed with build? [Y/n]: ")
-				var response string
-				_, _ = fmt.Scanln(&response)
-				response = strings.ToLower(strings.TrimSpace(response))
-				if response != "" && response != "y" && response != "yes" {
-					fmt.Println("Build cancelled.")
-					return nil
-				}
 			}
 
 			// Build child artifacts (container images)
@@ -190,6 +173,40 @@ When building a component, arcctl creates multiple artifacts:
 			}
 
 			artifact.Reference = tag
+
+			// Register in local registry
+			reg, err := registry.NewRegistry()
+			if err != nil {
+				return fmt.Errorf("failed to create local registry: %w", err)
+			}
+
+			repo, tagPortion := registry.ParseReference(tag)
+			var totalSize int64
+			for _, layer := range artifact.Layers {
+				totalSize += int64(len(layer.Data))
+			}
+
+			// Calculate cache path for the component
+			homeDir, _ := os.UserHomeDir()
+			cacheKey := strings.ReplaceAll(tag, "/", "_")
+			cacheKey = strings.ReplaceAll(cacheKey, ":", "_")
+			cachePath := filepath.Join(homeDir, ".arcctl", "cache", "components", cacheKey)
+
+			entry := registry.ComponentEntry{
+				Reference:  tag,
+				Repository: repo,
+				Tag:        tagPortion,
+				Digest:     artifact.Digest,
+				Source:     registry.SourceBuilt,
+				Size:       totalSize,
+				CreatedAt:  time.Now(),
+				CachePath:  cachePath,
+			}
+
+			if err := reg.Add(entry); err != nil {
+				return fmt.Errorf("failed to register component: %w", err)
+			}
+
 			fmt.Printf("[success] Built %s\n", tag)
 
 			return nil
@@ -201,7 +218,6 @@ When building a component, arcctl creates multiple artifacts:
 	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to architect.yml if not in default location")
 	cmd.Flags().StringVar(&platform, "platform", "", "Target platform (linux/amd64, linux/arm64)")
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "Disable build cache")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Non-interactive mode (skip confirmation)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be built without building")
 	_ = cmd.MarkFlagRequired("tag")
 
@@ -320,6 +336,121 @@ artifacts (deployments, functions, etc.) to the specified registry.`,
 	return cmd
 }
 
+func newComponentPullCmd() *cobra.Command {
+	var quiet bool
+
+	cmd := &cobra.Command{
+		Use:   "pull <repo:tag>",
+		Short: "Pull a component artifact from an OCI registry",
+		Long: `Pull a component artifact from an OCI registry to the local cache.
+
+This command downloads the component artifact and registers it in the local
+component registry. The component can then be used for deployment or inspection.
+
+Examples:
+  arcctl component pull ghcr.io/myorg/myapp:v1.0.0
+  arcctl component pull docker.io/library/nginx:latest`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			reference := args[0]
+			ctx := context.Background()
+
+			if !quiet {
+				fmt.Printf("Pulling component: %s\n", reference)
+			}
+
+			client := oci.NewClient()
+
+			// Create cache directory for this component
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("failed to get home directory: %w", err)
+			}
+
+			cacheKey := strings.ReplaceAll(reference, "/", "_")
+			cacheKey = strings.ReplaceAll(cacheKey, ":", "_")
+			componentDir := filepath.Join(homeDir, ".arcctl", "cache", "components", cacheKey)
+
+			// Remove old cache if exists
+			if _, err := os.Stat(componentDir); err == nil {
+				if !quiet {
+					fmt.Printf("[pull] Removing existing cache...\n")
+				}
+				os.RemoveAll(componentDir)
+			}
+
+			// Create cache directory
+			if err := os.MkdirAll(componentDir, 0755); err != nil {
+				return fmt.Errorf("failed to create cache directory: %w", err)
+			}
+
+			if !quiet {
+				fmt.Printf("[pull] Downloading %s...\n", reference)
+			}
+
+			// Pull the component
+			if err := client.Pull(ctx, reference, componentDir); err != nil {
+				return fmt.Errorf("failed to pull component: %w", err)
+			}
+
+			// Calculate size
+			var totalSize int64
+			err = filepath.Walk(componentDir, func(_ string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				if !info.IsDir() {
+					totalSize += info.Size()
+				}
+				return nil
+			})
+			if err != nil {
+				totalSize = 0 // Non-fatal, just won't have accurate size
+			}
+
+			// Get digest if available
+			digest := ""
+			configData, err := client.PullConfig(ctx, reference)
+			if err == nil && len(configData) > 0 {
+				digest = fmt.Sprintf("sha256:%x", configData)[:71] + "..."
+			}
+
+			// Register in local registry
+			reg, err := registry.NewRegistry()
+			if err != nil {
+				return fmt.Errorf("failed to create local registry: %w", err)
+			}
+
+			repo, tag := registry.ParseReference(reference)
+			entry := registry.ComponentEntry{
+				Reference:  reference,
+				Repository: repo,
+				Tag:        tag,
+				Digest:     digest,
+				Source:     registry.SourcePulled,
+				Size:       totalSize,
+				CreatedAt:  time.Now(),
+				CachePath:  componentDir,
+			}
+
+			if err := reg.Add(entry); err != nil {
+				return fmt.Errorf("failed to register component: %w", err)
+			}
+
+			if !quiet {
+				fmt.Printf("[success] Pulled %s\n", reference)
+				fmt.Printf("  Cache: %s\n", componentDir)
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output")
+
+	return cmd
+}
+
 func newComponentListCmd() *cobra.Command {
 	var (
 		environment   string
@@ -330,11 +461,26 @@ func newComponentListCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List deployed components",
-		Long:  `List all components deployed to an environment.`,
+		Short: "List components",
+		Long: `List components available locally or deployed to an environment.
+
+Without the --environment flag, lists all locally built or pulled components
+(similar to 'docker images').
+
+With the --environment flag, lists all components deployed to that environment.
+
+Examples:
+  arcctl component list                    # List local components
+  arcctl component list -e production      # List deployed components`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 
+			// If no environment specified, list local components
+			if environment == "" {
+				return listLocalComponents(outputFormat)
+			}
+
+			// Otherwise, list deployed components
 			// Create state manager
 			mgr, err := createStateManager(backendType, backendConfig)
 			if err != nil {
@@ -388,13 +534,62 @@ func newComponentListCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&environment, "environment", "e", "", "Target environment (required)")
+	cmd.Flags().StringVarP(&environment, "environment", "e", "", "Target environment (lists deployed components)")
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format: table, json, yaml")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
-	_ = cmd.MarkFlagRequired("environment")
 
 	return cmd
+}
+
+// listLocalComponents lists all components in the local registry.
+func listLocalComponents(outputFormat string) error {
+	reg, err := registry.NewRegistry()
+	if err != nil {
+		return fmt.Errorf("failed to create local registry: %w", err)
+	}
+
+	entries, err := reg.List()
+	if err != nil {
+		return fmt.Errorf("failed to list components: %w", err)
+	}
+
+	switch outputFormat {
+	case "json":
+		data, err := json.MarshalIndent(entries, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal JSON: %w", err)
+		}
+		fmt.Println(string(data))
+	case "yaml":
+		data, err := yaml.Marshal(entries)
+		if err != nil {
+			return fmt.Errorf("failed to marshal YAML: %w", err)
+		}
+		fmt.Println(string(data))
+	default:
+		// Table format (similar to docker images)
+		if len(entries) == 0 {
+			fmt.Println("No local components found.")
+			fmt.Println()
+			fmt.Println("Build a component:  arcctl component build -t <repo:tag> <path>")
+			fmt.Println("Pull a component:   arcctl component pull <repo:tag>")
+			return nil
+		}
+
+		fmt.Printf("%-40s %-15s %-12s %-8s %s\n", "REPOSITORY", "TAG", "SOURCE", "SIZE", "CREATED")
+		for _, entry := range entries {
+			fmt.Printf("%-40s %-15s %-12s %-8s %s\n",
+				truncateString(entry.Repository, 40),
+				truncateString(entry.Tag, 15),
+				entry.Source,
+				formatSize(entry.Size),
+				formatTimeAgo(entry.CreatedAt),
+			)
+		}
+	}
+
+	return nil
 }
 
 func newComponentGetCmd() *cobra.Command {
@@ -845,4 +1040,64 @@ func parseVarFile(data []byte, vars map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// formatSize formats a size in bytes to a human-readable string.
+func formatSize(bytes int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+
+	switch {
+	case bytes >= GB:
+		return fmt.Sprintf("%.1fGB", float64(bytes)/float64(GB))
+	case bytes >= MB:
+		return fmt.Sprintf("%.1fMB", float64(bytes)/float64(MB))
+	case bytes >= KB:
+		return fmt.Sprintf("%.1fKB", float64(bytes)/float64(KB))
+	default:
+		return fmt.Sprintf("%dB", bytes)
+	}
+}
+
+// formatTimeAgo formats a time as a human-readable relative time.
+func formatTimeAgo(t time.Time) string {
+	duration := time.Since(t)
+
+	switch {
+	case duration < time.Minute:
+		return "just now"
+	case duration < time.Hour:
+		mins := int(duration.Minutes())
+		if mins == 1 {
+			return "1 minute ago"
+		}
+		return fmt.Sprintf("%d minutes ago", mins)
+	case duration < 24*time.Hour:
+		hours := int(duration.Hours())
+		if hours == 1 {
+			return "1 hour ago"
+		}
+		return fmt.Sprintf("%d hours ago", hours)
+	case duration < 7*24*time.Hour:
+		days := int(duration.Hours() / 24)
+		if days == 1 {
+			return "1 day ago"
+		}
+		return fmt.Sprintf("%d days ago", days)
+	case duration < 30*24*time.Hour:
+		weeks := int(duration.Hours() / 24 / 7)
+		if weeks == 1 {
+			return "1 week ago"
+		}
+		return fmt.Sprintf("%d weeks ago", weeks)
+	default:
+		months := int(duration.Hours() / 24 / 30)
+		if months == 1 {
+			return "1 month ago"
+		}
+		return fmt.Sprintf("%d months ago", months)
+	}
 }

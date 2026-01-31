@@ -45,7 +45,6 @@ func newDatacenterBuildCmd() *cobra.Command {
 		tag        string
 		moduleTags []string
 		file       string
-		yes        bool
 		dryRun     bool
 	)
 
@@ -105,17 +104,11 @@ When building a datacenter, arcctl bundles all IaC modules:
 				}
 			}
 
-			// Display what will be built
-			fmt.Println("The following artifacts will be created:")
-			fmt.Println()
-			fmt.Println("  Root Artifact:")
-			fmt.Printf("    %s\n", tag)
-			fmt.Println()
-
+			// Display module artifacts if any
 			if len(moduleArtifacts) > 0 {
-				fmt.Println("  Module Artifacts:")
+				fmt.Println("Module artifacts to build:")
 				for module, ref := range moduleArtifacts {
-					fmt.Printf("    %-24s → %s\n", module, ref)
+					fmt.Printf("  %-24s → %s\n", module, ref)
 				}
 				fmt.Println()
 			}
@@ -123,18 +116,6 @@ When building a datacenter, arcctl bundles all IaC modules:
 			if dryRun {
 				fmt.Println("Dry run - no artifacts were built.")
 				return nil
-			}
-
-			// Confirm unless --yes is provided
-			if !yes {
-				fmt.Print("Proceed with build? [Y/n]: ")
-				var response string
-				_, _ = fmt.Scanln(&response)
-				response = strings.ToLower(strings.TrimSpace(response))
-				if response != "" && response != "y" && response != "yes" {
-					fmt.Println("Build cancelled.")
-					return nil
-				}
 			}
 
 			// Build module artifacts
@@ -198,7 +179,6 @@ When building a datacenter, arcctl bundles all IaC modules:
 	cmd.Flags().StringVarP(&tag, "tag", "t", "", "Tag for the root datacenter artifact (required)")
 	cmd.Flags().StringArrayVar(&moduleTags, "module-tag", nil, "Override tag for a specific module (name=repo:tag)")
 	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to datacenter.hcl if not in default location")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Non-interactive mode (skip confirmation)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be built without building")
 	_ = cmd.MarkFlagRequired("tag")
 

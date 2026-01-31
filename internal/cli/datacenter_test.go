@@ -64,7 +64,7 @@ func TestDatacenterBuildCmd_Flags(t *testing.T) {
 	}
 
 	// Check optional flags
-	flags := []string{"module-tag", "file", "yes", "dry-run"}
+	flags := []string{"module-tag", "file", "dry-run"}
 	for _, flagName := range flags {
 		if cmd.Flags().Lookup(flagName) == nil {
 			t.Errorf("expected --%s flag", flagName)
@@ -77,9 +77,6 @@ func TestDatacenterBuildCmd_Flags(t *testing.T) {
 	}
 	if cmd.Flags().ShorthandLookup("f") == nil {
 		t.Error("expected -f shorthand for --file")
-	}
-	if cmd.Flags().ShorthandLookup("y") == nil {
-		t.Error("expected -y shorthand for --yes")
 	}
 }
 

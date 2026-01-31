@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -53,6 +54,7 @@ func TestNewComponentCmd(t *testing.T) {
 		"build [path]",
 		"tag <source> <target>",
 		"push <repo:tag>",
+		"pull <repo:tag>",
 		"list",
 		"get <name>",
 		"deploy <name>",
@@ -77,7 +79,7 @@ func TestComponentBuildCmd_Flags(t *testing.T) {
 	}
 
 	// Check optional flags
-	flags := []string{"artifact-tag", "file", "platform", "no-cache", "yes", "dry-run"}
+	flags := []string{"artifact-tag", "file", "platform", "no-cache", "dry-run"}
 	for _, flagName := range flags {
 		if cmd.Flags().Lookup(flagName) == nil {
 			t.Errorf("expected --%s flag", flagName)
@@ -90,9 +92,6 @@ func TestComponentBuildCmd_Flags(t *testing.T) {
 	}
 	if cmd.Flags().ShorthandLookup("f") == nil {
 		t.Error("expected -f shorthand for --file")
-	}
-	if cmd.Flags().ShorthandLookup("y") == nil {
-		t.Error("expected -y shorthand for --yes")
 	}
 }
 
@@ -130,14 +129,8 @@ func TestComponentPushCmd_Flags(t *testing.T) {
 func TestComponentListCmd_Flags(t *testing.T) {
 	cmd := newComponentListCmd()
 
-	// Check required flags
-	envFlag := cmd.Flags().Lookup("environment")
-	if envFlag == nil {
-		t.Error("expected --environment flag")
-	}
-
-	// Check optional flags
-	flags := []string{"output", "backend", "backend-config"}
+	// Check optional flags (environment is now optional)
+	flags := []string{"environment", "output", "backend", "backend-config"}
 	for _, flagName := range flags {
 		if cmd.Flags().Lookup(flagName) == nil {
 			t.Errorf("expected --%s flag", flagName)
@@ -150,6 +143,22 @@ func TestComponentListCmd_Flags(t *testing.T) {
 	}
 	if cmd.Flags().ShorthandLookup("o") == nil {
 		t.Error("expected -o shorthand for --output")
+	}
+}
+
+func TestComponentPullCmd_Flags(t *testing.T) {
+	cmd := newComponentPullCmd()
+
+	if cmd.Use != "pull <repo:tag>" {
+		t.Errorf("expected use 'pull <repo:tag>', got '%s'", cmd.Use)
+	}
+
+	// Check flags
+	if cmd.Flags().Lookup("quiet") == nil {
+		t.Error("expected --quiet flag")
+	}
+	if cmd.Flags().ShorthandLookup("q") == nil {
+		t.Error("expected -q shorthand for --quiet")
 	}
 }
 
@@ -365,5 +374,56 @@ func TestParseVarFile_OnlyComments(t *testing.T) {
 
 	if len(vars) != 0 {
 		t.Errorf("expected empty vars, got %d", len(vars))
+	}
+}
+
+func TestFormatSize(t *testing.T) {
+	tests := []struct {
+		input    int64
+		expected string
+	}{
+		{0, "0B"},
+		{500, "500B"},
+		{1024, "1.0KB"},
+		{1536, "1.5KB"},
+		{1048576, "1.0MB"},
+		{1572864, "1.5MB"},
+		{1073741824, "1.0GB"},
+		{1610612736, "1.5GB"},
+	}
+
+	for _, test := range tests {
+		result := formatSize(test.input)
+		if result != test.expected {
+			t.Errorf("formatSize(%d) = %q, expected %q", test.input, result, test.expected)
+		}
+	}
+}
+
+func TestFormatTimeAgo(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		input    time.Time
+		contains string
+	}{
+		{now.Add(-30 * time.Second), "just now"},
+		{now.Add(-5 * time.Minute), "5 minutes ago"},
+		{now.Add(-1 * time.Minute), "1 minute ago"},
+		{now.Add(-2 * time.Hour), "2 hours ago"},
+		{now.Add(-1 * time.Hour), "1 hour ago"},
+		{now.Add(-3 * 24 * time.Hour), "3 days ago"},
+		{now.Add(-1 * 24 * time.Hour), "1 day ago"},
+		{now.Add(-2 * 7 * 24 * time.Hour), "2 weeks ago"},
+		{now.Add(-1 * 7 * 24 * time.Hour), "1 week ago"},
+		{now.Add(-60 * 24 * time.Hour), "2 months ago"},
+		{now.Add(-35 * 24 * time.Hour), "1 month ago"},
+	}
+
+	for _, test := range tests {
+		result := formatTimeAgo(test.input)
+		if result != test.contains {
+			t.Errorf("formatTimeAgo(%v) = %q, expected %q", test.input, result, test.contains)
+		}
 	}
 }
