@@ -1,0 +1,60 @@
+---
+title: "push component"
+description: "Push a component artifact to an OCI registry"
+---
+
+# arcctl push component
+
+Push a component artifact and all its child artifacts to an OCI registry.
+
+<Note>
+Use `arcctl push comp` as shorthand for `arcctl push component`.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl push component <repo:tag> [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<repo:tag>` | Component artifact reference |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-y, --yes` | Non-interactive mode |
+
+## Examples
+
+```bash
+# Push a component
+arcctl push component ghcr.io/myorg/myapp:v1.0.0
+
+# Using alias
+arcctl push comp ghcr.io/myorg/myapp:v1.0.0
+
+# Non-interactive
+arcctl push component myapp:latest -y
+```
+
+## Output
+
+```
+$ arcctl push component ghcr.io/myorg/myapp:v1.0.0
+
+Pushing component artifact: ghcr.io/myorg/myapp:v1.0.0
+
+Proceed with push? [Y/n]:
+[push] Pushing ghcr.io/myorg/myapp:v1.0.0...
+[success] Pushed ghcr.io/myorg/myapp:v1.0.0
+```
+
+## See Also
+
+- [`arcctl build component`](/cli/build/component) - Build a component
+- [`arcctl pull component`](/cli/pull/component) - Pull a component

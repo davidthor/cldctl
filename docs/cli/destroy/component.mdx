@@ -1,0 +1,75 @@
+---
+title: "destroy component"
+description: "Destroy a deployed component and its resources"
+---
+
+# arcctl destroy component
+
+Destroy a deployed component and its resources.
+
+<Note>
+Use `arcctl destroy comp` as shorthand for `arcctl destroy component`.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl destroy component <name> -e <environment> [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<name>` | Name of the component to destroy |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-e, --environment <name>` | Target environment (required) |
+| `--auto-approve` | Skip confirmation prompt |
+| `--target <resource>` | Target specific resource (repeatable) |
+| `--backend <type>` | State backend type |
+| `--backend-config <key=value>` | Backend configuration |
+
+## Examples
+
+```bash
+# Destroy a component
+arcctl destroy component my-app -e production
+
+# Using alias
+arcctl destroy comp my-app -e production
+
+# Auto-approve (CI/CD)
+arcctl destroy component my-app -e staging --auto-approve
+
+# Target specific resource
+arcctl destroy component my-app -e staging --target database.main
+```
+
+## Output
+
+```
+$ arcctl destroy component web-app -e staging
+
+Component:   web-app
+Environment: staging
+
+The following resources will be destroyed:
+
+  - deployment "api" (ready)
+  - service "api" (ready)
+  - database "main" (ready)
+  - route "main" (ready)
+
+Total: 4 resources to destroy
+
+Are you sure you want to destroy this component? [y/N]:
+```
+
+## See Also
+
+- [`arcctl deploy component`](/cli/deploy/component) - Deploy a component
+- [`arcctl list component`](/cli/list/component) - List components

@@ -1,0 +1,67 @@
+---
+title: "create environment"
+description: "Create a new environment"
+---
+
+# arcctl create environment
+
+Create a new environment.
+
+<Note>
+Use `arcctl create env` as shorthand for `arcctl create environment`.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl create environment <name> [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<name>` | Environment name |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-d, --datacenter <name>` | Target datacenter (required) |
+| `--if-not-exists` | Don't error if environment already exists |
+| `--backend <type>` | State backend type |
+| `--backend-config <key=value>` | Backend configuration |
+
+## Examples
+
+```bash
+# Create an environment
+arcctl create environment staging --datacenter aws-production
+
+# Using alias
+arcctl create env staging -d aws-production
+
+# Create if not exists (idempotent)
+arcctl create environment staging --datacenter aws-production --if-not-exists
+
+# Create preview environment
+arcctl create env preview-123 -d aws-staging
+```
+
+## Output
+
+```
+$ arcctl create env staging --datacenter aws-production
+
+Environment: staging
+Datacenter:  aws-production
+
+[create] Creating environment "staging"...
+[success] Environment created successfully
+```
+
+## See Also
+
+- [`arcctl update environment`](/cli/update/environment) - Update an environment
+- [`arcctl destroy environment`](/cli/destroy/environment) - Destroy an environment
+- [`arcctl list environment`](/cli/list/environment) - List environments

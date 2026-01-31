@@ -142,7 +142,7 @@ databases:
       command: ["python", "seed.py", "--env", "production"]
 ```
 
-**Note:** When a component is built using `arcctl component build`, any `build:` blocks are compiled into `image:` references pointing to the built child artifacts. This allows the compiled component to be portable and self-contained.
+**Note:** When a component is built using `arcctl build component`, any `build:` blocks are compiled into `image:` references pointing to the built child artifacts. This allows the compiled component to be portable and self-contained.
 
 **Database properties:**
 
@@ -913,7 +913,7 @@ module "vpc" {
 - `inputs` - Map of values passed to the module
 - `when` - Conditional expression for when to invoke the module
 
-**Note:** When a datacenter is built using `arcctl datacenter build`, any `build` properties are compiled into `source` references pointing to the built module artifacts. The compiled datacenter can then be pushed to a registry and used without access to the original source code.
+**Note:** When a datacenter is built using `arcctl build datacenter`, any `build` properties are compiled into `source` references pointing to the built module artifacts. The compiled datacenter can then be pushed to a registry and used without access to the original source code.
 
 #### The Native Plugin
 
@@ -2482,29 +2482,41 @@ The datacenter framework allows platform engineers to:
 
 arcctl provides CLI commands for building, tagging, and pushing components and datacenters as OCI-compliant artifacts. Both components and datacenters are bundled into OCI artifacts that can be stored in any OCI-compatible registry (Docker Hub, GitHub Container Registry, AWS ECR, etc.).
 
+### Command Structure
+
+arcctl uses an intuitive action-first command structure:
+
+```
+arcctl <action> <resource> [arguments] [flags]
+```
+
+This pattern makes commands more natural to type (e.g., `arcctl create environment` instead of `arcctl create environment`).
+
 ### Command Aliases
 
 For convenience, arcctl supports shorthand aliases for commonly used commands:
 
-| Command | Alias |
-|---------|-------|
-| `arcctl datacenter` | `arcctl dc` |
-| `arcctl environment` | `arcctl env` |
+| Resource | Alias |
+|----------|-------|
+| `component` | `comp` |
+| `datacenter` | `dc` |
+| `environment` | `env` |
+| `list` | `ls` |
 
 **Examples:**
 
 ```bash
 # These are equivalent:
-arcctl datacenter build . -t ghcr.io/myorg/dc:v1.0.0
-arcctl dc build . -t ghcr.io/myorg/dc:v1.0.0
+arcctl build datacenter . -t ghcr.io/myorg/dc:v1.0.0
+arcctl build dc . -t ghcr.io/myorg/dc:v1.0.0
 
 # These are equivalent:
-arcctl environment list
-arcctl env list
+arcctl list environment
+arcctl ls env
 
 # These are equivalent:
-arcctl environment create staging --if-not-exists
-arcctl env create staging --if-not-exists
+arcctl create environment staging --if-not-exists
+arcctl create env staging --if-not-exists
 ```
 
 ### Artifact Structure
@@ -2518,16 +2530,16 @@ When building a component or datacenter, arcctl produces multiple OCI artifacts:
 
 During the build process, source references (like `build:` blocks) are compiled into image references pointing to the built child artifacts.
 
-### Component CLI Commands
+### Build Commands
 
-#### `arcctl component build`
+#### `arcctl build component`
 
 Build a component and its container images into OCI artifacts.
 
 **Synopsis:**
 
 ```bash
-arcctl component build <path> -t <repo:tag> [options]
+arcctl build component <path> -t <repo:tag> [options]
 ```
 
 **Arguments:**
@@ -2569,7 +2581,7 @@ For example:
 In interactive mode, arcctl displays all artifacts that will be created and prompts for confirmation:
 
 ```
-$ arcctl component build . -t myregistry.io/myorg/myapp:v1.0.0
+$ arcctl build component . -t myregistry.io/myorg/myapp:v1.0.0
 
 Building component: my-app
 
@@ -2594,7 +2606,7 @@ Proceed with build? [Y/n]:
 With `--yes` or `-y`, arcctl skips confirmation and logs the artifact names:
 
 ```
-$ arcctl component build . -t myregistry.io/myorg/myapp:v1.0.0 --yes
+$ arcctl build component . -t myregistry.io/myorg/myapp:v1.0.0 --yes
 
 Building component: my-app
 [info] Root artifact: myregistry.io/myorg/myapp:v1.0.0
@@ -2615,12 +2627,12 @@ Use `--artifact-tag` to override specific child artifacts:
 
 ```bash
 # Override the API deployment image tag
-arcctl component build . \
+arcctl build component . \
   -t myregistry.io/myorg/myapp:v1.0.0 \
   --artifact-tag deployment/api=myregistry.io/myorg/custom-api:latest
 
 # Override multiple artifacts
-arcctl component build . \
+arcctl build component . \
   -t myregistry.io/myorg/myapp:v1.0.0 \
   --artifact-tag deployment/api=myregistry.io/myorg/api:v2.0.0 \
   --artifact-tag migration/main=myregistry.io/myorg/migrations:v1.5.0
@@ -2630,26 +2642,28 @@ arcctl component build . \
 
 ```bash
 # Basic build
-arcctl component build . -t ghcr.io/myorg/myapp:v1.0.0
+arcctl build component . -t ghcr.io/myorg/myapp:v1.0.0
 
 # Build with platform specification
-arcctl component build . -t ghcr.io/myorg/myapp:v1.0.0 --platform linux/amd64
+arcctl build component . -t ghcr.io/myorg/myapp:v1.0.0 --platform linux/amd64
 
 # CI/CD build (non-interactive)
-arcctl component build . -t ghcr.io/myorg/myapp:$CI_COMMIT_SHA --yes
+arcctl build component . -t ghcr.io/myorg/myapp:$CI_COMMIT_SHA --yes
 
 # Build from specific file
-arcctl component build ./services/api -f architect.production.yml -t ghcr.io/myorg/api:v1.0.0
+arcctl build component ./services/api -f architect.production.yml -t ghcr.io/myorg/api:v1.0.0
 ```
 
-#### `arcctl component tag`
+### Tag Commands
+
+#### `arcctl tag component`
 
 Create a new tag for an existing component artifact and all its child artifacts.
 
 **Synopsis:**
 
 ```bash
-arcctl component tag <source> <target> [options]
+arcctl tag component <source> <target> [options]
 ```
 
 **Arguments:**
@@ -2671,7 +2685,7 @@ arcctl component tag <source> <target> [options]
 When tagging a component, arcctl re-tags both the root artifact and all child artifacts, maintaining the naming convention:
 
 ```bash
-$ arcctl component tag myregistry.io/myorg/myapp:v1.0.0 myregistry.io/myorg/myapp:latest
+$ arcctl tag component myregistry.io/myorg/myapp:v1.0.0 myregistry.io/myorg/myapp:latest
 
 Tagging component artifacts:
 
@@ -2690,23 +2704,25 @@ Proceed? [Y/n]:
 
 ```bash
 # Tag a version as latest
-arcctl component tag ghcr.io/myorg/myapp:v1.0.0 ghcr.io/myorg/myapp:latest
+arcctl tag component ghcr.io/myorg/myapp:v1.0.0 ghcr.io/myorg/myapp:latest
 
 # Tag for promotion to production
-arcctl component tag ghcr.io/myorg/myapp:v1.0.0 ghcr.io/myorg/myapp:production
+arcctl tag component ghcr.io/myorg/myapp:v1.0.0 ghcr.io/myorg/myapp:production
 
 # CI/CD tagging (non-interactive)
-arcctl component tag ghcr.io/myorg/myapp:$CI_COMMIT_SHA ghcr.io/myorg/myapp:$CI_BRANCH_NAME --yes
+arcctl tag component ghcr.io/myorg/myapp:$CI_COMMIT_SHA ghcr.io/myorg/myapp:$CI_BRANCH_NAME --yes
 ```
 
-#### `arcctl component push`
+### Push Commands
+
+#### `arcctl push component`
 
 Push a component artifact and all its child artifacts to an OCI registry.
 
 **Synopsis:**
 
 ```bash
-arcctl component push <repo:tag> [options]
+arcctl push component <repo:tag> [options]
 ```
 
 **Arguments:**
@@ -2726,7 +2742,7 @@ arcctl component push <repo:tag> [options]
 Pushes the root component artifact and all referenced child artifacts to the registry:
 
 ```bash
-$ arcctl component push myregistry.io/myorg/myapp:v1.0.0
+$ arcctl push component myregistry.io/myorg/myapp:v1.0.0
 
 Pushing component artifacts:
 
@@ -2753,20 +2769,22 @@ Proceed? [Y/n]:
 
 ```bash
 # Push to registry
-arcctl component push ghcr.io/myorg/myapp:v1.0.0
+arcctl push component ghcr.io/myorg/myapp:v1.0.0
 
 # CI/CD push (non-interactive)
-arcctl component push ghcr.io/myorg/myapp:$CI_COMMIT_SHA --yes
+arcctl push component ghcr.io/myorg/myapp:$CI_COMMIT_SHA --yes
 ```
 
-#### `arcctl component list`
+### List Commands
+
+#### `arcctl list component`
 
 List all components deployed to an environment.
 
 **Synopsis:**
 
 ```bash
-arcctl component list --environment <name> [backend-options]
+arcctl list component --environment <name> [backend-options]
 ```
 
 **Options:**
@@ -2782,25 +2800,25 @@ arcctl component list --environment <name> [backend-options]
 
 ```bash
 # List components in an environment
-arcctl component list --environment staging
+arcctl list component --environment staging
 
 # Using shorthand flag
-arcctl component list -e staging
+arcctl list component -e staging
 
 # With S3 backend
-arcctl component list -e production \
+arcctl list component -e production \
   --backend s3 \
   --backend-config bucket=my-arcctl-state \
   --backend-config region=us-east-1
 
 # Output as JSON
-arcctl component list -e staging --output json
+arcctl list component -e staging --output json
 ```
 
 **Output:**
 
 ```
-$ arcctl component list -e staging
+$ arcctl list component -e staging
 
 Environment: staging
 Datacenter:  aws-production
@@ -2811,14 +2829,16 @@ web-app        ghcr.io/myorg/web-app:v1.5.0        v1.5.0    running   6
 worker         ghcr.io/myorg/worker:v1.2.0         v1.2.0    running   2
 ```
 
-#### `arcctl component get`
+### Get Commands
+
+#### `arcctl get component`
 
 Get detailed information about a deployed component.
 
 **Synopsis:**
 
 ```bash
-arcctl component get <name> --environment <name> [backend-options]
+arcctl get component <name> --environment <name> [backend-options]
 ```
 
 **Arguments:**
@@ -2840,19 +2860,19 @@ arcctl component get <name> --environment <name> [backend-options]
 
 ```bash
 # Get component details
-arcctl component get web-app --environment staging
+arcctl get component web-app --environment staging
 
 # Using shorthand
-arcctl component get web-app -e staging
+arcctl get component web-app -e staging
 
 # Output as JSON for scripting
-arcctl component get web-app -e staging --output json
+arcctl get component web-app -e staging --output json
 ```
 
 **Output:**
 
 ```
-$ arcctl component get web-app -e staging
+$ arcctl get component web-app -e staging
 
 Component:   web-app
 Environment: staging
@@ -2875,14 +2895,16 @@ Resources:
   route       main        active       https://staging.example.com
 ```
 
-#### `arcctl component deploy`
+### Deploy Commands
+
+#### `arcctl deploy component`
 
 Deploy a component to an environment.
 
 **Synopsis:**
 
 ```bash
-arcctl component deploy <name> --environment <name> --config <config-ref> [options]
+arcctl deploy component <source> --environment <name> [options]
 ```
 
 **Arguments:**
@@ -2910,13 +2932,13 @@ The `--config` flag accepts two formats:
 
 1. **OCI image reference**: A built component artifact in `repo:tag` format
    ```bash
-   arcctl component deploy web-app -e staging --config ghcr.io/myorg/web-app:v1.5.0
+   arcctl deploy component ghcr.io/myorg/web-app:v1.5.0 -e staging
    ```
    When deploying from an OCI image, the pre-built container images embedded in the artifact are used directly.
 
 2. **Local path**: Path to a directory containing `architect.yml` (for development)
    ```bash
-   arcctl component deploy web-app -e staging --config ./services/web-app
+   arcctl deploy component ./services/web-app -e staging
    ```
    When deploying from local source, arcctl invokes the datacenter's `dockerBuild` hook to build and push container images. The datacenter author controls where images are pushed (e.g., ECR, GCR, Docker Hub) so the target environment can pull them. See [Docker Build Hook](#docker-build-hook) for details.
 
@@ -2928,7 +2950,7 @@ The `--config` flag accepts two formats:
 4. **Apply**: Deploys resources via datacenter hooks, updating component state as each completes
 
 ```
-$ arcctl component deploy web-app -e staging --config ghcr.io/myorg/web-app:v1.5.0
+$ arcctl deploy component ghcr.io/myorg/web-app:v1.5.0 -e staging
 
 Component:   web-app
 Environment: staging
@@ -2977,48 +2999,44 @@ Proceed with deployment? [Y/n]:
 
 ```bash
 # Deploy from OCI image
-arcctl component deploy web-app -e staging --config ghcr.io/myorg/web-app:v1.5.0
+arcctl deploy component ghcr.io/myorg/web-app:v1.5.0 -e staging
 
 # Deploy from local source (development)
-arcctl component deploy web-app -e staging --config ./services/web-app
+arcctl deploy component ./services/web-app -e staging
 
 # Deploy with variables
-arcctl component deploy web-app -e staging \
-  --config ghcr.io/myorg/web-app:v1.5.0 \
+arcctl deploy component ghcr.io/myorg/web-app:v1.5.0 -e staging \
   --var log_level=debug \
   --var-file ./vars/staging.dcvars
 
 # Deploy with auto-approval (CI/CD)
-arcctl component deploy web-app -e staging \
-  --config ghcr.io/myorg/web-app:v1.5.0 \
+arcctl deploy component ghcr.io/myorg/web-app:v1.5.0 -e staging \
   --auto-approve
 
 # Deploy with S3 backend
-arcctl component deploy web-app -e staging \
-  --config ghcr.io/myorg/web-app:v1.5.0 \
+arcctl deploy component ghcr.io/myorg/web-app:v1.5.0 -e staging \
   --backend s3 \
   --backend-config bucket=my-arcctl-state \
   --backend-config region=us-east-1
 
 # Deploy targeting a specific resource
-arcctl component deploy web-app -e staging \
-  --config ghcr.io/myorg/web-app:v1.5.0 \
+arcctl deploy component ghcr.io/myorg/web-app:v1.5.0 -e staging \
   --target deployment.api
 
 # Deploy via environment variables
 export ARCCTL_BACKEND=s3
 export ARCCTL_BACKEND_S3_BUCKET=my-arcctl-state
 export ARCCTL_BACKEND_S3_REGION=us-east-1
-arcctl component deploy web-app -e production --config ghcr.io/myorg/web-app:v1.5.0 --auto-approve
+arcctl deploy component ghcr.io/myorg/web-app:v1.5.0 -e production --auto-approve
 ```
 
 **Updating a Component:**
 
-Running `component deploy` with the same name updates the existing deployment:
+Running `deploy component` with the same name updates the existing deployment:
 
 ```bash
 # Update to a new version
-arcctl component deploy web-app -e staging --config ghcr.io/myorg/web-app:v1.6.0
+arcctl deploy component ghcr.io/myorg/web-app:v1.6.0 -e staging
 
 # The plan shows what changes
 Execution Plan:
@@ -3029,14 +3047,16 @@ Execution Plan:
 Plan: 0 to create, 1 to update, 0 to destroy
 ```
 
-#### `arcctl component destroy`
+### Destroy Commands
+
+#### `arcctl destroy component`
 
 Remove a component from an environment and destroy all its resources.
 
 **Synopsis:**
 
 ```bash
-arcctl component destroy <name> --environment <name> [options]
+arcctl destroy component <name> --environment <name> [options]
 ```
 
 **Arguments:**
@@ -3062,7 +3082,7 @@ arcctl component destroy <name> --environment <name> [options]
 4. Destroys all resources and removes component from environment state
 
 ```
-$ arcctl component destroy web-app -e staging
+$ arcctl destroy component web-app -e staging
 
 Component:   web-app
 Environment: staging
@@ -3099,13 +3119,13 @@ Type the component name to confirm: web-app
 
 ```bash
 # Interactive destroy
-arcctl component destroy web-app -e staging
+arcctl destroy component web-app -e staging
 
 # Auto-approve (CI/CD cleanup)
-arcctl component destroy web-app -e preview-123 --auto-approve
+arcctl destroy component web-app -e preview-123 --auto-approve
 
 # With S3 backend
-arcctl component destroy web-app -e staging \
+arcctl destroy component web-app -e staging \
   --backend s3 \
   --backend-config bucket=my-arcctl-state \
   --backend-config region=us-east-1
@@ -3114,19 +3134,19 @@ arcctl component destroy web-app -e staging \
 export ARCCTL_BACKEND=s3
 export ARCCTL_BACKEND_S3_BUCKET=my-arcctl-state
 export ARCCTL_BACKEND_S3_REGION=us-east-1
-arcctl component destroy web-app -e preview-123 --auto-approve
+arcctl destroy component web-app -e preview-123 --auto-approve
 ```
 
-### Datacenter CLI Commands (`datacenter` | `dc`)
+### Datacenter Build Commands
 
-#### `arcctl datacenter build`
+#### `arcctl build datacenter`
 
 Build a datacenter and its IaC modules into OCI artifacts.
 
 **Synopsis:**
 
 ```bash
-arcctl datacenter build <path> -t <repo:tag> [options]
+arcctl build datacenter <path> -t <repo:tag> [options]
 ```
 
 **Arguments:**
@@ -3171,7 +3191,7 @@ Each module is built into a container image that:
 **Interactive Mode (default):**
 
 ```
-$ arcctl datacenter build . -t myregistry.io/myorg/aws-prod:v1.0.0
+$ arcctl build datacenter . -t myregistry.io/myorg/aws-prod:v1.0.0
 
 Building datacenter: aws-production
 
@@ -3195,7 +3215,7 @@ Proceed with build? [Y/n]:
 **Non-Interactive Mode (CI/CD):**
 
 ```
-$ arcctl datacenter build . -t myregistry.io/myorg/aws-prod:v1.0.0 --yes
+$ arcctl build datacenter . -t myregistry.io/myorg/aws-prod:v1.0.0 --yes
 
 Building datacenter: aws-production
 [info] Root artifact: myregistry.io/myorg/aws-prod:v1.0.0
@@ -3213,12 +3233,12 @@ Building datacenter: aws-production
 
 ```bash
 # Override a specific module image
-arcctl datacenter build . \
+arcctl build datacenter . \
   -t myregistry.io/myorg/aws-prod:v1.0.0 \
   --artifact-tag module/k8s=myregistry.io/myorg/shared-k8s-module:v2.0.0
 
 # Use shared modules from another registry
-arcctl datacenter build . \
+arcctl build datacenter . \
   -t myregistry.io/myorg/aws-prod:v1.0.0 \
   --artifact-tag module/postgres_cluster=myregistry.io/shared-postgres:latest \
   --artifact-tag module/redis=myregistry.io/shared-redis:latest
@@ -3228,23 +3248,25 @@ arcctl datacenter build . \
 
 ```bash
 # Basic build
-arcctl datacenter build . -t ghcr.io/myorg/aws-prod:v1.0.0
+arcctl build datacenter . -t ghcr.io/myorg/aws-prod:v1.0.0
 
 # CI/CD build (non-interactive) - using shorthand
-arcctl dc build . -t ghcr.io/myorg/aws-prod:$CI_COMMIT_SHA --yes
+arcctl build dc . -t ghcr.io/myorg/aws-prod:$CI_COMMIT_SHA --yes
 
 # Build from specific file
-arcctl datacenter build ./datacenters/aws -f datacenter.production.dc -t ghcr.io/myorg/aws-prod:v1.0.0
+arcctl build datacenter ./datacenters/aws -f datacenter.production.dc -t ghcr.io/myorg/aws-prod:v1.0.0
 ```
 
-#### `arcctl datacenter tag`
+### Datacenter Tag Commands
+
+#### `arcctl tag datacenter`
 
 Create a new tag for an existing datacenter artifact and all its module artifacts.
 
 **Synopsis:**
 
 ```bash
-arcctl datacenter tag <source> <target> [options]
+arcctl tag datacenter <source> <target> [options]
 ```
 
 **Arguments:**
@@ -3265,20 +3287,22 @@ arcctl datacenter tag <source> <target> [options]
 
 ```bash
 # Tag a version as latest
-arcctl datacenter tag ghcr.io/myorg/aws-prod:v1.0.0 ghcr.io/myorg/aws-prod:latest
+arcctl tag datacenter ghcr.io/myorg/aws-prod:v1.0.0 ghcr.io/myorg/aws-prod:latest
 
 # Tag for promotion
-arcctl datacenter tag ghcr.io/myorg/aws-prod:v1.0.0 ghcr.io/myorg/aws-prod:stable --yes
+arcctl tag datacenter ghcr.io/myorg/aws-prod:v1.0.0 ghcr.io/myorg/aws-prod:stable --yes
 ```
 
-#### `arcctl datacenter push`
+### Datacenter Push Commands
+
+#### `arcctl push datacenter`
 
 Push a datacenter artifact and all its module artifacts to an OCI registry.
 
 **Synopsis:**
 
 ```bash
-arcctl datacenter push <repo:tag> [options]
+arcctl push datacenter <repo:tag> [options]
 ```
 
 **Arguments:**
@@ -3297,20 +3321,22 @@ arcctl datacenter push <repo:tag> [options]
 
 ```bash
 # Push to registry
-arcctl datacenter push ghcr.io/myorg/aws-prod:v1.0.0
+arcctl push datacenter ghcr.io/myorg/aws-prod:v1.0.0
 
 # CI/CD push (non-interactive)
-arcctl datacenter push ghcr.io/myorg/aws-prod:$CI_COMMIT_SHA --yes
+arcctl push datacenter ghcr.io/myorg/aws-prod:$CI_COMMIT_SHA --yes
 ```
 
-#### `arcctl datacenter deploy`
+### Datacenter Deploy Commands
+
+#### `arcctl deploy datacenter`
 
 Create a new datacenter or update an existing one by applying a datacenter configuration. This command provisions or updates the datacenter-level infrastructure (shared resources like Kubernetes clusters, VPCs, etc.) defined in the datacenter config.
 
 **Synopsis:**
 
 ```bash
-arcctl datacenter deploy <name> <config> [options]
+arcctl deploy datacenter <name> <config> [options]
 ```
 
 **Arguments:**
@@ -3339,21 +3365,21 @@ State backend can be configured via command flags or environment variables, simi
 
 ```bash
 # Local state (default) - stores in current working directory
-arcctl datacenter deploy my-dc ./dc
+arcctl deploy datacenter my-dc ./dc
 # State written to: .arcctl/my-dc/
 
 # Custom local state path via flag
-arcctl datacenter deploy my-dc ./dc \
+arcctl deploy datacenter my-dc ./dc \
   --backend local \
   --backend-config path=./custom/state/path
 
 # Custom local state path via env var
 export ARCCTL_BACKEND=local
 export ARCCTL_BACKEND_LOCAL_PATH=./custom/state/path
-arcctl datacenter deploy my-dc ./dc
+arcctl deploy datacenter my-dc ./dc
 
 # S3 backend via flags
-arcctl datacenter deploy my-dc ./dc \
+arcctl deploy datacenter my-dc ./dc \
   --backend s3 \
   --backend-config bucket=my-arcctl-state \
   --backend-config region=us-east-1 \
@@ -3364,7 +3390,7 @@ export ARCCTL_BACKEND=s3
 export ARCCTL_BACKEND_S3_BUCKET=my-arcctl-state
 export ARCCTL_BACKEND_S3_REGION=us-east-1
 export ARCCTL_BACKEND_S3_KEY=datacenters/my-dc
-arcctl datacenter deploy my-dc ./dc
+arcctl deploy datacenter my-dc ./dc
 ```
 
 **Environment Variable Pattern:**
@@ -3396,12 +3422,12 @@ The `--config` flag accepts two formats:
 
 1. **Local path**: Path to a directory containing `datacenter.dc`
    ```bash
-   arcctl datacenter deploy my-dc ./datacenters/aws-prod
+   arcctl deploy datacenter my-dc ./datacenters/aws-prod
    ```
 
 2. **OCI image reference**: A built datacenter artifact in `repo:tag` format
    ```bash
-   arcctl datacenter deploy my-dc ghcr.io/myorg/aws-prod:v1.0.0
+   arcctl deploy datacenter my-dc ghcr.io/myorg/aws-prod:v1.0.0
    ```
 
 **Behavior:**
@@ -3411,7 +3437,7 @@ The `--config` flag accepts two formats:
 3. **Apply Phase**: Executes each datacenter-level module in dependency order, updating state as each completes
 
 ```
-$ arcctl datacenter deploy aws-production ghcr.io/myorg/aws-prod:v1.0.0
+$ arcctl deploy datacenter aws-production ghcr.io/myorg/aws-prod:v1.0.0
 
 Datacenter: aws-production
 Config: ghcr.io/myorg/aws-prod:v1.0.0
@@ -3483,7 +3509,7 @@ Variables are resolved in the following order (later sources override earlier):
 
 ```bash
 # Using multiple variable sources
-arcctl datacenter deploy my-dc \
+arcctl deploy datacenter my-dc \
   --config ./datacenters/aws-prod \
   --var-file ./vars/production.dcvars \
   --var region=us-west-2 \
@@ -3494,47 +3520,49 @@ arcctl datacenter deploy my-dc \
 
 ```bash
 # Deploy from local config
-arcctl datacenter deploy my-datacenter ./datacenters/aws-prod
+arcctl deploy datacenter my-datacenter ./datacenters/aws-prod
 
 # Deploy from OCI artifact
-arcctl datacenter deploy my-datacenter ghcr.io/myorg/aws-prod:v1.0.0
+arcctl deploy datacenter my-datacenter ghcr.io/myorg/aws-prod:v1.0.0
 
 # Deploy with variables
-arcctl datacenter deploy my-datacenter \
+arcctl deploy datacenter my-datacenter \
   --config ghcr.io/myorg/aws-prod:v1.0.0 \
   --var region=us-east-1 \
   --var cluster_name=production
 
 # Deploy with auto-approval (CI/CD)
-arcctl datacenter deploy my-datacenter \
+arcctl deploy datacenter my-datacenter \
   --config ghcr.io/myorg/aws-prod:v1.0.0 \
   --var-file ./vars/production.dcvars \
   --auto-approve
 
 # Destroy a datacenter
-arcctl datacenter deploy my-datacenter \
+arcctl deploy datacenter my-datacenter \
   --config ghcr.io/myorg/aws-prod:v1.0.0 \
   --destroy \
   --auto-approve
 
 # Update a specific module only
-arcctl datacenter deploy my-datacenter \
+arcctl deploy datacenter my-datacenter \
   --config ghcr.io/myorg/aws-prod:v1.0.0 \
   --target module.k8s
 ```
 
-### Environment CLI Commands (`environment` | `env`)
+### Environment Commands (`environment` | `env`)
 
 Environments are deployment targets that live within a datacenter. Each environment has its own isolated state, but the datacenter's state backend manages all environment state references. Since the state backend is scoped to a single datacenter, you don't need to specify the datacenter name—it's implicit from the backend configuration.
 
-#### `arcctl environment list`
+### Environment Commands
+
+#### `arcctl list environment`
 
 List all environments in the datacenter.
 
 **Synopsis:**
 
 ```bash
-arcctl environment list [backend-options]
+arcctl list environment [backend-options]
 ```
 
 **Options:**
@@ -3549,10 +3577,10 @@ arcctl environment list [backend-options]
 
 ```bash
 # List environments using local state
-arcctl environment list
+arcctl list environment
 
 # List environments using S3 backend
-arcctl environment list \
+arcctl list environment \
   --backend s3 \
   --backend-config bucket=my-arcctl-state \
   --backend-config region=us-east-1
@@ -3561,16 +3589,16 @@ arcctl environment list \
 export ARCCTL_BACKEND=s3
 export ARCCTL_BACKEND_S3_BUCKET=my-arcctl-state
 export ARCCTL_BACKEND_S3_REGION=us-east-1
-arcctl environment list
+arcctl list environment
 
 # Output as JSON
-arcctl environment list --output json
+arcctl list environment --output json
 ```
 
 **Output:**
 
 ```
-$ arcctl environment list
+$ arcctl list environment
 
 Datacenter: aws-production
 
@@ -3580,14 +3608,14 @@ production    healthy   3            2026-01-10 09:00:00  2026-01-29 08:15:00
 preview-123   healthy   2            2026-01-29 11:00:00  2026-01-29 11:05:00
 ```
 
-#### `arcctl environment get`
+#### `arcctl get environment`
 
 Get detailed information about a specific environment.
 
 **Synopsis:**
 
 ```bash
-arcctl environment get <name> [backend-options]
+arcctl get environment <name> [backend-options]
 ```
 
 **Arguments:**
@@ -3608,13 +3636,13 @@ arcctl environment get <name> [backend-options]
 
 ```bash
 # Get environment details
-arcctl environment get staging
+arcctl get environment staging
 
 # Get as JSON for scripting
-arcctl environment get staging --output json
+arcctl get environment staging --output json
 
 # With S3 backend
-arcctl environment get staging \
+arcctl get environment staging \
   --backend s3 \
   --backend-config bucket=my-arcctl-state \
   --backend-config region=us-east-1
@@ -3623,7 +3651,7 @@ arcctl environment get staging \
 **Output:**
 
 ```
-$ arcctl environment get staging --datacenter aws-production
+$ arcctl get environment staging --datacenter aws-production
 
 Environment: staging
 Datacenter:  aws-production
@@ -3647,14 +3675,14 @@ Resources:
   route       web-app/main      https://staging.example.com
 ```
 
-#### `arcctl environment create`
+#### `arcctl create environment`
 
 Create a new environment in the datacenter.
 
 **Synopsis:**
 
 ```bash
-arcctl environment create <name> [options]
+arcctl create environment <name> [options]
 ```
 
 **Arguments:**
@@ -3676,7 +3704,7 @@ arcctl environment create <name> [options]
 Creates an empty environment entry in the datacenter state. The environment is ready to have components deployed to it after creation.
 
 ```
-$ arcctl environment create staging
+$ arcctl create environment staging
 
 Environment: staging
 Datacenter:  aws-production (from state backend)
@@ -3689,22 +3717,22 @@ Datacenter:  aws-production (from state backend)
 
 ```bash
 # Create a new environment
-arcctl environment create staging
+arcctl create environment staging
 
 # Create with S3 backend
-arcctl environment create staging \
+arcctl create environment staging \
   --backend s3 \
   --backend-config bucket=my-arcctl-state \
   --backend-config region=us-east-1
 
 # CI/CD: Create if not exists (idempotent) - using shorthand
-arcctl env create preview-$PR_NUMBER --if-not-exists
+arcctl create env preview-$PR_NUMBER --if-not-exists
 
 # Via environment variables
 export ARCCTL_BACKEND=s3
 export ARCCTL_BACKEND_S3_BUCKET=my-arcctl-state
 export ARCCTL_BACKEND_S3_REGION=us-east-1
-arcctl env create preview-123 --if-not-exists
+arcctl create env preview-123 --if-not-exists
 ```
 
 **CI/CD Usage:**
@@ -3715,7 +3743,7 @@ The `--if-not-exists` flag is particularly useful for preview environments in CI
 # GitHub Actions example
 - name: Create Preview Environment
   run: |
-    arcctl environment create preview-${{ github.event.pull_request.number }} \
+    arcctl create environment preview-${{ github.event.pull_request.number }} \
       --if-not-exists \
       --backend s3 \
       --backend-config bucket=${{ secrets.STATE_BUCKET }} \
@@ -3726,14 +3754,14 @@ When `--if-not-exists` is set and the environment already exists:
 - The command exits with code 0 (success)
 - A message is logged: `Environment "preview-123" already exists, skipping creation`
 
-#### `arcctl environment update`
+#### `arcctl update environment`
 
 Update an existing environment's properties.
 
 **Synopsis:**
 
 ```bash
-arcctl environment update <name> [options]
+arcctl update environment <name> [options]
 ```
 
 **Arguments:**
@@ -3755,7 +3783,7 @@ arcctl environment update <name> [options]
 Updates environment metadata. Currently, the only editable property is the environment name.
 
 ```
-$ arcctl environment update staging --name production
+$ arcctl update environment staging --name production
 
 Environment: staging → production
 Datacenter:  aws-production (from state backend)
@@ -3768,10 +3796,10 @@ Datacenter:  aws-production (from state backend)
 
 ```bash
 # Rename an environment
-arcctl environment update staging --name production
+arcctl update environment staging --name production
 
 # Rename with S3 backend
-arcctl environment update staging \
+arcctl update environment staging \
   --name production \
   --backend s3 \
   --backend-config bucket=my-arcctl-state \
@@ -3783,14 +3811,14 @@ arcctl environment update staging \
 - Renaming an environment updates all state references but does not affect deployed resources
 - Deployed components continue running; only the environment identifier changes
 
-#### `arcctl environment destroy`
+#### `arcctl destroy environment`
 
 Destroy an environment and all its resources.
 
 **Synopsis:**
 
 ```bash
-arcctl environment destroy <name> [options]
+arcctl destroy environment <name> [options]
 ```
 
 **Arguments:**
@@ -3815,7 +3843,7 @@ arcctl environment destroy <name> [options]
 4. Destroys all resources and removes environment state
 
 ```
-$ arcctl environment destroy preview-123
+$ arcctl destroy environment preview-123
 
 Environment: preview-123
 Datacenter:  aws-production (from state backend)
@@ -3852,13 +3880,13 @@ Type the environment name to confirm: preview-123
 
 ```bash
 # Interactive destroy (using local state backend)
-arcctl environment destroy preview-123
+arcctl destroy environment preview-123
 
 # Auto-approve (CI/CD cleanup) - using shorthand
 arcctl env destroy preview-123 --auto-approve
 
 # With S3 backend
-arcctl environment destroy preview-123 \
+arcctl destroy environment preview-123 \
   --backend s3 \
   --backend-config bucket=my-arcctl-state \
   --backend-config region=us-east-1
@@ -3867,7 +3895,7 @@ arcctl environment destroy preview-123 \
 export ARCCTL_BACKEND=s3
 export ARCCTL_BACKEND_S3_BUCKET=my-arcctl-state
 export ARCCTL_BACKEND_S3_REGION=us-east-1
-arcctl environment destroy preview-123 --auto-approve
+arcctl destroy environment preview-123 --auto-approve
 ```
 
 ### Environment State Management
@@ -4044,7 +4072,7 @@ Locks are advisory and include:
 - Operation being performed
 
 ```
-$ arcctl datacenter deploy my-dc ./dc
+$ arcctl deploy datacenter my-dc ./dc
 
 Error: State is locked
 
@@ -4064,24 +4092,24 @@ State backend is configured per-command via `--backend` and `--backend-config` f
 
 ```bash
 # State stored in .arcctl/<datacenter-name>/
-arcctl datacenter deploy my-dc ./dc
+arcctl deploy datacenter my-dc ./dc
 
 # Custom local path via flags
-arcctl datacenter deploy my-dc ./dc \
+arcctl deploy datacenter my-dc ./dc \
   --backend local \
   --backend-config path=/var/lib/arcctl/state
 
 # Custom local path via env vars
 export ARCCTL_BACKEND=local
 export ARCCTL_BACKEND_LOCAL_PATH=/var/lib/arcctl/state
-arcctl datacenter deploy my-dc ./dc
+arcctl deploy datacenter my-dc ./dc
 ```
 
 **Remote State via Flags:**
 
 ```bash
 # S3 backend
-arcctl datacenter deploy my-dc ./dc \
+arcctl deploy datacenter my-dc ./dc \
   --backend s3 \
   --backend-config bucket=my-arcctl-state \
   --backend-config region=us-east-1
@@ -4094,7 +4122,7 @@ export ARCCTL_BACKEND=s3
 export ARCCTL_BACKEND_S3_BUCKET=my-arcctl-state
 export ARCCTL_BACKEND_S3_REGION=us-east-1
 
-arcctl datacenter deploy my-dc ./dc
+arcctl deploy datacenter my-dc ./dc
 ```
 
 Supported backends:
@@ -4894,7 +4922,7 @@ jobs:
       
       - name: Deploy Datacenter
         run: |
-          arcctl datacenter deploy production \
+          arcctl deploy datacenter production \
             --config ./datacenters/aws-prod \
             --var-file ./vars/production.dcvars \
             --auto-approve
@@ -5068,7 +5096,7 @@ The `*` wildcard can be used to expand arrays in expressions:
 7. Should we support TCPRoute and UDPRoute types for non-HTTP workloads?
 8. How should cross-component route conflicts be detected and resolved? (e.g., two components claiming the same hostname/path)
 9. What OCI artifact format should be used for component/datacenter root artifacts? (e.g., custom media types, annotations, manifest structure)
-10. How should registry authentication be handled for `arcctl component push` and `arcctl datacenter push`? (e.g., Docker credential helpers, environment variables, config file)
+10. How should registry authentication be handled for `arcctl push component` and `arcctl push datacenter`? (e.g., Docker credential helpers, environment variables, config file)
 11. Should we support multi-platform builds for container child artifacts (e.g., linux/amd64 + linux/arm64)?
 12. How should state migration be handled when upgrading arcctl versions or changing state backends?
 13. Should we support state import for existing infrastructure not originally created by arcctl?

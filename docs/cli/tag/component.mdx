@@ -1,0 +1,67 @@
+---
+title: "tag component"
+description: "Create a new tag for an existing component artifact"
+---
+
+# arcctl tag component
+
+Create a new tag for an existing component artifact and all its child artifacts.
+
+<Note>
+Use `arcctl tag comp` as shorthand for `arcctl tag component`.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl tag component <source> <target> [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<source>` | Source artifact reference |
+| `<target>` | Target artifact reference |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--artifact-tag <name=repo:tag>` | Override tag for a specific child artifact (repeatable) |
+| `-y, --yes` | Non-interactive mode |
+
+## Examples
+
+```bash
+# Tag an artifact
+arcctl tag component ghcr.io/myorg/app:v1.0.0 ghcr.io/myorg/app:latest
+
+# Using alias
+arcctl tag comp ghcr.io/myorg/app:v1.0.0 ghcr.io/myorg/app:latest
+
+# Non-interactive
+arcctl tag component myapp:dev myapp:staging -y
+
+# Override child artifact tag
+arcctl tag component ghcr.io/myorg/app:v1.0.0 ghcr.io/myorg/app:latest \
+  --artifact-tag deployment/api=ghcr.io/myorg/api:latest
+```
+
+## Output
+
+```
+$ arcctl tag component ghcr.io/myorg/app:v1.0.0 ghcr.io/myorg/app:latest
+
+Tagging component artifact
+  Source: ghcr.io/myorg/app:v1.0.0
+  Target: ghcr.io/myorg/app:latest
+
+Proceed with tagging? [Y/n]:
+[success] Tagged ghcr.io/myorg/app:v1.0.0 as ghcr.io/myorg/app:latest
+```
+
+## See Also
+
+- [`arcctl build component`](/cli/build/component) - Build a component
+- [`arcctl push component`](/cli/push/component) - Push a component

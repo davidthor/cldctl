@@ -20,6 +20,42 @@ make lint     # Run golangci-lint
 go mod tidy   # Clean up dependencies
 ```
 
+### CLI Command Structure
+arcctl uses an action-first command structure: `arcctl <action> <resource> [args] [flags]`
+
+```bash
+# Build commands
+arcctl build component ./my-app -t ghcr.io/myorg/app:v1
+arcctl build datacenter ./dc -t ghcr.io/myorg/dc:v1
+
+# Deploy commands
+arcctl deploy component ./my-app -e production
+arcctl deploy datacenter my-dc ./datacenter
+
+# Environment management
+arcctl create environment staging -d my-datacenter
+arcctl list environment
+arcctl update environment staging environment.yml
+arcctl destroy environment staging
+
+# Resource management
+arcctl list component -e staging
+arcctl get component my-app -e production
+arcctl destroy component my-app -e staging
+
+# Artifact management
+arcctl tag component ghcr.io/myorg/app:v1 ghcr.io/myorg/app:latest
+arcctl push component ghcr.io/myorg/app:v1
+arcctl pull component ghcr.io/myorg/app:v1
+
+# Validation
+arcctl validate component ./my-app
+arcctl validate datacenter ./dc
+arcctl validate environment ./env.yml
+```
+
+Aliases: `comp` for `component`, `dc` for `datacenter`, `env` for `environment`, `ls` for `list`
+
 ### Key Directories
 | Path | Purpose |
 |------|---------|

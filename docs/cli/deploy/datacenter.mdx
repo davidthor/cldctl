@@ -1,0 +1,84 @@
+---
+title: "deploy datacenter"
+description: "Deploy or update a datacenter"
+---
+
+# arcctl deploy datacenter
+
+Deploy or update a datacenter.
+
+<Note>
+Use `arcctl deploy dc` as shorthand for `arcctl deploy datacenter`.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl deploy datacenter <name> <config> [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<name>` | Name for the deployed datacenter |
+| `<config>` | Datacenter config: OCI image reference or local path |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--var <key=value>` | Set a datacenter variable (repeatable) |
+| `--var-file <path>` | Load variables from file |
+| `--auto-approve` | Skip confirmation prompt |
+| `--backend <type>` | State backend type |
+| `--backend-config <key=value>` | Backend configuration |
+
+## Examples
+
+```bash
+# Deploy from OCI image
+arcctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0
+
+# Using alias
+arcctl deploy dc prod-dc ghcr.io/myorg/dc:v1.0.0
+
+# Deploy from local path
+arcctl deploy datacenter my-dc ./datacenter
+
+# Deploy with variables
+arcctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 \
+  --var region=us-east-1 \
+  --var cluster_name=production
+
+# Deploy with auto-approval (CI/CD)
+arcctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 \
+  --auto-approve
+```
+
+## Execution Plan Output
+
+```
+$ arcctl deploy dc prod-dc ./datacenter
+
+Datacenter: prod-dc
+Source:     ./datacenter
+
+Execution Plan:
+
+  module "eks"
+    + create: Module "eks"
+
+  module "rds-postgres"
+    + create: Module "rds-postgres"
+
+Plan: 2 modules to deploy
+
+Proceed? [Y/n]:
+```
+
+## See Also
+
+- [`arcctl destroy datacenter`](/cli/destroy/datacenter) - Destroy a datacenter
+- [`arcctl list datacenter`](/cli/list/datacenter) - List deployed datacenters
+- [`arcctl get datacenter`](/cli/get/datacenter) - Get datacenter details

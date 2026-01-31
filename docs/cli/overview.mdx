@@ -19,8 +19,10 @@ arcctl --version
 
 ## Command Structure
 
+arcctl uses an intuitive action-first command structure:
+
 ```
-arcctl [command] [subcommand] [arguments] [flags]
+arcctl <action> <resource> [arguments] [flags]
 ```
 
 ### Global Flags
@@ -39,41 +41,84 @@ arcctl [command] [subcommand] [arguments] [flags]
 | Command | Description |
 |---------|-------------|
 | [`arcctl up`](/cli/up) | Quick start for local development |
-| [`arcctl deploy`](/cli/deploy) | Deploy a component to an environment |
 
-### Component Commands
-
-| Command | Description |
-|---------|-------------|
-| [`arcctl component build`](/cli/component/build) | Build a component into OCI artifacts |
-| [`arcctl component tag`](/cli/component/tag) | Tag component artifacts |
-| [`arcctl component push`](/cli/component/push) | Push component artifacts to registry |
-| [`arcctl component deploy`](/cli/component/deploy) | Deploy a component to an environment |
-| [`arcctl component destroy`](/cli/component/destroy) | Destroy a deployed component |
-| [`arcctl component list`](/cli/component/list) | List deployed components |
-| [`arcctl component get`](/cli/component/get) | Get component details |
-
-### Datacenter Commands
+### Build Commands
 
 | Command | Description |
 |---------|-------------|
-| [`arcctl datacenter build`](/cli/datacenter/build) | Build a datacenter into OCI artifacts |
-| [`arcctl datacenter tag`](/cli/datacenter/tag) | Tag datacenter artifacts |
-| [`arcctl datacenter push`](/cli/datacenter/push) | Push datacenter artifacts to registry |
-| [`arcctl datacenter deploy`](/cli/datacenter/deploy) | Deploy/update a datacenter |
-| [`arcctl datacenter list`](/cli/datacenter/list) | List deployed datacenters |
-| [`arcctl datacenter get`](/cli/datacenter/get) | Get datacenter details |
-| [`arcctl datacenter destroy`](/cli/datacenter/destroy) | Destroy a datacenter |
+| [`arcctl build component`](/cli/build/component) | Build a component into OCI artifacts |
+| [`arcctl build datacenter`](/cli/build/datacenter) | Build a datacenter into OCI artifacts |
 
-### Environment Commands
+### Deploy Commands
 
 | Command | Description |
 |---------|-------------|
-| [`arcctl environment create`](/cli/environment/create) | Create an environment |
-| [`arcctl environment list`](/cli/environment/list) | List environments |
-| [`arcctl environment get`](/cli/environment/get) | Get environment details |
-| [`arcctl environment update`](/cli/environment/update) | Update environment (supports config files) |
-| [`arcctl environment destroy`](/cli/environment/destroy) | Destroy an environment |
+| [`arcctl deploy component`](/cli/deploy/component) | Deploy a component to an environment |
+| [`arcctl deploy datacenter`](/cli/deploy/datacenter) | Deploy/update a datacenter |
+
+### Destroy Commands
+
+| Command | Description |
+|---------|-------------|
+| [`arcctl destroy component`](/cli/destroy/component) | Destroy a deployed component |
+| [`arcctl destroy datacenter`](/cli/destroy/datacenter) | Destroy a datacenter |
+| [`arcctl destroy environment`](/cli/destroy/environment) | Destroy an environment |
+
+### List Commands
+
+| Command | Description |
+|---------|-------------|
+| [`arcctl list component`](/cli/list/component) | List components |
+| [`arcctl list datacenter`](/cli/list/datacenter) | List deployed datacenters |
+| [`arcctl list environment`](/cli/list/environment) | List environments |
+
+### Get Commands
+
+| Command | Description |
+|---------|-------------|
+| [`arcctl get component`](/cli/get/component) | Get component details |
+| [`arcctl get datacenter`](/cli/get/datacenter) | Get datacenter details |
+| [`arcctl get environment`](/cli/get/environment) | Get environment details |
+
+### Create Commands
+
+| Command | Description |
+|---------|-------------|
+| [`arcctl create environment`](/cli/create/environment) | Create an environment |
+
+### Update Commands
+
+| Command | Description |
+|---------|-------------|
+| [`arcctl update environment`](/cli/update/environment) | Update environment (supports config files) |
+
+### Tag Commands
+
+| Command | Description |
+|---------|-------------|
+| [`arcctl tag component`](/cli/tag/component) | Tag component artifacts |
+| [`arcctl tag datacenter`](/cli/tag/datacenter) | Tag datacenter artifacts |
+
+### Push Commands
+
+| Command | Description |
+|---------|-------------|
+| [`arcctl push component`](/cli/push/component) | Push component artifacts to registry |
+| [`arcctl push datacenter`](/cli/push/datacenter) | Push datacenter artifacts to registry |
+
+### Pull Commands
+
+| Command | Description |
+|---------|-------------|
+| [`arcctl pull component`](/cli/pull/component) | Pull component artifacts from registry |
+
+### Validate Commands
+
+| Command | Description |
+|---------|-------------|
+| [`arcctl validate component`](/cli/validate/component) | Validate component configuration |
+| [`arcctl validate datacenter`](/cli/validate/datacenter) | Validate datacenter configuration |
+| [`arcctl validate environment`](/cli/validate/environment) | Validate environment configuration |
 
 ## Command Aliases
 
@@ -81,23 +126,22 @@ For convenience, arcctl supports shorthand aliases:
 
 | Full Command | Alias |
 |--------------|-------|
-| `arcctl component deploy` | `arcctl deploy` |
-| `arcctl datacenter` | `arcctl dc` |
-| `arcctl environment` | `arcctl env` |
-| `arcctl component` | `arcctl comp` |
+| `arcctl build component` | `arcctl build comp` |
+| `arcctl deploy datacenter` | `arcctl deploy dc` |
+| `arcctl list environment` | `arcctl list env` or `arcctl ls env` |
 
 ```bash
 # These are equivalent:
-arcctl component deploy ./my-app -e staging
-arcctl deploy ./my-app -e staging
+arcctl deploy component ./my-app -e staging
+arcctl deploy comp ./my-app -e staging
 
 # These are equivalent:
-arcctl datacenter build . -t ghcr.io/myorg/dc:v1.0.0
-arcctl dc build . -t ghcr.io/myorg/dc:v1.0.0
+arcctl build datacenter . -t ghcr.io/myorg/dc:v1.0.0
+arcctl build dc . -t ghcr.io/myorg/dc:v1.0.0
 
 # These are equivalent:
-arcctl environment list
-arcctl env list
+arcctl list environment
+arcctl ls env
 ```
 
 ## State Backends
@@ -107,7 +151,7 @@ arcctl supports multiple state backends for storing deployment state:
 ### Local Backend (Default)
 
 ```bash
-arcctl deploy ./my-app -e staging
+arcctl deploy component ./my-app -e staging
 ```
 
 State is stored in `~/.arcctl/state/`.
@@ -115,7 +159,7 @@ State is stored in `~/.arcctl/state/`.
 ### S3 Backend
 
 ```bash
-arcctl deploy ./my-app -e staging \
+arcctl deploy component ./my-app -e staging \
   --backend s3 \
   --backend-config bucket=my-arcctl-state \
   --backend-config region=us-east-1 \
@@ -125,7 +169,7 @@ arcctl deploy ./my-app -e staging \
 ### GCS Backend
 
 ```bash
-arcctl deploy ./my-app -e staging \
+arcctl deploy component ./my-app -e staging \
   --backend gcs \
   --backend-config bucket=my-arcctl-state \
   --backend-config prefix=arcctl
@@ -134,7 +178,7 @@ arcctl deploy ./my-app -e staging \
 ### Azure Backend
 
 ```bash
-arcctl deploy ./my-app -e staging \
+arcctl deploy component ./my-app -e staging \
   --backend azurerm \
   --backend-config storage_account_name=myaccount \
   --backend-config container_name=arcctl-state \
@@ -150,7 +194,7 @@ export ARCCTL_BACKEND=s3
 export ARCCTL_BACKEND_S3_BUCKET=my-arcctl-state
 export ARCCTL_BACKEND_S3_REGION=us-east-1
 
-arcctl deploy ./my-app -e staging
+arcctl deploy component ./my-app -e staging
 ```
 
 ## Output Formats
@@ -159,13 +203,13 @@ Many commands support different output formats:
 
 ```bash
 # Default table format
-arcctl component list -e staging
+arcctl list component -e staging
 
 # JSON output (for scripting)
-arcctl component list -e staging --output json
+arcctl list component -e staging --output json
 
 # YAML output
-arcctl component list -e staging --output yaml
+arcctl list component -e staging --output yaml
 ```
 
 ## Exit Codes
@@ -182,13 +226,13 @@ arcctl component list -e staging --output yaml
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="component build" icon="cube" href="/cli/component/build">
+  <Card title="build component" icon="cube" href="/cli/build/component">
     Build components into OCI artifacts
   </Card>
-  <Card title="component deploy" icon="rocket" href="/cli/component/deploy">
+  <Card title="deploy component" icon="rocket" href="/cli/deploy/component">
     Deploy components to environments
   </Card>
-  <Card title="datacenter build" icon="server" href="/cli/datacenter/build">
+  <Card title="build datacenter" icon="server" href="/cli/build/datacenter">
     Build datacenter infrastructure
   </Card>
   <Card title="Up Command" icon="play" href="/cli/up">

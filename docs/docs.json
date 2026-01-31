@@ -121,42 +121,85 @@
             "group": "Overview",
             "pages": [
               "cli/overview",
-              "cli/up",
-              "cli/deploy"
+              "cli/up"
             ]
           },
           {
-            "group": "component",
+            "group": "build",
             "pages": [
-              "cli/component/build",
-              "cli/component/tag",
-              "cli/component/push",
-              "cli/component/deploy",
-              "cli/component/destroy",
-              "cli/component/list",
-              "cli/component/get"
+              "cli/build/component",
+              "cli/build/datacenter"
             ]
           },
           {
-            "group": "datacenter",
+            "group": "deploy",
             "pages": [
-              "cli/datacenter/build",
-              "cli/datacenter/tag",
-              "cli/datacenter/push",
-              "cli/datacenter/deploy",
-              "cli/datacenter/list",
-              "cli/datacenter/get",
-              "cli/datacenter/destroy"
+              "cli/deploy/component",
+              "cli/deploy/datacenter"
             ]
           },
           {
-            "group": "environment",
+            "group": "destroy",
             "pages": [
-              "cli/environment/create",
-              "cli/environment/list",
-              "cli/environment/get",
-              "cli/environment/update",
-              "cli/environment/destroy"
+              "cli/destroy/component",
+              "cli/destroy/datacenter",
+              "cli/destroy/environment"
+            ]
+          },
+          {
+            "group": "list",
+            "pages": [
+              "cli/list/component",
+              "cli/list/datacenter",
+              "cli/list/environment"
+            ]
+          },
+          {
+            "group": "get",
+            "pages": [
+              "cli/get/component",
+              "cli/get/datacenter",
+              "cli/get/environment"
+            ]
+          },
+          {
+            "group": "create",
+            "pages": [
+              "cli/create/environment"
+            ]
+          },
+          {
+            "group": "update",
+            "pages": [
+              "cli/update/environment"
+            ]
+          },
+          {
+            "group": "tag",
+            "pages": [
+              "cli/tag/component",
+              "cli/tag/datacenter"
+            ]
+          },
+          {
+            "group": "push",
+            "pages": [
+              "cli/push/component",
+              "cli/push/datacenter"
+            ]
+          },
+          {
+            "group": "pull",
+            "pages": [
+              "cli/pull/component"
+            ]
+          },
+          {
+            "group": "validate",
+            "pages": [
+              "cli/validate/component",
+              "cli/validate/datacenter",
+              "cli/validate/environment"
             ]
           }
         ]

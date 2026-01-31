@@ -1,0 +1,71 @@
+---
+title: "get environment"
+description: "Get details of an environment"
+---
+
+# arcctl get environment
+
+Get detailed information about an environment.
+
+<Note>
+Use `arcctl get env` as shorthand for `arcctl get environment`.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl get environment <name> [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<name>` | Name of the environment |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-o, --output <format>` | Output format: `table`, `json`, `yaml` |
+| `--backend <type>` | State backend type |
+| `--backend-config <key=value>` | Backend configuration |
+
+## Examples
+
+```bash
+# Get environment details
+arcctl get environment staging
+
+# Using alias
+arcctl get env staging
+
+# Output as JSON
+arcctl get environment staging -o json
+```
+
+## Output
+
+```
+$ arcctl get environment staging
+
+Environment: staging
+Datacenter:  aws-production
+Created:     2024-01-10 09:00:00
+Status:      ready
+
+Components:
+  NAME             SOURCE                                   STATUS       RESOURCES
+  web-app          ghcr.io/myorg/web-app:v1.5.0            ready        4
+  api              ghcr.io/myorg/api:v2.0.0                ready        6
+  worker           ghcr.io/myorg/worker:latest             ready        3
+
+URLs:
+  web-app/main: https://staging.example.com
+  api/main: https://api.staging.example.com
+```
+
+## See Also
+
+- [`arcctl list environment`](/cli/list/environment) - List environments
+- [`arcctl create environment`](/cli/create/environment) - Create an environment

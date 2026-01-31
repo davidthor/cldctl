@@ -1,0 +1,83 @@
+---
+title: "list component"
+description: "List components"
+---
+
+# arcctl list component
+
+List components available locally or deployed to an environment.
+
+<Note>
+Use `arcctl ls comp` or `arcctl list comp` as shorthand.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl list component [options]
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-e, --environment <name>` | Target environment (lists deployed components) |
+| `-o, --output <format>` | Output format: `table`, `json`, `yaml` |
+| `--backend <type>` | State backend type |
+| `--backend-config <key=value>` | Backend configuration |
+
+## Behavior
+
+- **Without `-e`**: Lists all locally built or pulled components (similar to `docker images`)
+- **With `-e`**: Lists all components deployed to the specified environment
+
+## Examples
+
+```bash
+# List local components
+arcctl list component
+
+# Using alias
+arcctl ls comp
+
+# List deployed components
+arcctl list component -e production
+
+# Output as JSON
+arcctl list component -e staging -o json
+
+# Output as YAML
+arcctl list component -e staging -o yaml
+```
+
+## Output
+
+**Local components:**
+
+```
+$ arcctl list component
+
+REPOSITORY                        TAG        SOURCE      SIZE     CREATED
+ghcr.io/myorg/web-app             v1.0.0     built       2.3MB    2 hours ago
+ghcr.io/myorg/api                 latest     pulled      1.8MB    1 day ago
+docker.io/library/nginx           1.25       pulled      42MB     3 days ago
+```
+
+**Deployed components:**
+
+```
+$ arcctl list component -e staging
+
+Environment: staging
+Datacenter:  aws-production
+
+NAME             SOURCE                                   VERSION    STATUS     RESOURCES
+web-app          ghcr.io/myorg/web-app:v1.5.0            v1.5.0     ready      4
+api              ghcr.io/myorg/api:v2.0.0                v2.0.0     ready      6
+worker           ghcr.io/myorg/worker:latest             latest     ready      3
+```
+
+## See Also
+
+- [`arcctl get component`](/cli/get/component) - Get component details
+- [`arcctl deploy component`](/cli/deploy/component) - Deploy a component

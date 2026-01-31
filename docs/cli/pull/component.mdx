@@ -1,0 +1,64 @@
+---
+title: "pull component"
+description: "Pull a component artifact from an OCI registry"
+---
+
+# arcctl pull component
+
+Pull a component artifact from an OCI registry to the local cache.
+
+<Note>
+Use `arcctl pull comp` as shorthand for `arcctl pull component`.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl pull component <repo:tag> [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<repo:tag>` | Component artifact reference |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-q, --quiet` | Suppress output |
+
+## Description
+
+This command downloads the component artifact and registers it in the local
+component registry. The component can then be used for deployment or inspection.
+
+## Examples
+
+```bash
+# Pull a component
+arcctl pull component ghcr.io/myorg/myapp:v1.0.0
+
+# Using alias
+arcctl pull comp ghcr.io/myorg/myapp:v1.0.0
+
+# Pull with quiet mode
+arcctl pull component docker.io/library/nginx:latest -q
+```
+
+## Output
+
+```
+$ arcctl pull component ghcr.io/myorg/myapp:v1.0.0
+
+Pulling component: ghcr.io/myorg/myapp:v1.0.0
+[pull] Downloading ghcr.io/myorg/myapp:v1.0.0...
+[success] Pulled ghcr.io/myorg/myapp:v1.0.0
+  Cache: /home/user/.arcctl/cache/components/ghcr.io_myorg_myapp_v1.0.0
+```
+
+## See Also
+
+- [`arcctl push component`](/cli/push/component) - Push a component
+- [`arcctl list component`](/cli/list/component) - List components

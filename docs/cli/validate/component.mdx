@@ -1,0 +1,68 @@
+---
+title: "validate component"
+description: "Validate a component configuration"
+---
+
+# arcctl validate component
+
+Validate a component configuration file without deploying.
+
+<Note>
+Use `arcctl validate comp` as shorthand for `arcctl validate component`.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl validate component [path] [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `[path]` | Path to the component directory or architect.yml file (default: current directory) |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-f, --file <path>` | Path to architect.yml if not in default location |
+
+## Examples
+
+```bash
+# Validate current directory
+arcctl validate component
+
+# Using alias
+arcctl validate comp
+
+# Validate specific directory
+arcctl validate component ./my-app
+
+# Validate specific file
+arcctl validate component -f custom-component.yml
+```
+
+## Output
+
+```
+$ arcctl validate component ./my-app
+
+Component configuration is valid!
+```
+
+**On validation error:**
+
+```
+$ arcctl validate component ./invalid-app
+
+Error: validation failed: [VALIDATION_ERROR] database type "invalid" not supported
+  supported types: postgres, mysql, mongodb, redis
+```
+
+## See Also
+
+- [`arcctl build component`](/cli/build/component) - Build a component
+- [`arcctl deploy component`](/cli/deploy/component) - Deploy a component

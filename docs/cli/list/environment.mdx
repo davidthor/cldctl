@@ -1,0 +1,60 @@
+---
+title: "list environment"
+description: "List environments"
+---
+
+# arcctl list environment
+
+List all environments.
+
+<Note>
+Use `arcctl ls env` or `arcctl list env` as shorthand.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl list environment [options]
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-d, --datacenter <name>` | Filter by datacenter |
+| `-o, --output <format>` | Output format: `table`, `json`, `yaml` |
+| `--backend <type>` | State backend type |
+| `--backend-config <key=value>` | Backend configuration |
+
+## Examples
+
+```bash
+# List all environments
+arcctl list environment
+
+# Using alias
+arcctl ls env
+
+# Filter by datacenter
+arcctl list environment -d aws-production
+
+# Output as JSON
+arcctl list environment -o json
+```
+
+## Output
+
+```
+$ arcctl list environment
+
+NAME             DATACENTER           COMPONENTS   CREATED
+production       aws-production       5            2024-01-15
+staging          aws-production       3            2024-01-10
+dev              aws-dev              2            2024-01-20
+preview-123      aws-dev              1            2024-01-25
+```
+
+## See Also
+
+- [`arcctl get environment`](/cli/get/environment) - Get environment details
+- [`arcctl create environment`](/cli/create/environment) - Create an environment

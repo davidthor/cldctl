@@ -1,0 +1,71 @@
+---
+title: "destroy datacenter"
+description: "Destroy a datacenter and all its resources"
+---
+
+# arcctl destroy datacenter
+
+Destroy a datacenter and all its resources.
+
+<Warning>
+This will destroy all environments in the datacenter. Use with caution.
+</Warning>
+
+<Note>
+Use `arcctl destroy dc` as shorthand for `arcctl destroy datacenter`.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl destroy datacenter <name> [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<name>` | Name of the datacenter to destroy |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--auto-approve` | Skip confirmation prompt |
+| `--backend <type>` | State backend type |
+| `--backend-config <key=value>` | Backend configuration |
+
+## Examples
+
+```bash
+# Destroy a datacenter
+arcctl destroy datacenter my-dc
+
+# Using alias
+arcctl destroy dc my-dc
+
+# Auto-approve (CI/CD)
+arcctl destroy datacenter prod-dc --auto-approve
+```
+
+## Output
+
+```
+$ arcctl destroy dc my-dc
+
+Datacenter: my-dc
+Source:     ghcr.io/myorg/dc:v1.0.0
+
+WARNING: The following environments will also be destroyed:
+  - staging
+  - production
+
+This will destroy 5 modules.
+
+Are you sure you want to destroy this datacenter? [y/N]:
+```
+
+## See Also
+
+- [`arcctl deploy datacenter`](/cli/deploy/datacenter) - Deploy a datacenter
+- [`arcctl list datacenter`](/cli/list/datacenter) - List datacenters

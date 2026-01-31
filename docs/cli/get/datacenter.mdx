@@ -1,0 +1,75 @@
+---
+title: "get datacenter"
+description: "Get details of a deployed datacenter"
+---
+
+# arcctl get datacenter
+
+Get detailed information about a datacenter.
+
+<Note>
+Use `arcctl get dc` as shorthand for `arcctl get datacenter`.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl get datacenter <name> [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<name>` | Name of the datacenter |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-o, --output <format>` | Output format: `table`, `json`, `yaml` |
+| `--backend <type>` | State backend type |
+| `--backend-config <key=value>` | Backend configuration |
+
+## Examples
+
+```bash
+# Get datacenter details
+arcctl get datacenter my-dc
+
+# Using alias
+arcctl get dc my-dc
+
+# Output as JSON
+arcctl get datacenter my-dc -o json
+```
+
+## Output
+
+```
+$ arcctl get datacenter aws-production
+
+Datacenter: aws-production
+Source:     ghcr.io/myorg/aws-dc:v1.0.0
+Deployed:   2024-01-10 09:00:00
+
+Variables:
+  region           = "us-east-1"
+  cluster_name     = "production"
+
+Modules:
+  NAME             STATUS       RESOURCES
+  eks              ready        12
+  rds-postgres     ready        5
+  s3               ready        3
+
+Environments:
+  NAME             COMPONENTS   CREATED
+  production       5            2024-01-15
+  staging          3            2024-01-10
+```
+
+## See Also
+
+- [`arcctl list datacenter`](/cli/list/datacenter) - List datacenters
+- [`arcctl deploy datacenter`](/cli/deploy/datacenter) - Deploy a datacenter

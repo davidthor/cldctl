@@ -1,0 +1,75 @@
+---
+title: "get component"
+description: "Get details of a deployed component"
+---
+
+# arcctl get component
+
+Get detailed information about a deployed component.
+
+<Note>
+Use `arcctl get comp` as shorthand for `arcctl get component`.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl get component <name> -e <environment> [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<name>` | Name of the component |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-e, --environment <name>` | Target environment (required) |
+| `-o, --output <format>` | Output format: `table`, `json`, `yaml` |
+| `--backend <type>` | State backend type |
+| `--backend-config <key=value>` | Backend configuration |
+
+## Examples
+
+```bash
+# Get component details
+arcctl get component my-app -e production
+
+# Using alias
+arcctl get comp my-app -e production
+
+# Output as JSON
+arcctl get component my-app -e staging -o json
+```
+
+## Output
+
+```
+$ arcctl get component web-app -e staging
+
+Component:   web-app
+Environment: staging
+Datacenter:  aws-production
+Source:      ghcr.io/myorg/web-app:v1.5.0
+Status:      ready
+Deployed:    2024-01-25 14:30:00
+
+Variables:
+  log_level        = "debug"
+  api_key          = <sensitive>
+
+Resources:
+  TYPE         NAME             STATUS       DETAILS
+  database     main             ready        
+  deployment   api              ready        
+  service      api              ready        
+  route        main             ready        https://staging.example.com
+```
+
+## See Also
+
+- [`arcctl list component`](/cli/list/component) - List components
+- [`arcctl deploy component`](/cli/deploy/component) - Deploy a component

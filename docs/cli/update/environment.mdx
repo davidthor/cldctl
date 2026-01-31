@@ -1,0 +1,98 @@
+---
+title: "update environment"
+description: "Update an environment configuration"
+---
+
+# arcctl update environment
+
+Update environment configuration.
+
+<Note>
+Use `arcctl update env` as shorthand for `arcctl update environment`.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl update environment <name> [config-file] [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<name>` | Environment name |
+| `[config-file]` | Optional environment configuration file |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-d, --datacenter <name>` | Change target datacenter |
+| `--auto-approve` | Skip confirmation prompt (when using config file) |
+| `--backend <type>` | State backend type |
+| `--backend-config <key=value>` | Backend configuration |
+
+## Update Methods
+
+You can update an environment in two ways:
+
+**1. Update specific settings with flags:**
+
+```bash
+arcctl update environment staging --datacenter new-dc
+```
+
+**2. Apply a configuration file:**
+
+```bash
+arcctl update environment staging environment.yml
+```
+
+When providing a config file, the environment's components and configuration will be updated to match the file. Components not in the file will be removed, and new components will be deployed.
+
+## Examples
+
+```bash
+# Update datacenter
+arcctl update environment staging --datacenter new-dc
+
+# Using alias
+arcctl update env staging -d new-dc
+
+# Apply configuration file
+arcctl update environment staging environment.yml
+
+# Apply with auto-approval
+arcctl update environment staging ./envs/staging.yml --auto-approve
+```
+
+## Output
+
+```
+$ arcctl update env staging environment.yml
+
+Environment: staging
+Datacenter:  aws-production
+Config file: environment.yml
+
+Execution Plan:
+
+  Components to deploy:
+    + new-service (ghcr.io/myorg/new-service:v1.0.0)
+
+  Components to update:
+    ~ web-app: ghcr.io/myorg/web-app:v1.4.0 -> ghcr.io/myorg/web-app:v1.5.0
+
+  Components to remove:
+    - old-service
+
+Plan: 1 to deploy, 1 to update, 1 to remove
+
+Proceed with update? [Y/n]:
+```
+
+## See Also
+
+- [`arcctl create environment`](/cli/create/environment) - Create an environment
+- [`arcctl destroy environment`](/cli/destroy/environment) - Destroy an environment

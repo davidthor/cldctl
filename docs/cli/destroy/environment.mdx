@@ -1,0 +1,69 @@
+---
+title: "destroy environment"
+description: "Destroy an environment and all its resources"
+---
+
+# arcctl destroy environment
+
+Destroy an environment and all its resources.
+
+<Warning>
+This will destroy all components and resources in the environment. Use with caution.
+</Warning>
+
+<Note>
+Use `arcctl destroy env` as shorthand for `arcctl destroy environment`.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl destroy environment <name> [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<name>` | Name of the environment to destroy |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--auto-approve` | Skip confirmation prompt |
+| `--backend <type>` | State backend type |
+| `--backend-config <key=value>` | Backend configuration |
+
+## Examples
+
+```bash
+# Destroy an environment
+arcctl destroy environment staging
+
+# Using alias
+arcctl destroy env staging
+
+# Auto-approve (CI/CD)
+arcctl destroy environment preview-123 --auto-approve
+```
+
+## Output
+
+```
+$ arcctl destroy env staging
+
+Environment: staging
+Datacenter:  aws-production
+
+This will destroy:
+  - 3 components
+  - 12 resources
+
+Are you sure you want to destroy this environment? [y/N]:
+```
+
+## See Also
+
+- [`arcctl create environment`](/cli/create/environment) - Create an environment
+- [`arcctl list environment`](/cli/list/environment) - List environments

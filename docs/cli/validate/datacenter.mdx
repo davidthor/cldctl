@@ -1,0 +1,68 @@
+---
+title: "validate datacenter"
+description: "Validate a datacenter configuration"
+---
+
+# arcctl validate datacenter
+
+Validate a datacenter configuration file without deploying.
+
+<Note>
+Use `arcctl validate dc` as shorthand for `arcctl validate datacenter`.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl validate datacenter [path] [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `[path]` | Path to the datacenter directory or datacenter.hcl file (default: current directory) |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-f, --file <path>` | Path to datacenter.hcl if not in default location |
+
+## Examples
+
+```bash
+# Validate current directory
+arcctl validate datacenter
+
+# Using alias
+arcctl validate dc
+
+# Validate specific directory
+arcctl validate datacenter ./my-datacenter
+
+# Validate specific file
+arcctl validate datacenter -f custom-datacenter.hcl
+```
+
+## Output
+
+```
+$ arcctl validate datacenter ./my-datacenter
+
+Datacenter configuration is valid!
+```
+
+**On validation error:**
+
+```
+$ arcctl validate datacenter ./invalid-dc
+
+Error: validation failed: [PARSE_ERROR] Invalid HCL syntax at line 15:
+  unexpected token "{"
+```
+
+## See Also
+
+- [`arcctl build datacenter`](/cli/build/datacenter) - Build a datacenter
+- [`arcctl deploy datacenter`](/cli/deploy/datacenter) - Deploy a datacenter

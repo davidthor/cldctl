@@ -1,0 +1,58 @@
+---
+title: "list datacenter"
+description: "List deployed datacenters"
+---
+
+# arcctl list datacenter
+
+List all deployed datacenters.
+
+<Note>
+Use `arcctl ls dc` or `arcctl list dc` as shorthand.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl list datacenter [options]
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-o, --output <format>` | Output format: `table`, `json`, `yaml` |
+| `--backend <type>` | State backend type |
+| `--backend-config <key=value>` | Backend configuration |
+
+## Examples
+
+```bash
+# List datacenters
+arcctl list datacenter
+
+# Using alias
+arcctl ls dc
+
+# Output as JSON
+arcctl list datacenter -o json
+
+# Output as YAML
+arcctl list datacenter -o yaml
+```
+
+## Output
+
+```
+$ arcctl list datacenter
+
+NAME              SOURCE                                        ENVIRONMENTS
+aws-production    ghcr.io/myorg/aws-dc:v1.0.0                  production, staging
+aws-dev           ghcr.io/myorg/aws-dc:v1.2.0                  dev, preview-123
+local             local                                         local-dev
+```
+
+## See Also
+
+- [`arcctl get datacenter`](/cli/get/datacenter) - Get datacenter details
+- [`arcctl deploy datacenter`](/cli/deploy/datacenter) - Deploy a datacenter

@@ -1,0 +1,67 @@
+---
+title: "validate environment"
+description: "Validate an environment configuration"
+---
+
+# arcctl validate environment
+
+Validate an environment configuration file without applying.
+
+<Note>
+Use `arcctl validate env` as shorthand for `arcctl validate environment`.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl validate environment [path] [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `[path]` | Path to the environment directory or environment.yml file (default: current directory) |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-f, --file <path>` | Path to environment.yml if not in default location |
+
+## Examples
+
+```bash
+# Validate current directory
+arcctl validate environment
+
+# Using alias
+arcctl validate env
+
+# Validate specific file
+arcctl validate environment ./envs/staging.yml
+
+# Validate with custom file path
+arcctl validate environment -f custom-environment.yml
+```
+
+## Output
+
+```
+$ arcctl validate environment ./envs/staging.yml
+
+Environment configuration is valid!
+```
+
+**On validation error:**
+
+```
+$ arcctl validate environment ./invalid-env.yml
+
+Error: validation failed: [VALIDATION_ERROR] component "web-app" missing required field "source"
+```
+
+## See Also
+
+- [`arcctl create environment`](/cli/create/environment) - Create an environment
+- [`arcctl update environment`](/cli/update/environment) - Update an environment

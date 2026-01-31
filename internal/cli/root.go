@@ -26,7 +26,17 @@ var rootCmd = &cobra.Command{
 
 It enables developers to describe cloud applications without learning 
 infrastructure-as-code, while platform engineers create reusable 
-infrastructure templates that automatically provision resources.`,
+infrastructure templates that automatically provision resources.
+
+Command Structure:
+  arcctl <action> <resource> [arguments] [flags]
+
+Examples:
+  arcctl build component ./my-app -t ghcr.io/myorg/app:v1
+  arcctl deploy component ./my-app -e production
+  arcctl create environment staging -d my-datacenter
+  arcctl list environment
+  arcctl destroy component my-app -e staging`,
 }
 
 // Execute runs the root command.
@@ -47,15 +57,22 @@ func init() {
 	viper.SetEnvPrefix("ARCCTL")
 	viper.AutomaticEnv()
 
-	// Add subcommands
-	rootCmd.AddCommand(newComponentCmd())
-	rootCmd.AddCommand(newDatacenterCmd())
-	rootCmd.AddCommand(newEnvironmentCmd())
+	// Add action-based commands (new inverted syntax)
+	rootCmd.AddCommand(newBuildCmd())
+	rootCmd.AddCommand(newDeployCmd())
+	rootCmd.AddCommand(newDestroyCmd())
+	rootCmd.AddCommand(newListCmd())
+	rootCmd.AddCommand(newGetCmd())
+	rootCmd.AddCommand(newCreateCmd())
+	rootCmd.AddCommand(newUpdateCmd())
+	rootCmd.AddCommand(newTagCmd())
+	rootCmd.AddCommand(newPushCmd())
+	rootCmd.AddCommand(newPullCmd())
+	rootCmd.AddCommand(newValidateCmd())
+
+	// Keep the up command and version command
 	rootCmd.AddCommand(newUpCmd())
 	rootCmd.AddCommand(newVersionCmd())
-
-	// Add deploy as a top-level alias for 'component deploy'
-	rootCmd.AddCommand(newDeployCmd())
 }
 
 func initConfig() {
