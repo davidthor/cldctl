@@ -5,10 +5,12 @@ A lightweight datacenter for local development using arcctl's native plugin. Opt
 ## Features
 
 - **Native Plugin**: Uses arcctl's built-in native plugin instead of Terraform/Pulumi
-- **Docker-based**: Databases and deployments run as Docker containers
+- **Fast Development**: Deployments run as local processes without Docker builds
 - **Process-based Functions**: Functions run as local processes for fast iteration
+- **Docker Infrastructure**: Databases and supporting services run as Docker containers
 - **No IaC Overhead**: Skips drift detection and state refresh for faster operations
 - **Automatic Port Assignment**: Ports are automatically assigned to avoid conflicts
+- **Dockerfile CMD Support**: Automatically extracts commands from Dockerfiles
 
 ## Resource Implementations
 
@@ -20,12 +22,12 @@ A lightweight datacenter for local development using arcctl's native plugin. Opt
 | Buckets | MinIO container (S3-compatible) |
 | Encryption Keys | Generated locally (RSA, ECDSA, symmetric) |
 | SMTP | MailHog container (email capture with web UI) |
-| Deployments | Docker containers |
+| **Deployments** | **Local processes (no Docker build)** |
 | Functions | Local processes |
 | Services | Port mapping lookup |
 | Routes | nginx reverse proxy |
 | Cronjobs | Suspended by default (manual trigger) |
-| Docker Builds | Local image builds |
+| Docker Builds | Local image builds (if needed) |
 | Migrations | One-time Docker containers |
 
 ## Usage
@@ -72,23 +74,56 @@ The native plugin executes Docker and process commands directly, without going t
 2. **Destroy**: Stops containers/processes based on stored state
 3. **No Drift Detection**: Trusts stored state, making operations faster
 
+### Deployment Strategy
+
+**For maximum development speed**, deployments run as **local processes** instead of Docker containers:
+
+1. **No Docker Build**: Skips time-consuming image builds
+2. **Direct Execution**: Runs commands directly in the build context directory
+3. **Dockerfile CMD Extraction**: Automatically extracts the `CMD` from your Dockerfile
+4. **Command Override**: Can override with explicit `command` in component definition
+
+**Requirements**:
+- System dependencies (Node.js, Python, etc.) must be installed locally
+- Build context must contain source code ready to run
+
+**Example**:
+```yaml
+# architect.yml
+deployments:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Command extracted from Dockerfile CMD automatically
+    # Or override: command: ["npm", "run", "dev"]
+```
+
+The datacenter will:
+1. Use `./` as working directory
+2. Extract `CMD` from `Dockerfile` (e.g., `["npm", "start"]`)
+3. Run the command directly as a local process
+4. Auto-assign a PORT environment variable
+
 ### State Management
 
 Despite being lightweight, state IS persisted:
 - Enables dependency wiring between components
-- Tracks container IDs for cleanup
+- Tracks process IDs for cleanup
 - Stores outputs (ports, credentials) for other resources
 
 ### Trade-offs
 
 **Faster** than cloud datacenters because:
 - No IaC tool initialization
+- No Docker build wait time
 - No cloud API calls
 - No state refresh/drift detection
 
 **Less robust** than cloud datacenters because:
 - No drift detection (manual changes not reconciled)
 - No resource locking
+- Requires system dependencies installed locally
 - Designed for single-user local development
 
 ## Module Structure
@@ -100,7 +135,8 @@ local-docker/
 │   ├── docker-postgres/     # PostgreSQL in Docker
 │   ├── docker-mysql/        # MySQL in Docker
 │   ├── docker-redis/        # Redis in Docker
-│   ├── docker-deployment/   # Container deployments
+│   ├── process-deployment/  # ⭐ NEW: Process-based deployments (no Docker build)
+│   ├── docker-deployment/   # (Deprecated) Container deployments
 │   ├── docker-bucket/       # MinIO for S3 storage
 │   ├── docker-service/      # Service discovery
 │   ├── docker-network/      # Docker network creation
