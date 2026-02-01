@@ -55,7 +55,7 @@ func TestListComponentCmd_Flags(t *testing.T) {
 	}
 
 	// Check aliases
-	expectedAliases := map[string]bool{"comp": true, "components": true}
+	expectedAliases := map[string]bool{"comp": true, "comps": true, "components": true}
 	for _, alias := range cmd.Aliases {
 		if !expectedAliases[alias] {
 			t.Errorf("unexpected alias %q", alias)
@@ -80,7 +80,7 @@ func TestListDatacenterCmd_Flags(t *testing.T) {
 	}
 
 	// Check aliases
-	expectedAliases := map[string]bool{"dc": true, "datacenters": true}
+	expectedAliases := map[string]bool{"dc": true, "dcs": true, "datacenters": true}
 	for _, alias := range cmd.Aliases {
 		if !expectedAliases[alias] {
 			t.Errorf("unexpected alias %q", alias)
@@ -108,7 +108,7 @@ func TestListEnvironmentCmd_Flags(t *testing.T) {
 	}
 
 	// Check aliases
-	expectedAliases := map[string]bool{"env": true, "environments": true}
+	expectedAliases := map[string]bool{"env": true, "envs": true, "environments": true}
 	for _, alias := range cmd.Aliases {
 		if !expectedAliases[alias] {
 			t.Errorf("unexpected alias %q", alias)

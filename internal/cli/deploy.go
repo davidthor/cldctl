@@ -45,7 +45,7 @@ func newDeployComponentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "component <source>",
-		Aliases: []string{"comp"},
+		Aliases: []string{"comp", "comps", "components"},
 		Short:   "Deploy a component to an environment",
 		Long: `Deploy a component to an environment.
 
@@ -357,7 +357,7 @@ func newDeployDatacenterCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "datacenter <name> <config>",
-		Aliases: []string{"dc"},
+		Aliases: []string{"dc", "dcs", "datacenters"},
 		Short:   "Deploy a datacenter",
 		Long: `Deploy or update a datacenter.
 

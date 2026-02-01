@@ -34,7 +34,7 @@ func newInspectComponentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "component [path|image]",
-		Aliases: []string{"comp"},
+		Aliases: []string{"comp", "comps", "components"},
 		Short:   "Visualize a component's topology as an ASCII graph",
 		Long: `Inspect a component and display its resource topology as an ASCII graph.
 

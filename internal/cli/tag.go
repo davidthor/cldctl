@@ -30,7 +30,7 @@ func newTagComponentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "component <source> <target>",
-		Aliases: []string{"comp"},
+		Aliases: []string{"comp", "comps", "components"},
 		Short:   "Create a new tag for an existing component artifact",
 		Long: `Create a new tag for an existing component artifact and all its child artifacts.
 
@@ -92,7 +92,7 @@ func newTagDatacenterCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "datacenter <source> <target>",
-		Aliases: []string{"dc"},
+		Aliases: []string{"dc", "dcs", "datacenters"},
 		Short:   "Create a new tag for an existing datacenter artifact",
 		Long: `Create a new tag for an existing datacenter artifact and all its module artifacts.
 

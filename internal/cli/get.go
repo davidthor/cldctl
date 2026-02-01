@@ -34,7 +34,7 @@ func newGetComponentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "component <name>",
-		Aliases: []string{"comp"},
+		Aliases: []string{"comp", "comps", "components"},
 		Short:   "Get details of a deployed component",
 		Long: `Get detailed information about a deployed component.
 
@@ -146,7 +146,7 @@ func newGetDatacenterCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "datacenter <name>",
-		Aliases: []string{"dc"},
+		Aliases: []string{"dc", "dcs", "datacenters"},
 		Short:   "Get details of a deployed datacenter",
 		Long: `Get detailed information about a datacenter.
 
@@ -249,7 +249,7 @@ func newGetEnvironmentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "environment <name>",
-		Aliases: []string{"env"},
+		Aliases: []string{"env", "envs", "environments"},
 		Short:   "Get details of an environment",
 		Long: `Get detailed information about an environment.
 

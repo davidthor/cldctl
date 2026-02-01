@@ -36,7 +36,7 @@ func newDestroyComponentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "component <name>",
-		Aliases: []string{"comp"},
+		Aliases: []string{"comp", "comps", "components"},
 		Short:   "Destroy a deployed component",
 		Long: `Destroy a deployed component and its resources.
 
@@ -160,7 +160,7 @@ func newDestroyDatacenterCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "datacenter <name>",
-		Aliases: []string{"dc"},
+		Aliases: []string{"dc", "dcs", "datacenters"},
 		Short:   "Destroy a deployed datacenter",
 		Long: `Destroy a datacenter and all its resources.
 
@@ -263,7 +263,7 @@ func newDestroyEnvironmentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "environment <name>",
-		Aliases: []string{"env"},
+		Aliases: []string{"env", "envs", "environments"},
 		Short:   "Destroy an environment",
 		Long: `Destroy an environment and all its resources.
 

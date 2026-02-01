@@ -32,7 +32,7 @@ func newValidateComponentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "component [path]",
-		Aliases: []string{"comp"},
+		Aliases: []string{"comp", "comps", "components"},
 		Short:   "Validate a component configuration",
 		Long: `Validate a component configuration file without deploying.
 
@@ -113,7 +113,7 @@ func newValidateDatacenterCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "datacenter [path]",
-		Aliases: []string{"dc"},
+		Aliases: []string{"dc", "dcs", "datacenters"},
 		Short:   "Validate a datacenter configuration",
 		Long: `Validate a datacenter configuration file without deploying.
 
@@ -169,7 +169,7 @@ func newValidateEnvironmentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "environment [path]",
-		Aliases: []string{"env"},
+		Aliases: []string{"env", "envs", "environments"},
 		Short:   "Validate an environment configuration",
 		Long: `Validate an environment configuration file without applying.
 

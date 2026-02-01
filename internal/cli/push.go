@@ -27,7 +27,7 @@ func newPushComponentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "component <repo:tag>",
-		Aliases: []string{"comp"},
+		Aliases: []string{"comp", "comps", "components"},
 		Short:   "Push a component artifact to an OCI registry",
 		Long: `Push a component artifact and all its child artifacts to an OCI registry.
 
@@ -87,7 +87,7 @@ func newPushDatacenterCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "datacenter <repo:tag>",
-		Aliases: []string{"dc"},
+		Aliases: []string{"dc", "dcs", "datacenters"},
 		Short:   "Push a datacenter artifact to an OCI registry",
 		Long: `Push a datacenter artifact and all its module artifacts to an OCI registry.
 

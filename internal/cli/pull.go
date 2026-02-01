@@ -30,7 +30,7 @@ func newPullComponentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "component <repo:tag>",
-		Aliases: []string{"comp"},
+		Aliases: []string{"comp", "comps", "components"},
 		Short:   "Pull a component artifact from an OCI registry",
 		Long: `Pull a component artifact from an OCI registry to the local cache.
 

@@ -36,7 +36,7 @@ func newUpdateEnvironmentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "environment <name> [config-file]",
-		Aliases: []string{"env"},
+		Aliases: []string{"env", "envs", "environments"},
 		Short:   "Update an environment",
 		Long: `Update environment configuration.
 

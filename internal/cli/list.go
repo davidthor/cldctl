@@ -38,7 +38,7 @@ func newListComponentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "component",
-		Aliases: []string{"comp", "components"},
+		Aliases: []string{"comp", "comps", "components"},
 		Short:   "List components",
 		Long: `List components available locally or deployed to an environment.
 
@@ -179,7 +179,7 @@ func newListDatacenterCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "datacenter",
-		Aliases: []string{"dc", "datacenters"},
+		Aliases: []string{"dc", "dcs", "datacenters"},
 		Short:   "List deployed datacenters",
 		Long: `List all deployed datacenters.
 
@@ -267,7 +267,7 @@ func newListEnvironmentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "environment",
-		Aliases: []string{"env", "environments"},
+		Aliases: []string{"env", "envs", "environments"},
 		Short:   "List environments",
 		Long: `List all environments.
 

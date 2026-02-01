@@ -41,7 +41,7 @@ func newBuildComponentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "component [path]",
-		Aliases: []string{"comp"},
+		Aliases: []string{"comp", "comps", "components"},
 		Short:   "Build a component into an OCI artifact",
 		Long: `Build a component and its container images into OCI artifacts.
 
@@ -356,7 +356,7 @@ func newBuildDatacenterCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "datacenter [path]",
-		Aliases: []string{"dc"},
+		Aliases: []string{"dc", "dcs", "datacenters"},
 		Short:   "Build a datacenter into an OCI artifact",
 		Long: `Build a datacenter and its IaC modules into OCI artifacts.
 

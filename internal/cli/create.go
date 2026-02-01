@@ -31,7 +31,7 @@ func newCreateEnvironmentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "environment <name>",
-		Aliases: []string{"env"},
+		Aliases: []string{"env", "envs", "environments"},
 		Short:   "Create a new environment",
 		Long: `Create a new environment.
 
