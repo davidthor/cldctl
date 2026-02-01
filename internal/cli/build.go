@@ -57,7 +57,22 @@ When building a component, arcctl creates multiple artifacts:
 			// Determine architect.yml location
 			componentFile := file
 			if componentFile == "" {
-				componentFile = filepath.Join(path, "architect.yml")
+				// Check if path is a file or directory
+				info, err := os.Stat(path)
+				if err != nil {
+					return fmt.Errorf("failed to access path: %w", err)
+				}
+				if info.IsDir() {
+					// Look for architect.yml in the directory
+					componentFile = filepath.Join(path, "architect.yml")
+					if _, err := os.Stat(componentFile); os.IsNotExist(err) {
+						componentFile = filepath.Join(path, "architect.yaml")
+					}
+				} else {
+					// Path is a file, use it directly
+					componentFile = path
+					path = filepath.Dir(path)
+				}
 			}
 
 			// Load and validate the component

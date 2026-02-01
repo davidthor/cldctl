@@ -59,7 +59,22 @@ The up command:
 			// Determine architect.yml location
 			componentFile := file
 			if componentFile == "" {
-				componentFile = filepath.Join(absPath, "architect.yml")
+				// Check if path is a file or directory
+				info, err := os.Stat(absPath)
+				if err != nil {
+					return fmt.Errorf("failed to access path: %w", err)
+				}
+				if info.IsDir() {
+					// Look for architect.yml in the directory
+					componentFile = filepath.Join(absPath, "architect.yml")
+					if _, err := os.Stat(componentFile); os.IsNotExist(err) {
+						componentFile = filepath.Join(absPath, "architect.yaml")
+					}
+				} else {
+					// Path is a file, use it directly
+					componentFile = absPath
+					absPath = filepath.Dir(absPath)
+				}
 			}
 
 			// Load the component

@@ -247,6 +247,40 @@ func extractTar(r io.Reader, destDir string) error {
 	return nil
 }
 
+// defaultExcludeDirs contains directories that should always be excluded from artifacts.
+var defaultExcludeDirs = map[string]bool{
+	".terraform":   true,
+	".git":         true,
+	"node_modules": true,
+	".next":        true,
+	"__pycache__":  true,
+	".venv":        true,
+	"venv":         true,
+	".cache":       true,
+	"dist":         true,
+	"build":        true,
+	".DS_Store":    true,
+}
+
+// shouldExclude checks if a path should be excluded from the archive.
+func shouldExclude(relPath string, info os.FileInfo) bool {
+	// Check each path component against exclude list
+	parts := strings.Split(relPath, string(filepath.Separator))
+	for _, part := range parts {
+		if defaultExcludeDirs[part] {
+			return true
+		}
+	}
+
+	// Exclude hidden files/directories (except specific ones we might want)
+	baseName := filepath.Base(relPath)
+	if strings.HasPrefix(baseName, ".") && baseName != ".env.example" && baseName != ".dockerignore" {
+		return true
+	}
+
+	return false
+}
+
 // createTarGz creates a tar.gz archive from a directory.
 func createTarGz(srcDir, destPath string) error {
 	f, err := os.Create(destPath)
@@ -277,6 +311,46 @@ func createTarGz(srcDir, destPath string) error {
 			return nil
 		}
 
+		// Check if path should be excluded
+		if shouldExclude(relPath, info) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Handle symlinks - check if target is a directory
+		if info.Mode()&os.ModeSymlink != 0 {
+			linkTarget, err := os.Readlink(path)
+			if err != nil {
+				return nil // Skip broken symlinks
+			}
+
+			// Resolve the link target
+			if !filepath.IsAbs(linkTarget) {
+				linkTarget = filepath.Join(filepath.Dir(path), linkTarget)
+			}
+
+			targetInfo, err := os.Stat(linkTarget)
+			if err != nil {
+				return nil // Skip symlinks to non-existent targets
+			}
+
+			// Skip symlinks to directories (they can cause issues and are usually build artifacts)
+			if targetInfo.IsDir() {
+				return nil
+			}
+
+			// For symlinks to files, create a symlink entry in the tar
+			header, err := tar.FileInfoHeader(info, linkTarget)
+			if err != nil {
+				return fmt.Errorf("failed to create symlink header: %w", err)
+			}
+			header.Name = relPath
+
+			return tw.WriteHeader(header)
+		}
+
 		// Create tar header
 		header, err := tar.FileInfoHeader(info, "")
 		if err != nil {
@@ -288,8 +362,8 @@ func createTarGz(srcDir, destPath string) error {
 			return fmt.Errorf("failed to write header: %w", err)
 		}
 
-		// Write file content
-		if !info.IsDir() {
+		// Write file content (only for regular files)
+		if info.Mode().IsRegular() {
 			file, err := os.Open(path)
 			if err != nil {
 				return fmt.Errorf("failed to open file: %w", err)
