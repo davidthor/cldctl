@@ -137,10 +137,97 @@ func (p *Plugin) Refresh(ctx context.Context, opts iac.RunOptions) (*iac.Refresh
 		return nil, fmt.Errorf("refresh failed: %s", response.Error)
 	}
 
+	// Parse drift from response changes
+	// During refresh, any changes detected indicate drift between state and actual infrastructure
+	drifts := parseDriftsFromChanges(response.Changes)
+
 	return &iac.RefreshResult{
 		State:  nil, // State managed by container
-		Drifts: nil, // TODO: Parse drift from response
+		Drifts: drifts,
 	}, nil
+}
+
+// parseDriftsFromChanges converts module response changes to ResourceDrift objects.
+// During a refresh, changes indicate drift between expected state and actual infrastructure.
+func parseDriftsFromChanges(changes []ResourceChange) []iac.ResourceDrift {
+	var drifts []iac.ResourceDrift
+
+	for _, change := range changes {
+		// Skip no-op changes - they indicate no drift
+		if change.Action == "no-op" || change.Action == "" {
+			continue
+		}
+
+		// Extract resource type from resource ID if possible
+		// Resource IDs are typically in format "type.name" or similar
+		resourceType := ""
+		if parts := strings.SplitN(change.Resource, ".", 2); len(parts) > 1 {
+			resourceType = parts[0]
+		}
+
+		// Convert before/after differences to property diffs
+		diffs := computePropertyDiffs(change.Before, change.After)
+
+		drifts = append(drifts, iac.ResourceDrift{
+			ResourceID:   change.Resource,
+			ResourceType: resourceType,
+			Diffs:        diffs,
+		})
+	}
+
+	return drifts
+}
+
+// computePropertyDiffs computes property-level differences between before and after states.
+func computePropertyDiffs(before, after map[string]interface{}) []iac.PropertyDiff {
+	var diffs []iac.PropertyDiff
+
+	// Track all keys from both maps
+	allKeys := make(map[string]bool)
+	for k := range before {
+		allKeys[k] = true
+	}
+	for k := range after {
+		allKeys[k] = true
+	}
+
+	// Compare each property
+	for key := range allKeys {
+		oldVal, hasOld := before[key]
+		newVal, hasNew := after[key]
+
+		// Skip if values are equal
+		if hasOld && hasNew && fmt.Sprintf("%v", oldVal) == fmt.Sprintf("%v", newVal) {
+			continue
+		}
+
+		// Check if property might be sensitive (common patterns)
+		sensitive := isSensitiveKey(key)
+
+		diffs = append(diffs, iac.PropertyDiff{
+			Path:      key,
+			OldValue:  oldVal,
+			NewValue:  newVal,
+			Sensitive: sensitive,
+		})
+	}
+
+	return diffs
+}
+
+// isSensitiveKey checks if a key name suggests sensitive data.
+func isSensitiveKey(key string) bool {
+	sensitivePatterns := []string{
+		"password", "secret", "key", "token", "credential",
+		"private", "auth", "api_key", "apikey", "access_key",
+	}
+	keyLower := strings.ToLower(key)
+	for _, pattern := range sensitivePatterns {
+		if strings.Contains(keyLower, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetState returns the current state.

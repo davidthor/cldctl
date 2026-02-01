@@ -19,8 +19,10 @@ engine/
 ├── engine.go      # Main Engine type and deployment orchestration
 ├── executor/      # Execution of planned changes
 ├── expression/    # Expression parsing and evaluation (${{ }})
-├── graph/         # Dependency graph construction and traversal
 └── planner/       # Execution plan generation
+
+# The graph package is at pkg/graph/ for broader reusability
+../graph/          # Dependency graph construction and traversal (pkg/graph)
 ```
 
 ## Main Engine
@@ -162,12 +164,14 @@ hasExpr := expression.ContainsExpression("${{ foo }}")  // true
 - `DependencyOutputs` - Outputs from a dependency component
 - `DependentOutputs` - Outputs from a dependent component
 
-### graph
+### graph (pkg/graph)
 
 Builds dependency graphs from component specifications and provides topological sorting.
+This package is located at `pkg/graph/` (not under engine) for broader reusability,
+such as rendering topology without executing.
 
 ```go
-import "github.com/architect-io/arcctl/pkg/engine/graph"
+import "github.com/architect-io/arcctl/pkg/graph"
 
 // Create a new graph
 g := graph.NewGraph("production", "aws")

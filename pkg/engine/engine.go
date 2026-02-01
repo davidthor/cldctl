@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/architect-io/arcctl/pkg/engine/executor"
-	"github.com/architect-io/arcctl/pkg/engine/graph"
 	"github.com/architect-io/arcctl/pkg/engine/planner"
+	"github.com/architect-io/arcctl/pkg/graph"
 	"github.com/architect-io/arcctl/pkg/iac"
 	"github.com/architect-io/arcctl/pkg/schema/component"
 	"github.com/architect-io/arcctl/pkg/schema/environment"
@@ -237,6 +237,103 @@ func (e *Engine) Destroy(ctx context.Context, opts DestroyOptions) (*DestroyResu
 		if err := e.stateManager.DeleteEnvironment(ctx, opts.Environment); err != nil {
 			// Log but don't fail
 			fmt.Fprintf(opts.Output, "Warning: failed to delete environment state: %v\n", err)
+		}
+	}
+
+	return result, nil
+}
+
+// DestroyComponentOptions configures a component destroy operation.
+type DestroyComponentOptions struct {
+	// Environment name
+	Environment string
+
+	// Component name to destroy
+	Component string
+
+	// Output writer for progress
+	Output io.Writer
+
+	// DryRun only plans without executing
+	DryRun bool
+
+	// AutoApprove skips confirmation
+	AutoApprove bool
+}
+
+// DestroyComponent destroys a single component within an environment.
+func (e *Engine) DestroyComponent(ctx context.Context, opts DestroyComponentOptions) (*DestroyResult, error) {
+	startTime := time.Now()
+
+	result := &DestroyResult{}
+
+	// Get current environment state
+	currentState, err := e.stateManager.GetEnvironment(ctx, opts.Environment)
+	if err != nil {
+		return nil, fmt.Errorf("environment %s not found", opts.Environment)
+	}
+
+	// Get component state
+	compState, ok := currentState.Components[opts.Component]
+	if !ok {
+		return nil, fmt.Errorf("component %s not found in environment %s", opts.Component, opts.Environment)
+	}
+
+	// Build graph from component state only
+	g := graph.NewGraph(opts.Environment, currentState.Datacenter)
+
+	for resName, resState := range compState.Resources {
+		node := graph.NewNode(graph.NodeType(resState.Type), opts.Component, resName)
+		node.Inputs = resState.Inputs
+		node.Outputs = resState.Outputs
+		_ = g.AddNode(node)
+	}
+
+	// Create destroy plan for just this component
+	p := planner.NewPlanner()
+	plan, err := p.PlanDestroy(g, currentState)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create destroy plan: %w", err)
+	}
+
+	result.Plan = plan
+
+	// Print plan summary
+	if opts.Output != nil {
+		e.printDestroyPlanSummary(opts.Output, plan)
+	}
+
+	// If dry run, return here
+	if opts.DryRun || plan.IsEmpty() {
+		result.Success = plan.IsEmpty() || opts.DryRun
+		result.Duration = time.Since(startTime)
+		return result, nil
+	}
+
+	// Execute plan
+	execOpts := executor.Options{
+		Parallelism: 1,
+		Output:      opts.Output,
+		DryRun:      false,
+		StopOnError: true,
+	}
+
+	exec := executor.NewExecutor(e.stateManager, e.iacRegistry, execOpts)
+	execResult, err := exec.Execute(ctx, plan, g)
+	if err != nil {
+		return nil, fmt.Errorf("destroy failed: %w", err)
+	}
+
+	result.Execution = execResult
+	result.Success = execResult.Success
+	result.Duration = time.Since(startTime)
+
+	// Delete component state if successful (but not the entire environment)
+	if result.Success {
+		if err := e.stateManager.DeleteComponent(ctx, opts.Environment, opts.Component); err != nil {
+			if opts.Output != nil {
+				fmt.Fprintf(opts.Output, "Warning: failed to delete component state: %v\n", err)
+			}
 		}
 	}
 

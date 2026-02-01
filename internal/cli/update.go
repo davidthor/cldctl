@@ -3,9 +3,11 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/architect-io/arcctl/pkg/engine"
 	"github.com/architect-io/arcctl/pkg/schema/environment"
 	"github.com/architect-io/arcctl/pkg/state"
 	"github.com/architect-io/arcctl/pkg/state/types"
@@ -224,57 +226,75 @@ func applyEnvironmentConfig(ctx context.Context, mgr state.Manager, env *types.E
 	fmt.Println()
 	fmt.Printf("[update] Applying configuration to environment %q...\n", env.Name)
 
-	// Note: Datacenter is a CLI parameter (--datacenter flag), not part of the config file
+	// Create the engine
+	eng := createEngine(mgr)
 
-	// TODO: Implement actual component deployment/update/removal logic
-	// For now, just update the state to reflect the new components
+	// Track any errors
+	var updateErrors []error
 
-	// Remove components
+	// Remove components first (reverse order for clean teardown)
 	for _, name := range toRemove {
 		fmt.Printf("[update] Removing component %q...\n", name)
-		delete(env.Components, name)
+
+		result, err := eng.DestroyComponent(ctx, engine.DestroyComponentOptions{
+			Environment: env.Name,
+			Component:   name,
+			Output:      os.Stdout,
+			DryRun:      false,
+			AutoApprove: true, // Already confirmed above
+		})
+		if err != nil {
+			fmt.Printf("  Warning: failed to destroy component %q: %v\n", name, err)
+			updateErrors = append(updateErrors, err)
+			continue
+		}
+
+		if result.Success {
+			fmt.Printf("  Removed %d resources\n", result.Execution.Deleted)
+		}
 	}
 
 	// Add/update components
 	for name, comp := range newComponents {
-		if env.Components == nil {
-			env.Components = make(map[string]*types.ComponentState)
-		}
+		// Convert variables from map[string]interface{} to map[string]interface{}
+		vars := comp.Variables()
 
-		// Convert variables from map[string]interface{} to map[string]string
-		vars := make(map[string]string)
-		for k, v := range comp.Variables() {
-			if s, ok := v.(string); ok {
-				vars[k] = s
-			} else {
-				vars[k] = fmt.Sprintf("%v", v)
-			}
-		}
-
-		if _, exists := env.Components[name]; !exists {
-			fmt.Printf("[update] Deploying component %q...\n", name)
-			env.Components[name] = &types.ComponentState{
-				Name:       name,
-				Source:     comp.Source(),
-				Status:     types.ResourceStatusReady,
-				DeployedAt: time.Now(),
-				Variables:  vars,
-				Resources:  make(map[string]*types.ResourceState),
-			}
-		} else {
+		_, isNew := existingComponents[name]
+		if isNew {
 			fmt.Printf("[update] Updating component %q...\n", name)
-			env.Components[name].Source = comp.Source()
-			env.Components[name].Variables = vars
+		} else {
+			fmt.Printf("[update] Deploying component %q...\n", name)
+		}
+
+		// Deploy the component
+		result, err := eng.Deploy(ctx, engine.DeployOptions{
+			Environment: env.Name,
+			Datacenter:  env.Datacenter,
+			Components:  map[string]string{name: comp.Source()},
+			Variables:   map[string]map[string]interface{}{name: vars},
+			Output:      os.Stdout,
+			DryRun:      false,
+			AutoApprove: true, // Already confirmed above
+			Parallelism: defaultParallelism,
+		})
+		if err != nil {
+			fmt.Printf("  Warning: failed to deploy component %q: %v\n", name, err)
+			updateErrors = append(updateErrors, err)
+			continue
+		}
+
+		if result.Success && result.Execution != nil {
+			fmt.Printf("  Created: %d, Updated: %d\n", result.Execution.Created, result.Execution.Updated)
 		}
 	}
 
-	env.UpdatedAt = time.Now()
-
-	if err := mgr.SaveEnvironment(ctx, env); err != nil {
-		return fmt.Errorf("failed to save environment state: %w", err)
+	// Report final status
+	if len(updateErrors) > 0 {
+		fmt.Printf("\n[warning] Environment update completed with %d errors\n", len(updateErrors))
+		return fmt.Errorf("environment update completed with errors")
 	}
 
-	fmt.Printf("[success] Environment updated successfully\n")
+	fmt.Printf("\n[success] Environment updated successfully\n")
 
 	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/architect-io/arcctl/pkg/engine"
 	"github.com/architect-io/arcctl/pkg/schema/component"
 	"github.com/architect-io/arcctl/pkg/schema/datacenter"
 	"github.com/architect-io/arcctl/pkg/state/types"
@@ -214,12 +215,52 @@ Examples:
 			fmt.Println()
 			fmt.Printf("[deploy] Deploying component %q to environment %q...\n", componentName, environment)
 
-			// TODO: Implement actual deployment logic using engine
+			// Create the engine
+			eng := createEngine(mgr)
 
-			_ = envState
-			_ = vars
+			// Convert vars to interface{} map
+			varsInterface := make(map[string]interface{})
+			for k, v := range vars {
+				varsInterface[k] = v
+			}
 
-			fmt.Printf("[success] Component deployed successfully\n")
+			// Determine component path
+			componentPath := source
+			if isLocalPath && !strings.HasSuffix(source, ".yml") && !strings.HasSuffix(source, ".yaml") {
+				componentPath = filepath.Join(source, "architect.yml")
+			}
+
+			// Execute deployment using the engine
+			result, err := eng.Deploy(ctx, engine.DeployOptions{
+				Environment: environment,
+				Datacenter:  envState.Datacenter,
+				Components:  map[string]string{componentName: componentPath},
+				Variables:   map[string]map[string]interface{}{componentName: varsInterface},
+				Output:      os.Stdout,
+				DryRun:      false,
+				AutoApprove: autoApprove,
+				Parallelism: defaultParallelism,
+			})
+			if err != nil {
+				return fmt.Errorf("deployment failed: %w", err)
+			}
+
+			if !result.Success {
+				if result.Execution != nil && len(result.Execution.Errors) > 0 {
+					return fmt.Errorf("deployment failed with %d errors: %v", len(result.Execution.Errors), result.Execution.Errors[0])
+				}
+				return fmt.Errorf("deployment failed")
+			}
+
+			// Display results
+			if result.Execution != nil {
+				fmt.Printf("\n[success] Deployment completed in %v\n", result.Duration.Round(time.Millisecond))
+				fmt.Printf("  Created: %d\n", result.Execution.Created)
+				fmt.Printf("  Updated: %d\n", result.Execution.Updated)
+				fmt.Printf("  Deleted: %d\n", result.Execution.Deleted)
+			} else {
+				fmt.Printf("[success] Component deployed successfully\n")
+			}
 
 			return nil
 		},
@@ -353,10 +394,14 @@ Examples:
 			fmt.Printf("[deploy] Deploying datacenter %q...\n", dcName)
 
 			// Create or update datacenter state
+			// Note: Datacenter "deployment" registers the datacenter configuration so it can
+			// be used by environments. Datacenter modules are hooks that get executed when
+			// components are deployed to environments that use this datacenter.
 			dcState := &types.DatacenterState{
 				Name:      dcName,
 				Version:   configRef,
 				Variables: vars,
+				Modules:   make(map[string]*types.ModuleState),
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
 			}
@@ -365,9 +410,15 @@ Examples:
 				return fmt.Errorf("failed to save datacenter state: %w", err)
 			}
 
-			// TODO: Implement actual deployment logic using engine
+			// Note: Datacenter-level modules (if any) would be executed here.
+			// Currently, datacenter modules are hooks that are triggered during component
+			// deployment. If the datacenter has top-level modules that need to run once
+			// (e.g., VPC setup), that would require Engine.DeployDatacenter() implementation.
 
-			fmt.Printf("[success] Datacenter deployed successfully\n")
+			fmt.Printf("[success] Datacenter registered successfully\n")
+			fmt.Println()
+			fmt.Println("The datacenter is now available for use with environments.")
+			fmt.Println("Infrastructure modules will be executed when components are deployed.")
 
 			return nil
 		},

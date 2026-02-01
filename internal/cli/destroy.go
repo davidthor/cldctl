@@ -3,9 +3,11 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/architect-io/arcctl/pkg/engine"
 	"github.com/spf13/cobra"
 )
 
@@ -105,14 +107,35 @@ Examples:
 			fmt.Println()
 			fmt.Printf("[destroy] Destroying component %q...\n", componentName)
 
-			// TODO: Implement actual destroy logic using engine
+			// Create the engine
+			eng := createEngine(mgr)
 
-			// Delete component state
-			if err := mgr.DeleteComponent(ctx, environment, componentName); err != nil {
-				return fmt.Errorf("failed to delete component state: %w", err)
+			// Execute destroy using the engine
+			result, err := eng.DestroyComponent(ctx, engine.DestroyComponentOptions{
+				Environment: environment,
+				Component:   componentName,
+				Output:      os.Stdout,
+				DryRun:      false,
+				AutoApprove: autoApprove,
+			})
+			if err != nil {
+				return fmt.Errorf("destroy failed: %w", err)
 			}
 
-			fmt.Printf("[success] Component destroyed successfully\n")
+			if !result.Success {
+				if result.Execution != nil && len(result.Execution.Errors) > 0 {
+					return fmt.Errorf("destroy failed with %d errors: %v", len(result.Execution.Errors), result.Execution.Errors[0])
+				}
+				return fmt.Errorf("destroy failed")
+			}
+
+			// Display results
+			if result.Execution != nil {
+				fmt.Printf("\n[success] Component destroyed in %v\n", result.Duration.Round(time.Millisecond))
+				fmt.Printf("  Deleted: %d resources\n", result.Execution.Deleted)
+			} else {
+				fmt.Printf("[success] Component destroyed successfully\n")
+			}
 
 			return nil
 		},
@@ -204,14 +227,21 @@ Examples:
 
 			fmt.Printf("[destroy] Destroying datacenter %q...\n", dcName)
 
-			// TODO: Implement actual destroy logic using engine
+			// Note: Datacenter "destroy" removes the datacenter registration.
+			// Datacenter modules are hooks that were executed during component deployment.
+			// The actual infrastructure cleanup happens when components/environments are destroyed.
+			// If the datacenter has top-level modules that created infrastructure,
+			// those would need Engine.DestroyDatacenter() implementation.
 
 			// Delete datacenter state
 			if err := mgr.DeleteDatacenter(ctx, dcName); err != nil {
 				return fmt.Errorf("failed to delete datacenter state: %w", err)
 			}
 
-			fmt.Printf("[success] Datacenter destroyed successfully\n")
+			fmt.Printf("[success] Datacenter removed successfully\n")
+			fmt.Println()
+			fmt.Println("Note: Infrastructure created by datacenter hooks was destroyed")
+			fmt.Println("when the associated environments and components were removed.")
 
 			return nil
 		},

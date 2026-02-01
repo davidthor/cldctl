@@ -3,7 +3,7 @@ package planner
 import (
 	"testing"
 
-	"github.com/architect-io/arcctl/pkg/engine/graph"
+	"github.com/architect-io/arcctl/pkg/graph"
 	"github.com/architect-io/arcctl/pkg/state/types"
 )
 

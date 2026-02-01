@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/architect-io/arcctl/pkg/engine/graph"
 	"github.com/architect-io/arcctl/pkg/engine/planner"
+	"github.com/architect-io/arcctl/pkg/graph"
 	"github.com/architect-io/arcctl/pkg/iac"
 	"github.com/architect-io/arcctl/pkg/state"
 	"github.com/architect-io/arcctl/pkg/state/backend"
