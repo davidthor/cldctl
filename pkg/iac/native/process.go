@@ -248,7 +248,8 @@ func (pm *ProcessManager) waitForReady(ctx context.Context, readiness *Readiness
 			resp, err := client.Get(readiness.Endpoint)
 			if err == nil {
 				resp.Body.Close()
-				if resp.StatusCode >= 200 && resp.StatusCode < 500 {
+				// Only 2xx and 3xx status codes indicate ready
+				if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 					// Service is ready
 					return nil
 				}
