@@ -373,7 +373,7 @@ func (p *Plugin) applyProcess(ctx context.Context, name string, props map[string
 
 	// Get environment variables first (so we can resolve PORT for readiness)
 	env := getStringMap(props, "environment")
-	
+
 	// Pre-assign PORT if set to "auto"
 	if portVal, ok := env["PORT"]; ok && portVal == "auto" {
 		port, err := findAvailablePort()
@@ -391,7 +391,7 @@ func (p *Plugin) applyProcess(ctx context.Context, name string, props map[string
 		if port, ok := env["PORT"]; ok {
 			endpoint = strings.ReplaceAll(endpoint, "${self.environment.PORT}", port)
 		}
-		
+
 		readiness = &ReadinessCheck{
 			Type:     getString(readinessMap, "type"),
 			Endpoint: endpoint,
@@ -527,4 +527,3 @@ func parseDuration(s string, defaultDuration time.Duration) time.Duration {
 	}
 	return d
 }
-

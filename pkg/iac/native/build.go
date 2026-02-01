@@ -88,14 +88,14 @@ func (d *DockerClient) BuildImage(ctx context.Context, opts BuildOptions) (*Buil
 	}
 
 	buildOpts := build.ImageBuildOptions{
-		Dockerfile: dockerfile,
-		Tags:       opts.Tags,
-		BuildArgs:  buildArgs,
-		Target:     opts.Target,
-		NoCache:    opts.NoCache,
-		PullParent: opts.Pull,
-		Labels:     opts.Labels,
-		Remove:     true,
+		Dockerfile:  dockerfile,
+		Tags:        opts.Tags,
+		BuildArgs:   buildArgs,
+		Target:      opts.Target,
+		NoCache:     opts.NoCache,
+		PullParent:  opts.Pull,
+		Labels:      opts.Labels,
+		Remove:      true,
 		ForceRemove: true,
 	}
 

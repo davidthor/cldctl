@@ -296,7 +296,7 @@ func ParseDockerfileCmd(dockerfilePath string) ([]string, error) {
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		
+
 		// Skip comments and empty lines
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -305,7 +305,7 @@ func ParseDockerfileCmd(dockerfilePath string) ([]string, error) {
 		// Look for CMD instruction (last one wins)
 		if strings.HasPrefix(strings.ToUpper(line), "CMD") {
 			cmdLine := strings.TrimSpace(line[3:])
-			
+
 			// Parse JSON array format: CMD ["npm", "start"]
 			if strings.HasPrefix(cmdLine, "[") {
 				cmdLine = strings.Trim(cmdLine, "[]")

@@ -10,11 +10,11 @@ import (
 
 // Module represents a native module definition.
 type Module struct {
-	Plugin    string                 `yaml:"plugin"`    // Must be "native"
-	Type      string                 `yaml:"type"`      // Primary resource type hint
-	Inputs    map[string]InputDef    `yaml:"inputs"`
-	Resources map[string]Resource    `yaml:"resources"`
-	Outputs   map[string]OutputDef   `yaml:"outputs"`
+	Plugin    string               `yaml:"plugin"` // Must be "native"
+	Type      string               `yaml:"type"`   // Primary resource type hint
+	Inputs    map[string]InputDef  `yaml:"inputs"`
+	Resources map[string]Resource  `yaml:"resources"`
+	Outputs   map[string]OutputDef `yaml:"outputs"`
 }
 
 // InputDef defines a module input.
@@ -35,7 +35,7 @@ type Resource struct {
 
 // OutputDef defines a module output.
 type OutputDef struct {
-	Value       string `yaml:"value"`     // Expression to evaluate
+	Value       string `yaml:"value"` // Expression to evaluate
 	Description string `yaml:"description"`
 	Sensitive   bool   `yaml:"sensitive"`
 }
