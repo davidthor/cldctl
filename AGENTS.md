@@ -52,9 +52,18 @@ arcctl pull component ghcr.io/myorg/app:v1
 arcctl validate component ./my-app
 arcctl validate datacenter ./dc
 arcctl validate environment ./env.yml
+
+# Logs and observability
+arcctl logs -e staging                            # All logs in the environment
+arcctl logs -e staging my-app                     # Logs from one component
+arcctl logs -e staging my-app/deployment          # All deployments in a component
+arcctl logs -e staging my-app/deployment/api      # A specific deployment
+arcctl logs -e staging -f                         # Stream logs in real-time
+arcctl logs -e staging --since 5m                 # Logs from the last 5 minutes
+arcctl observability dashboard -e staging         # Open observability UI in browser
 ```
 
-Aliases: `comp` for `component`, `dc` for `datacenter`, `env` for `environment`, `ls` for `list`
+Aliases: `comp` for `component`, `dc` for `datacenter`, `env` for `environment`, `ls` for `list`, `obs` for `observability`
 
 ### Key Directories
 | Path | Purpose |
@@ -65,6 +74,7 @@ Aliases: `comp` for `component`, `dc` for `datacenter`, `env` for `environment`,
 | `pkg/state/backend/` | Pluggable state backends (local, s3, gcs, azurerm) |
 | `pkg/engine/` | Execution engine (graph, planner, executor, expressions) |
 | `pkg/iac/` | IaC plugins (native, pulumi, opentofu) |
+| `pkg/logs/` | Log query plugin system (querier interface, Loki adapter) |
 | `pkg/errors/` | Structured error types |
 | `testdata/` | Test fixtures |
 | `examples/` | Example configurations |
@@ -203,12 +213,9 @@ There are two modes: **expression-only** (default) and **auto-inject**.
 # Boolean shorthand - enable with all defaults (expression-only)
 observability: true
 
-# Full object form - customize signals, attributes, and injection mode
+# Full object form - customize attributes and injection mode
 observability:
   inject: false     # default: false (expression-only mode)
-  logs: true        # default: true
-  traces: true      # default: true
-  metrics: false    # default: true
   attributes:       # custom OTel resource attributes
     team: payments
     tier: critical
@@ -276,9 +283,9 @@ Auto-injected variables (never overwrites component-declared values):
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | From datacenter hook output |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | From datacenter hook output |
 | `OTEL_SERVICE_NAME` | `<component>-<workload>` |
-| `OTEL_LOGS_EXPORTER` | `otlp` or `none` based on `logs` flag |
-| `OTEL_TRACES_EXPORTER` | `otlp` or `none` based on `traces` flag |
-| `OTEL_METRICS_EXPORTER` | `otlp` or `none` based on `metrics` flag |
+| `OTEL_LOGS_EXPORTER` | `otlp` |
+| `OTEL_TRACES_EXPORTER` | `otlp` |
+| `OTEL_METRICS_EXPORTER` | `otlp` |
 | `OTEL_RESOURCE_ATTRIBUTES` | Merged attributes (auto-generated + datacenter + component) |
 
 Component-declared env vars always take precedence -- the engine never overwrites
@@ -336,15 +343,15 @@ environment {
 | `function` | `id`, `endpoint` |
 | `service` | `host`, `port`, `url` |
 | `route` | `url`, `host`, `port` |
-| `observability` | `endpoint`, `protocol`, `attributes` |
+| `observability` | `endpoint`, `protocol`, `attributes`; optional: `query_type`, `query_endpoint`, `dashboard_url` |
 
 ### Hook Expression Context
 - `variable.<name>` - Datacenter variables
 - `environment.name` - Current environment name
-- `node.name|component|inputs.<field>` - Current resource info
+- `node.name|type|component|inputs.<field>` - Current resource info
 - `module.<name>.<output>` - Module outputs
 
-For `observability` hooks, `node.inputs` includes: `inject`, `logs`, `traces`, `metrics`, `attributes`
+For `observability` hooks, `node.inputs` includes: `inject`, `attributes`
 
 ## Go Code Conventions
 

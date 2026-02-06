@@ -258,6 +258,8 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 		Volumes:     getVolumeMounts(props, "volumes"),
 		Network:     getString(props, "network"),
 		Restart:     getString(props, "restart"),
+		LogDriver:   getString(props, "log_driver"),
+		LogOptions:  getStringMap(props, "log_options"),
 	}
 
 	// Check if container already exists and is running (from state)

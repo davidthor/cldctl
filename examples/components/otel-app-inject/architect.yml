@@ -8,10 +8,13 @@
 #   OTEL_EXPORTER_OTLP_ENDPOINT  - from datacenter hook
 #   OTEL_EXPORTER_OTLP_PROTOCOL  - from datacenter hook
 #   OTEL_SERVICE_NAME            - <component>-<workload>
-#   OTEL_LOGS_EXPORTER           - otlp or none
-#   OTEL_TRACES_EXPORTER         - otlp or none
-#   OTEL_METRICS_EXPORTER        - otlp or none
+#   OTEL_LOGS_EXPORTER           - otlp
+#   OTEL_TRACES_EXPORTER         - otlp
+#   OTEL_METRICS_EXPORTER        - otlp
 #   OTEL_RESOURCE_ATTRIBUTES     - service.namespace, deployment.environment, custom attrs
+#
+# To disable a specific signal, explicitly set the exporter in your env block:
+#   OTEL_METRICS_EXPORTER: none
 
 databases:
   main:
@@ -19,9 +22,6 @@ databases:
 
 observability:
   inject: true
-  logs: true
-  traces: true
-  metrics: true
   attributes:
     team: backend
 

@@ -74,7 +74,7 @@ Examples:
 				if len(targets) > 0 {
 					matched := false
 					for _, t := range targets {
-						if strings.HasPrefix(res.Name, t) || strings.HasPrefix(res.Type+"."+res.Name, t) {
+						if strings.HasPrefix(res.Name, t) || strings.HasPrefix(res.Type+"/"+res.Name, t) || strings.HasPrefix(res.Type+"."+res.Name, t) {
 							matched = true
 							break
 						}
@@ -143,7 +143,7 @@ Examples:
 
 	cmd.Flags().StringVarP(&environment, "environment", "e", "", "Target environment (required)")
 	cmd.Flags().BoolVar(&autoApprove, "auto-approve", false, "Skip confirmation prompt")
-	cmd.Flags().StringArrayVar(&targets, "target", nil, "Target specific resource (repeatable)")
+	cmd.Flags().StringArrayVar(&targets, "target", nil, "Target specific resource by name or type/name (repeatable)")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
 	_ = cmd.MarkFlagRequired("environment")

@@ -57,7 +57,7 @@ Each hook handles a component resource type:
 | `route` | External routing | `url`, `host`, `port` |
 | `dockerBuild` | Build images | `image` |
 | `cronjob` | Scheduled tasks | `id` |
-| `observability` | OpenTelemetry config | `endpoint`, `protocol`, `attributes` |
+| `observability` | OpenTelemetry config | `endpoint`, `protocol`, `attributes`; optional: `query_type`, `query_endpoint`, `dashboard_url` |
 
 ## Expression Context
 
@@ -66,6 +66,7 @@ Each hook handles a component resource type:
 | `variable.<name>` | Datacenter variables |
 | `environment.name` | Current environment name |
 | `node.name` | Resource name (in hooks) |
+| `node.type` | Resource type: deployment, database, function, service, route, etc. |
 | `node.component` | Component the resource belongs to |
 | `node.inputs.<field>` | Resource input values |
 | `module.<name>.<output>` | Module output values |
@@ -170,7 +171,7 @@ environment {
 }
 ```
 
-`node.inputs` for observability hooks: `inject` (bool), `logs` (bool), `traces` (bool), `metrics` (bool), `attributes` (map).
+`node.inputs` for observability hooks: `inject` (bool), `attributes` (map).
 
 ## IaC Plugins
 

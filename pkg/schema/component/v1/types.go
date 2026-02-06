@@ -35,9 +35,6 @@ type SchemaV1 struct {
 type ObservabilityV1 struct {
 	Enabled    bool              `yaml:"-" json:"-"`                                         // Internal: tracks if observability is enabled
 	Inject     *bool             `yaml:"inject,omitempty" json:"inject,omitempty"`           // Auto-inject OTEL_* env vars (default: false)
-	Logs       *bool             `yaml:"logs,omitempty" json:"logs,omitempty"`               // Export logs (default: true)
-	Traces     *bool             `yaml:"traces,omitempty" json:"traces,omitempty"`           // Export traces (default: true)
-	Metrics    *bool             `yaml:"metrics,omitempty" json:"metrics,omitempty"`         // Export metrics (default: true)
 	Attributes map[string]string `yaml:"attributes,omitempty" json:"attributes,omitempty"`   // Custom OTel resource attributes
 }
 

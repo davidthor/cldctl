@@ -265,9 +265,6 @@ type Timeouts interface {
 // Returns nil if observability is not configured or explicitly disabled.
 type Observability interface {
 	Inject() bool                // Auto-inject OTEL_* env vars into workloads
-	Logs() bool                  // Whether to export logs
-	Traces() bool                // Whether to export traces
-	Metrics() bool               // Whether to export metrics
 	Attributes() map[string]string // Custom OTel resource attributes
 }
 

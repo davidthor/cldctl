@@ -548,9 +548,6 @@ type observabilityWrapper struct {
 }
 
 func (o *observabilityWrapper) Inject() bool                  { return o.obs.Inject }
-func (o *observabilityWrapper) Logs() bool                    { return o.obs.Logs }
-func (o *observabilityWrapper) Traces() bool                  { return o.obs.Traces }
-func (o *observabilityWrapper) Metrics() bool                 { return o.obs.Metrics }
 func (o *observabilityWrapper) Attributes() map[string]string { return o.obs.Attributes }
 
 // Variable wrapper

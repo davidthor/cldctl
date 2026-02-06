@@ -61,9 +61,7 @@ deployments:
     image: nginx:latest
 
 observability:
-  logs: true
-  traces: false
-  metrics: true
+  inject: true
   attributes:
     team: payments
     tier: critical
@@ -80,14 +78,8 @@ observability:
 	if !schema.Observability.Enabled {
 		t.Error("expected observability to be enabled")
 	}
-	if schema.Observability.Logs == nil || !*schema.Observability.Logs {
-		t.Error("expected logs to be true")
-	}
-	if schema.Observability.Traces == nil || *schema.Observability.Traces {
-		t.Error("expected traces to be false")
-	}
-	if schema.Observability.Metrics == nil || !*schema.Observability.Metrics {
-		t.Error("expected metrics to be true")
+	if schema.Observability.Inject == nil || !*schema.Observability.Inject {
+		t.Error("expected inject to be true")
 	}
 	if len(schema.Observability.Attributes) != 2 {
 		t.Errorf("expected 2 attributes, got %d", len(schema.Observability.Attributes))
@@ -119,11 +111,9 @@ deployments:
 func TestTransformer_ObservabilityDefaults(t *testing.T) {
 	transformer := NewTransformer()
 
-	trueVal := true
 	schema := &SchemaV1{
 		Observability: &ObservabilityV1{
 			Enabled: true,
-			Logs:    &trueVal,
 		},
 	}
 
@@ -135,14 +125,8 @@ func TestTransformer_ObservabilityDefaults(t *testing.T) {
 	if ic.Observability == nil {
 		t.Fatal("expected observability to be set")
 	}
-	if !ic.Observability.Logs {
-		t.Error("expected logs to be true")
-	}
-	if !ic.Observability.Traces {
-		t.Error("expected traces to default to true")
-	}
-	if !ic.Observability.Metrics {
-		t.Error("expected metrics to default to true")
+	if ic.Observability.Inject {
+		t.Error("expected inject to default to false")
 	}
 }
 
@@ -165,17 +149,14 @@ func TestTransformer_ObservabilityDisabled(t *testing.T) {
 	}
 }
 
-func TestTransformer_ObservabilityCustomSignals(t *testing.T) {
+func TestTransformer_ObservabilityWithAttributes(t *testing.T) {
 	transformer := NewTransformer()
 
 	trueVal := true
-	falseVal := false
 	schema := &SchemaV1{
 		Observability: &ObservabilityV1{
 			Enabled: true,
-			Logs:    &trueVal,
-			Traces:  &falseVal,
-			Metrics: &falseVal,
+			Inject:  &trueVal,
 			Attributes: map[string]string{
 				"team": "platform",
 			},
@@ -190,71 +171,11 @@ func TestTransformer_ObservabilityCustomSignals(t *testing.T) {
 	if ic.Observability == nil {
 		t.Fatal("expected observability to be set")
 	}
-	if !ic.Observability.Logs {
-		t.Error("expected logs to be true")
-	}
-	if ic.Observability.Traces {
-		t.Error("expected traces to be false")
-	}
-	if ic.Observability.Metrics {
-		t.Error("expected metrics to be false")
+	if !ic.Observability.Inject {
+		t.Error("expected inject to be true")
 	}
 	if ic.Observability.Attributes["team"] != "platform" {
 		t.Errorf("expected team=platform, got %s", ic.Observability.Attributes["team"])
-	}
-}
-
-func TestParser_ParseBytes_ObservabilityWithInject(t *testing.T) {
-	parser := &Parser{}
-
-	yaml := `
-deployments:
-  api:
-    image: nginx:latest
-
-observability:
-  inject: true
-  logs: true
-  traces: true
-`
-
-	schema, err := parser.ParseBytes([]byte(yaml))
-	if err != nil {
-		t.Fatalf("failed to parse: %v", err)
-	}
-
-	if schema.Observability == nil {
-		t.Fatal("expected observability to be set")
-	}
-	if !schema.Observability.Enabled {
-		t.Error("expected observability to be enabled")
-	}
-	if schema.Observability.Inject == nil || !*schema.Observability.Inject {
-		t.Error("expected inject to be true")
-	}
-}
-
-func TestTransformer_ObservabilityInjectTrue(t *testing.T) {
-	transformer := NewTransformer()
-
-	trueVal := true
-	schema := &SchemaV1{
-		Observability: &ObservabilityV1{
-			Enabled: true,
-			Inject:  &trueVal,
-		},
-	}
-
-	ic, err := transformer.Transform(schema)
-	if err != nil {
-		t.Fatalf("unexpected transform error: %v", err)
-	}
-
-	if ic.Observability == nil {
-		t.Fatal("expected observability to be set")
-	}
-	if !ic.Observability.Inject {
-		t.Error("expected inject to be true")
 	}
 }
 

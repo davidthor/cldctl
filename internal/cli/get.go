@@ -331,7 +331,7 @@ Examples:
 				if len(urls) > 0 {
 					fmt.Println("URLs:")
 					for _, u := range urls {
-						fmt.Printf("  %s/%s: %s\n", u.component, u.route, u.url)
+						fmt.Printf("  %s/route/%s: %s\n", u.component, u.route, u.url)
 					}
 				}
 			}

@@ -212,7 +212,9 @@ func (m *manager) GetResource(ctx context.Context, env, component, resource stri
 }
 
 func (m *manager) SaveResource(ctx context.Context, env, component string, state *types.ResourceState) error {
-	p := resourcePath(env, component, state.Name)
+	// Use type-qualified key for the file path to avoid collisions
+	key := state.Type + "." + state.Name
+	p := resourcePath(env, component, key)
 	return writeJSON(ctx, m.backend, p, state)
 }
 

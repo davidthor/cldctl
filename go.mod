@@ -19,6 +19,7 @@ require (
 	github.com/go-git/go-git/v5 v5.16.4
 	github.com/google/go-containerregistry v0.20.7
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/moby/go-archive v0.2.0
 	github.com/spf13/cobra v1.10.2

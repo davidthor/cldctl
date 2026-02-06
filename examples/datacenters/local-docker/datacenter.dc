@@ -226,6 +226,13 @@ environment {
         memory         = node.inputs.memory
         network        = variable.network_name
         liveness_probe = node.inputs.liveness_probe
+        # Forward container stdout to OTel collector via fluentd driver
+        log_driver = "fluentd"
+        log_driver_options = {
+          fluentd-address  = module.otel.fluentd_endpoint
+          fluentd-async    = "true"
+          tag              = "${environment.name}.${node.component}.${node.type}.${node.name}"
+        }
       }
     }
     
@@ -252,6 +259,13 @@ environment {
         memory        = node.inputs.memory
         network       = variable.network_name
         liveness_probe = node.inputs.liveness_probe
+        # Forward container stdout to OTel collector via fluentd driver
+        log_driver = "fluentd"
+        log_driver_options = {
+          fluentd-address  = module.otel.fluentd_endpoint
+          fluentd-async    = "true"
+          tag              = "${environment.name}.${node.component}.${node.type}.${node.name}"
+        }
       }
     }
     
@@ -389,15 +403,30 @@ environment {
     }
   }
 
-  # Observability - OpenTelemetry configuration
-  # When components declare observability, this hook provides the OTel collector
-  # endpoint and optional datacenter-level resource attributes.
+  # Observability - local OpenTelemetry backend (Grafana + Loki + Tempo + Prometheus)
+  # Spins up a grafana/otel-lgtm container that receives logs, traces, and metrics
+  # via the standard OTLP endpoints. View everything in Grafana at the printed URL.
   # The engine merges datacenter attributes with component attributes and
   # auto-generated attributes (service.namespace, deployment.environment).
+  #
+  # Docker containers forward their stdout to the collector via the fluentd
+  # logging driver so that `arcctl logs` can query all container output.
   observability {
+    module "otel" {
+      plugin = "native"
+      build  = "./modules/docker-otel-backend"
+      inputs = {
+        name    = "${environment.name}-otel"
+        network = variable.network_name
+      }
+    }
+
     outputs = {
-      endpoint = "http://localhost:4318"
-      protocol = "http/protobuf"
+      endpoint       = module.otel.otlp_http_endpoint
+      protocol       = "http/protobuf"
+      query_type     = "loki"
+      query_endpoint = module.otel.loki_endpoint
+      dashboard_url  = module.otel.grafana_url
       attributes = {
         cloud.provider = "local"
       }

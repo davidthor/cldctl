@@ -42,9 +42,6 @@ type InternalComponent struct {
 // variables into all workloads (deployments, functions, cronjobs).
 type InternalObservability struct {
 	Inject     bool              // Auto-inject OTEL_* env vars into workloads (default: false)
-	Logs       bool              // Whether to export logs (default: true)
-	Traces     bool              // Whether to export traces (default: true)
-	Metrics    bool              // Whether to export metrics (default: true)
 	Attributes map[string]string // Custom OTel resource attributes
 }
 

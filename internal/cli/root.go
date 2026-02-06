@@ -12,6 +12,9 @@ import (
 	_ "github.com/architect-io/arcctl/pkg/state/backend/gcs"
 	_ "github.com/architect-io/arcctl/pkg/state/backend/local"
 	_ "github.com/architect-io/arcctl/pkg/state/backend/s3"
+
+	// Import log query adapters to register them via init()
+	_ "github.com/architect-io/arcctl/pkg/logs/loki"
 )
 
 var (
@@ -75,6 +78,10 @@ func init() {
 	// Keep the up command and version command
 	rootCmd.AddCommand(newUpCmd())
 	rootCmd.AddCommand(newVersionCmd())
+
+	// Observability commands
+	rootCmd.AddCommand(newLogsCmd())
+	rootCmd.AddCommand(newObservabilityCmd())
 }
 
 func initConfig() {

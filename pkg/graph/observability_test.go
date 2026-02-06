@@ -31,15 +31,9 @@ deployments:
 		t.Errorf("expected observability node type, got %s", obsNode.Type)
 	}
 
-	// Check inputs
-	if logs, ok := obsNode.Inputs["logs"].(bool); !ok || !logs {
-		t.Error("expected logs input to be true")
-	}
-	if traces, ok := obsNode.Inputs["traces"].(bool); !ok || !traces {
-		t.Error("expected traces input to be true")
-	}
-	if metrics, ok := obsNode.Inputs["metrics"].(bool); !ok || !metrics {
-		t.Error("expected metrics input to be true")
+	// inject should default to false with boolean shorthand
+	if inject, ok := obsNode.Inputs["inject"].(bool); !ok || inject {
+		t.Error("expected inject input to be false (default)")
 	}
 }
 
@@ -80,16 +74,10 @@ cronjobs:
 		t.Fatal("expected all nodes to exist")
 	}
 
-	// Deployment should depend on observability
 	assertDependsOn(t, deployNode, obsNode.ID, "deployment should depend on observability")
-
-	// Function should depend on observability
 	assertDependsOn(t, fnNode, obsNode.ID, "function should depend on observability")
-
-	// Cronjob should depend on observability
 	assertDependsOn(t, cronNode, obsNode.ID, "cronjob should depend on observability")
 
-	// Observability should list all workloads as dependents
 	if len(obsNode.DependedOnBy) != 3 {
 		t.Errorf("expected observability to have 3 dependents, got %d", len(obsNode.DependedOnBy))
 	}
@@ -111,7 +99,6 @@ deployments:
 
 	g := builder.Build()
 
-	// Should NOT have observability node
 	obsNode := g.GetNode("my-app/observability/observability")
 	if obsNode != nil {
 		t.Error("expected no observability node when omitted")
@@ -136,7 +123,6 @@ deployments:
 
 	g := builder.Build()
 
-	// Should NOT have observability node when disabled
 	obsNode := g.GetNode("my-app/observability/observability")
 	if obsNode != nil {
 		t.Error("expected no observability node when disabled")
@@ -180,7 +166,6 @@ deployments:
 	obsIdx := nodeIndex["my-app/observability/observability"]
 	deployIdx := nodeIndex["my-app/deployment/api"]
 
-	// Observability should come before deployment
 	if obsIdx >= deployIdx {
 		t.Error("observability should come before deployment in topological order")
 	}
@@ -191,8 +176,7 @@ func TestBuilder_ObservabilityCustomAttributes(t *testing.T) {
 
 	comp := loadComponent(t, `
 observability:
-  logs: true
-  traces: false
+  inject: true
   attributes:
     team: payments
 
@@ -213,12 +197,9 @@ deployments:
 		t.Fatal("expected observability node to exist")
 	}
 
-	// Check custom signal inputs
-	if logs, ok := obsNode.Inputs["logs"].(bool); !ok || !logs {
-		t.Error("expected logs to be true")
-	}
-	if traces, ok := obsNode.Inputs["traces"].(bool); !ok || traces {
-		t.Error("expected traces to be false")
+	// Check inject input
+	if inject, ok := obsNode.Inputs["inject"].(bool); !ok || !inject {
+		t.Error("expected inject to be true")
 	}
 
 	// Check attributes

@@ -537,9 +537,6 @@ func (t *Transformer) transformObservability(obs *ObservabilityV1) *internal.Int
 
 	return &internal.InternalObservability{
 		Inject:     defaultBoolPtr(obs.Inject, false),
-		Logs:       defaultBoolPtr(obs.Logs, true),
-		Traces:     defaultBoolPtr(obs.Traces, true),
-		Metrics:    defaultBoolPtr(obs.Metrics, true),
 		Attributes: obs.Attributes,
 	}
 }

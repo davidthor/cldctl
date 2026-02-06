@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -431,7 +429,7 @@ Examples:
 
 				// Open browser unless --no-open is specified
 				if !noOpen && !detach {
-					openBrowser(primaryURL)
+					openBrowserURL(primaryURL)
 				}
 			}
 
@@ -467,21 +465,8 @@ Examples:
 	return cmd
 }
 
-// openBrowser opens the default browser to the given URL.
-func openBrowser(url string) {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", url)
-	case "linux":
-		cmd = exec.Command("xdg-open", url)
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-	default:
-		return
-	}
-	_ = cmd.Start()
-}
+// openBrowser is an alias for the shared openBrowserURL utility (in browser.go)
+// kept here for backward compatibility within this file. New code should use openBrowserURL directly.
 
 // Helper functions for up command
 

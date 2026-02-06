@@ -148,6 +148,29 @@ func newTestRegistry() *iac.Registry {
 	return testRegistry
 }
 
+func TestResourceKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		nodeType graph.NodeType
+		nodeName string
+		want     string
+	}{
+		{"deployment", graph.NodeTypeDeployment, "api", "deployment.api"},
+		{"database", graph.NodeTypeDatabase, "main", "database.main"},
+		{"function", graph.NodeTypeFunction, "handler", "function.handler"},
+		{"observability", graph.NodeTypeObservability, "observability", "observability.observability"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node := graph.NewNode(tt.nodeType, "my-app", tt.nodeName)
+			got := resourceKey(node)
+			if got != tt.want {
+				t.Errorf("resourceKey() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDefaultOptions(t *testing.T) {
 	opts := DefaultOptions()
 

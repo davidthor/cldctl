@@ -1,0 +1,78 @@
+# Native module for a local OpenTelemetry backend using Grafana's all-in-one image
+# Includes: OTel Collector, Grafana, Loki (logs), Tempo (traces), Prometheus (metrics)
+# See: https://github.com/grafana/docker-otel-lgtm
+#
+# The collector is configured with a fluentd receiver on port 24224 so that
+# Docker containers can forward their stdout/stderr logs via the fluentd
+# logging driver. This allows `arcctl logs` to query ALL container output,
+# not just logs from OTel-instrumented applications.
+plugin: native
+type: docker
+
+inputs:
+  name:
+    type: string
+    required: true
+    description: Container name
+  network:
+    type: string
+    required: true
+    description: Docker network to join
+
+resources:
+  volume:
+    type: docker:volume
+    properties:
+      name: "${inputs.name}-data"
+
+  container:
+    type: docker:container
+    depends_on: [volume]
+    properties:
+      image: "grafana/otel-lgtm:0.8.1"
+      name: "${inputs.name}"
+      network: "${inputs.network}"
+      environment:
+        # Enable the fluentd receiver in the OTel collector so Docker containers
+        # can forward stdout/stderr via the fluentd logging driver.
+        OTEL_COLLECTOR_EXTRA_RECEIVERS: "fluentd"
+      ports:
+        # Grafana UI
+        - container: 3000
+          host: auto
+        # OTLP gRPC
+        - container: 4317
+          host: 4317
+        # OTLP HTTP
+        - container: 4318
+          host: 4318
+        # Loki query API
+        - container: 3100
+          host: auto
+        # Fluentd receiver (for Docker log forwarding)
+        - container: 24224
+          host: 24224
+      volumes:
+        - name: "${inputs.name}-data"
+          path: /data
+      restart: unless-stopped
+
+outputs:
+  otlp_http_endpoint:
+    value: "http://localhost:${resources.container.ports[2].host}"
+    description: OTLP HTTP endpoint for sending telemetry
+  otlp_grpc_endpoint:
+    value: "http://localhost:${resources.container.ports[1].host}"
+    description: OTLP gRPC endpoint for sending telemetry
+  grafana_url:
+    value: "http://localhost:${resources.container.ports[0].host}"
+    description: Grafana UI for viewing logs, traces, and metrics
+  loki_endpoint:
+    value: "http://localhost:${resources.container.ports[3].host}"
+    description: Loki HTTP API endpoint for log queries
+  fluentd_endpoint:
+    value: "localhost:${resources.container.ports[4].host}"
+    description: Fluentd receiver endpoint for Docker log forwarding
+  container_id:
+    value: "${resources.container.id}"
+    description: Docker container ID

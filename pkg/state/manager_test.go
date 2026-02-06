@@ -376,7 +376,8 @@ func TestResourceOperations(t *testing.T) {
 			t.Fatalf("SaveResource failed: %v", err)
 		}
 
-		retrieved, err := m.GetResource(ctx, "test-env", "api", "main")
+		// GetResource now uses type-qualified key
+		retrieved, err := m.GetResource(ctx, "test-env", "api", "deployment.main")
 		if err != nil {
 			t.Fatalf("GetResource failed: %v", err)
 		}
@@ -396,12 +397,12 @@ func TestResourceOperations(t *testing.T) {
 	})
 
 	t.Run("delete resource", func(t *testing.T) {
-		err := m.DeleteResource(ctx, "test-env", "api", "main")
+		err := m.DeleteResource(ctx, "test-env", "api", "deployment.main")
 		if err != nil {
 			t.Fatalf("DeleteResource failed: %v", err)
 		}
 
-		_, err = m.GetResource(ctx, "test-env", "api", "main")
+		_, err = m.GetResource(ctx, "test-env", "api", "deployment.main")
 		if err == nil {
 			t.Error("Expected error getting deleted resource")
 		}
@@ -440,6 +441,11 @@ func TestPathHelpers(t *testing.T) {
 			name:     "resourcePath",
 			fn:       func() string { return resourcePath("prod", "api", "main") },
 			expected: "environments/prod/components/api/resources/main.state.json",
+		},
+		{
+			name:     "resourcePath type-qualified",
+			fn:       func() string { return resourcePath("prod", "api", "deployment.main") },
+			expected: "environments/prod/components/api/resources/deployment.main.state.json",
 		},
 	}
 

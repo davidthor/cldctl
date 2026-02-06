@@ -14,12 +14,10 @@ func TestEnrichObservabilityOutputs_MergesAllSources(t *testing.T) {
 	g := graph.NewGraph("staging", "test-dc")
 
 	obsNode := graph.NewNode(graph.NodeTypeObservability, "my-app", "observability")
-	// Component attributes (from node inputs)
 	obsNode.SetInput("attributes", map[string]string{
 		"team": "payments",
 		"tier": "critical",
 	})
-	// Datacenter attributes (from hook outputs)
 	obsNode.Outputs = map[string]interface{}{
 		"endpoint": "http://otel-collector:4318",
 		"attributes": map[string]interface{}{
@@ -37,13 +35,10 @@ func TestEnrichObservabilityOutputs_MergesAllSources(t *testing.T) {
 		t.Fatalf("expected attributes to be a string, got %T", obsNode.Outputs["attributes"])
 	}
 
-	// Auto-generated
 	assertContains(t, attrs, "service.namespace=my-app")
 	assertContains(t, attrs, "deployment.environment=staging")
-	// Datacenter
 	assertContains(t, attrs, "cloud.provider=aws")
 	assertContains(t, attrs, "cloud.region=us-east-1")
-	// Component (highest priority)
 	assertContains(t, attrs, "team=payments")
 	assertContains(t, attrs, "tier=critical")
 }
@@ -53,7 +48,7 @@ func TestEnrichObservabilityOutputs_ComponentOverridesDC(t *testing.T) {
 
 	obsNode := graph.NewNode(graph.NodeTypeObservability, "my-app", "observability")
 	obsNode.SetInput("attributes", map[string]string{
-		"team": "component-team", // should override datacenter value
+		"team": "component-team",
 	})
 	obsNode.Outputs = map[string]interface{}{
 		"endpoint": "http://otel-collector:4318",
@@ -97,7 +92,6 @@ func TestEnrichObservabilityOutputs_NoComponentAttributes(t *testing.T) {
 	g := graph.NewGraph("prod", "test-dc")
 
 	obsNode := graph.NewNode(graph.NodeTypeObservability, "my-app", "observability")
-	// No component attributes set
 	obsNode.Outputs = map[string]interface{}{
 		"endpoint": "http://otel-collector:4318",
 		"attributes": map[string]string{
@@ -136,14 +130,10 @@ func TestEnrichObservabilityOutputs_SortedDeterministic(t *testing.T) {
 	g := graph.NewGraph("prod", "test-dc")
 
 	obsNode := graph.NewNode(graph.NodeTypeObservability, "my-app", "observability")
-	obsNode.SetInput("attributes", map[string]string{
-		"team": "payments",
-	})
+	obsNode.SetInput("attributes", map[string]string{"team": "payments"})
 	obsNode.Outputs = map[string]interface{}{
-		"endpoint": "http://otel-collector:4318",
-		"attributes": map[string]string{
-			"cloud.region": "us-east-1",
-		},
+		"endpoint":   "http://otel-collector:4318",
+		"attributes": map[string]string{"cloud.region": "us-east-1"},
 	}
 	_ = g.AddNode(obsNode)
 
@@ -159,7 +149,7 @@ func TestEnrichObservabilityOutputs_SortedDeterministic(t *testing.T) {
 	}
 }
 
-// --- resolveComponentExpressions tests (observability) ---
+// --- resolveComponentExpressions tests ---
 
 func TestResolveComponentExpressions_ObservabilityEndpoint(t *testing.T) {
 	g := graph.NewGraph("test-env", "test-dc")
@@ -197,7 +187,6 @@ func TestResolveComponentExpressions_ObservabilityEndpoint(t *testing.T) {
 func TestResolveComponentExpressions_ObservabilityNotConfigured(t *testing.T) {
 	g := graph.NewGraph("test-env", "test-dc")
 
-	// No observability node in the graph
 	deployNode := graph.NewNode(graph.NodeTypeDeployment, "my-app", "api")
 	deployNode.SetInput("environment", map[string]string{
 		"OTEL_EXPORTER_OTLP_ENDPOINT": "${{ observability.endpoint }}",
@@ -208,7 +197,6 @@ func TestResolveComponentExpressions_ObservabilityNotConfigured(t *testing.T) {
 	executor.resolveComponentExpressions(deployNode)
 
 	env := deployNode.Inputs["environment"].(map[string]string)
-	// Should resolve to empty string when not configured
 	assertEnvVar(t, env, "OTEL_EXPORTER_OTLP_ENDPOINT", "")
 }
 
@@ -260,16 +248,13 @@ func TestResolveComponentExpressions_MapStringInterface(t *testing.T) {
 	}
 }
 
-// --- injectOTelEnvironmentIfEnabled tests (updated for enriched attributes) ---
+// --- injectOTelEnvironmentIfEnabled tests ---
 
 func TestInjectOTelEnvironmentIfEnabled_InjectTrue(t *testing.T) {
 	g := graph.NewGraph("test-env", "test-dc")
 
 	obsNode := graph.NewNode(graph.NodeTypeObservability, "my-app", "observability")
 	obsNode.SetInput("inject", true)
-	obsNode.SetInput("logs", true)
-	obsNode.SetInput("traces", true)
-	obsNode.SetInput("metrics", false)
 	obsNode.SetInput("attributes", map[string]string{"team": "backend"})
 	obsNode.Outputs = map[string]interface{}{
 		"endpoint": "http://otel-collector:4318",
@@ -277,7 +262,6 @@ func TestInjectOTelEnvironmentIfEnabled_InjectTrue(t *testing.T) {
 	}
 	obsNode.State = graph.NodeStateCompleted
 
-	// Enrich attributes (as the executor would after hook completion)
 	executor := &Executor{graph: g}
 	_ = g.AddNode(obsNode)
 	executor.enrichObservabilityOutputs(obsNode)
@@ -290,21 +274,19 @@ func TestInjectOTelEnvironmentIfEnabled_InjectTrue(t *testing.T) {
 	}
 	executor.injectOTelEnvironmentIfEnabled(env, deployNode)
 
-	// With inject=true, OTEL vars should be present
 	assertEnvVar(t, env, "OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4318")
 	assertEnvVar(t, env, "OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
 	assertEnvVar(t, env, "OTEL_SERVICE_NAME", "my-app-api")
 	assertEnvVar(t, env, "OTEL_LOGS_EXPORTER", "otlp")
 	assertEnvVar(t, env, "OTEL_TRACES_EXPORTER", "otlp")
-	assertEnvVar(t, env, "OTEL_METRICS_EXPORTER", "none") // metrics=false
+	assertEnvVar(t, env, "OTEL_METRICS_EXPORTER", "otlp")
 
-	// Resource attributes should include merged values
 	attrs := env["OTEL_RESOURCE_ATTRIBUTES"]
 	assertContains(t, attrs, "service.namespace=my-app")
 	assertContains(t, attrs, "deployment.environment=test-env")
 	assertContains(t, attrs, "team=backend")
+	assertContains(t, attrs, "service.type=deployment")
 
-	// Original env should be preserved
 	assertEnvVar(t, env, "DATABASE_URL", "postgres://localhost/mydb")
 }
 
@@ -313,7 +295,6 @@ func TestInjectOTelEnvironmentIfEnabled_InjectFalse(t *testing.T) {
 
 	obsNode := graph.NewNode(graph.NodeTypeObservability, "my-app", "observability")
 	obsNode.SetInput("inject", false)
-	obsNode.SetInput("logs", true)
 	obsNode.SetOutput("endpoint", "http://otel-collector:4318")
 	obsNode.SetOutput("protocol", "http/protobuf")
 	obsNode.State = graph.NodeStateCompleted
@@ -324,9 +305,7 @@ func TestInjectOTelEnvironmentIfEnabled_InjectFalse(t *testing.T) {
 
 	executor := &Executor{graph: g}
 
-	env := map[string]string{
-		"DATABASE_URL": "postgres://localhost/mydb",
-	}
+	env := map[string]string{"DATABASE_URL": "postgres://localhost/mydb"}
 	executor.injectOTelEnvironmentIfEnabled(env, deployNode)
 
 	otelKeys := []string{
@@ -350,9 +329,6 @@ func TestInjectOTelEnvironmentIfEnabled_NoOverwrite(t *testing.T) {
 
 	obsNode := graph.NewNode(graph.NodeTypeObservability, "my-app", "observability")
 	obsNode.SetInput("inject", true)
-	obsNode.SetInput("logs", true)
-	obsNode.SetInput("traces", true)
-	obsNode.SetInput("metrics", true)
 	obsNode.Outputs = map[string]interface{}{
 		"endpoint": "http://otel-collector:4318",
 		"protocol": "http/protobuf",
@@ -366,16 +342,20 @@ func TestInjectOTelEnvironmentIfEnabled_NoOverwrite(t *testing.T) {
 	deployNode := graph.NewNode(graph.NodeTypeDeployment, "my-app", "api")
 	_ = g.AddNode(deployNode)
 
+	// Component author explicitly overrides some vars
 	env := map[string]string{
 		"OTEL_SERVICE_NAME":           "custom-name",
 		"OTEL_EXPORTER_OTLP_ENDPOINT": "http://custom:4318",
+		"OTEL_METRICS_EXPORTER":       "none", // opt out of metrics
 	}
 	executor.injectOTelEnvironmentIfEnabled(env, deployNode)
 
 	assertEnvVar(t, env, "OTEL_SERVICE_NAME", "custom-name")
 	assertEnvVar(t, env, "OTEL_EXPORTER_OTLP_ENDPOINT", "http://custom:4318")
+	assertEnvVar(t, env, "OTEL_METRICS_EXPORTER", "none") // preserved
 	assertEnvVar(t, env, "OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
 	assertEnvVar(t, env, "OTEL_LOGS_EXPORTER", "otlp")
+	assertEnvVar(t, env, "OTEL_TRACES_EXPORTER", "otlp")
 }
 
 func TestInjectOTelEnvironmentIfEnabled_NoObservabilityNode(t *testing.T) {
@@ -399,17 +379,10 @@ func TestInjectOTelEnvironmentIfEnabled_WithDCAttributes(t *testing.T) {
 
 	obsNode := graph.NewNode(graph.NodeTypeObservability, "my-app", "observability")
 	obsNode.SetInput("inject", true)
-	obsNode.SetInput("logs", true)
-	obsNode.SetInput("traces", true)
-	obsNode.SetInput("metrics", true)
-	obsNode.SetInput("attributes", map[string]string{
-		"team": "payments",
-	})
+	obsNode.SetInput("attributes", map[string]string{"team": "payments"})
 	obsNode.Outputs = map[string]interface{}{
-		"endpoint": "http://otel-collector:4318",
-		"attributes": map[string]string{
-			"cloud.provider": "aws",
-		},
+		"endpoint":   "http://otel-collector:4318",
+		"attributes": map[string]string{"cloud.provider": "aws"},
 	}
 	obsNode.State = graph.NodeStateCompleted
 	_ = g.AddNode(obsNode)
@@ -428,39 +401,10 @@ func TestInjectOTelEnvironmentIfEnabled_WithDCAttributes(t *testing.T) {
 	assertContains(t, attrs, "cloud.provider=aws")
 	assertContains(t, attrs, "deployment.environment=prod")
 	assertContains(t, attrs, "service.namespace=my-app")
+	assertContains(t, attrs, "service.type=deployment")
 }
 
 // --- Utility function tests ---
-
-func TestOtelExporterName(t *testing.T) {
-	if otelExporterName(true) != "otlp" {
-		t.Error("expected true -> 'otlp'")
-	}
-	if otelExporterName(false) != "none" {
-		t.Error("expected false -> 'none'")
-	}
-}
-
-func TestOtelBoolInput(t *testing.T) {
-	inputs := map[string]interface{}{
-		"logs":    true,
-		"traces":  false,
-		"invalid": "not-a-bool",
-	}
-
-	if !otelBoolInput(inputs, "logs", false) {
-		t.Error("expected logs=true")
-	}
-	if otelBoolInput(inputs, "traces", true) {
-		t.Error("expected traces=false")
-	}
-	if !otelBoolInput(inputs, "missing", true) {
-		t.Error("expected missing to use default=true")
-	}
-	if !otelBoolInput(inputs, "invalid", true) {
-		t.Error("expected non-bool to use default=true")
-	}
-}
 
 func TestSortStrings(t *testing.T) {
 	s := []string{"c", "a", "b"}

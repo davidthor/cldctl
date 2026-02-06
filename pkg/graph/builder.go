@@ -248,9 +248,6 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 	if comp.Observability() != nil {
 		obsNode := NewNode(NodeTypeObservability, componentName, "observability")
 		obsNode.SetInput("inject", comp.Observability().Inject())
-		obsNode.SetInput("logs", comp.Observability().Logs())
-		obsNode.SetInput("traces", comp.Observability().Traces())
-		obsNode.SetInput("metrics", comp.Observability().Metrics())
 		if attrs := comp.Observability().Attributes(); len(attrs) > 0 {
 			obsNode.SetInput("attributes", attrs)
 		}

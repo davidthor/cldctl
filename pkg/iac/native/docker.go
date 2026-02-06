@@ -33,6 +33,8 @@ type ContainerOptions struct {
 	Network     string
 	Restart     string
 	Healthcheck *Healthcheck
+	LogDriver   string            // Docker logging driver (e.g., "fluentd", "json-file")
+	LogOptions  map[string]string // Options for the logging driver
 }
 
 // PortMapping defines a port mapping.
@@ -143,6 +145,13 @@ func (d *DockerClient) RunContainer(ctx context.Context, opts ContainerOptions) 
 
 	if opts.Restart != "" {
 		hostConfig.RestartPolicy = container.RestartPolicy{Name: container.RestartPolicyMode(opts.Restart)}
+	}
+
+	if opts.LogDriver != "" {
+		hostConfig.LogConfig = container.LogConfig{
+			Type:   opts.LogDriver,
+			Config: opts.LogOptions,
+		}
 	}
 
 	networkConfig := &network.NetworkingConfig{}

@@ -34,6 +34,13 @@ inputs:
   liveness_probe:
     type: map
     description: Health check configuration
+  log_driver:
+    type: string
+    description: Docker logging driver (e.g., "fluentd", "json-file")
+  log_driver_options:
+    type: map
+    default: {}
+    description: Options for the Docker logging driver
 
 resources:
   container:
@@ -56,6 +63,9 @@ resources:
         timeout: 5s
         retries: 3
       restart: unless-stopped
+      # Logging driver configuration (for forwarding container stdout)
+      log_driver: "${inputs.log_driver}"
+      log_options: "${inputs.log_driver_options}"
 
 outputs:
   container_id:

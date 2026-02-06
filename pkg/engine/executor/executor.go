@@ -113,6 +113,13 @@ func NewExecutor(stateManager state.Manager, iacRegistry *iac.Registry, options 
 	}
 }
 
+// resourceKey returns the type-qualified key for storing a resource in state.
+// Format: "type.name" (e.g., "deployment.api", "database.main").
+// This prevents collisions when different resource types share the same name.
+func resourceKey(node *graph.Node) string {
+	return string(node.Type) + "." + node.Name
+}
+
 // Execute runs an execution plan.
 func (e *Executor) Execute(ctx context.Context, plan *planner.Plan, g *graph.Graph) (*ExecutionResult, error) {
 	startTime := time.Now()
@@ -387,7 +394,7 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 
 		// Update resource state to failed (lock for state update)
 		e.stateMu.Lock()
-		compState.Resources[change.Node.Name] = &types.ResourceState{
+		compState.Resources[resourceKey(change.Node)] = &types.ResourceState{
 			Component: change.Node.Component,
 			Name:      change.Node.Name,
 			Type:      string(change.Node.Type),
@@ -410,7 +417,7 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 
 	// Update resource state including IaC state for cleanup (lock for state update)
 	e.stateMu.Lock()
-	compState.Resources[change.Node.Name] = &types.ResourceState{
+	compState.Resources[resourceKey(change.Node)] = &types.ResourceState{
 		Component: change.Node.Component,
 		Name:      change.Node.Name,
 		Type:      string(change.Node.Type),
@@ -1036,24 +1043,30 @@ func (e *Executor) injectOTelEnvironmentIfEnabled(env map[string]string, node *g
 	// Auto-generate service name from component and workload name
 	serviceName := fmt.Sprintf("%s-%s", node.Component, node.Name)
 
-	// Read signal configuration from the observability node inputs
-	logs := otelBoolInput(obsNode.Inputs, "logs", true)
-	traces := otelBoolInput(obsNode.Inputs, "traces", true)
-	metrics := otelBoolInput(obsNode.Inputs, "metrics", true)
-
 	// Use pre-merged attributes from enrichObservabilityOutputs (includes datacenter +
 	// component + auto-generated attributes like service.namespace, deployment.environment)
 	mergedAttrs, _ := obsNode.Outputs["attributes"].(string)
 
-	// Inject standard OTEL env vars (without overwriting component-declared vars)
+	// Append service.type for the specific workload (deployment, function, database, etc.)
+	// so log queries can filter by resource type.
+	nodeTypeAttr := fmt.Sprintf("service.type=%s", string(node.Type))
+	if mergedAttrs != "" {
+		mergedAttrs = mergedAttrs + "," + nodeTypeAttr
+	} else {
+		mergedAttrs = nodeTypeAttr
+	}
+
+	// Inject standard OTEL env vars (without overwriting component-declared vars).
+	// All exporters are set to "otlp". To disable a specific signal, component authors
+	// can explicitly set e.g. OTEL_METRICS_EXPORTER: none in their environment block.
 	otelSetIfMissing(env, "OTEL_EXPORTER_OTLP_ENDPOINT", endpoint)
 	if protocol != "" {
 		otelSetIfMissing(env, "OTEL_EXPORTER_OTLP_PROTOCOL", protocol)
 	}
 	otelSetIfMissing(env, "OTEL_SERVICE_NAME", serviceName)
-	otelSetIfMissing(env, "OTEL_LOGS_EXPORTER", otelExporterName(logs))
-	otelSetIfMissing(env, "OTEL_TRACES_EXPORTER", otelExporterName(traces))
-	otelSetIfMissing(env, "OTEL_METRICS_EXPORTER", otelExporterName(metrics))
+	otelSetIfMissing(env, "OTEL_LOGS_EXPORTER", "otlp")
+	otelSetIfMissing(env, "OTEL_TRACES_EXPORTER", "otlp")
+	otelSetIfMissing(env, "OTEL_METRICS_EXPORTER", "otlp")
 	if mergedAttrs != "" {
 		otelSetIfMissing(env, "OTEL_RESOURCE_ATTRIBUTES", mergedAttrs)
 	}
@@ -1064,24 +1077,6 @@ func otelSetIfMissing(env map[string]string, key, value string) {
 	if _, exists := env[key]; !exists {
 		env[key] = value
 	}
-}
-
-// otelBoolInput reads a boolean input from node inputs with a default value.
-func otelBoolInput(inputs map[string]interface{}, key string, defaultVal bool) bool {
-	if v, ok := inputs[key]; ok {
-		if b, ok := v.(bool); ok {
-			return b
-		}
-	}
-	return defaultVal
-}
-
-// otelExporterName converts a boolean signal flag to an OTel exporter name.
-func otelExporterName(enabled bool) string {
-	if enabled {
-		return "otlp"
-	}
-	return "none"
 }
 
 // extractVersionFromType extracts the version part from a "type:version" string.
@@ -1354,6 +1349,8 @@ func (e *Executor) evaluateInputExpression(expr string, node *graph.Node, envNam
 		result = strings.ReplaceAll(result, "${node.name}", node.Name)
 		// Replace ${node.component}
 		result = strings.ReplaceAll(result, "${node.component}", node.Component)
+		// Replace ${node.type}
+		result = strings.ReplaceAll(result, "${node.type}", string(node.Type))
 		// Replace ${node.inputs.*}
 		for k, v := range node.Inputs {
 			if s, ok := v.(string); ok {
@@ -1375,6 +1372,9 @@ func (e *Executor) evaluateInputExpression(expr string, node *graph.Node, envNam
 	}
 	if hasPrefix(expr, "node.component") {
 		return node.Component
+	}
+	if hasPrefix(expr, "node.type") {
+		return string(node.Type)
 	}
 	if hasPrefix(expr, "node.inputs.") {
 		inputName := expr[12:] // len("node.inputs.")
@@ -1620,8 +1620,16 @@ func (e *Executor) executeDestroy(ctx context.Context, change *planner.ResourceC
 		return result
 	}
 
-	// Get resource state to retrieve IaC state
-	resourceState := compState.Resources[change.Node.Name]
+	// Get resource state to retrieve IaC state (try type-qualified key first, fall back to legacy name-only key)
+	rKey := resourceKey(change.Node)
+	resourceState := compState.Resources[rKey]
+	if resourceState == nil {
+		// Backward compatibility: try legacy name-only key
+		resourceState = compState.Resources[change.Node.Name]
+		if resourceState != nil {
+			rKey = change.Node.Name
+		}
+	}
 
 	e.stateMu.Unlock()
 
@@ -1656,8 +1664,13 @@ func (e *Executor) executeDestroy(ctx context.Context, change *planner.ResourceC
 	// Lock for state cleanup
 	e.stateMu.Lock()
 
-	// Remove resource from state
-	delete(compState.Resources, change.Node.Name)
+	// Remove resource from state (try type-qualified key first, fall back to legacy)
+	rKey = resourceKey(change.Node)
+	if _, ok := compState.Resources[rKey]; ok {
+		delete(compState.Resources, rKey)
+	} else {
+		delete(compState.Resources, change.Node.Name)
+	}
 
 	// If component has no more resources, remove it
 	if len(compState.Resources) == 0 {

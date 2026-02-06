@@ -21,9 +21,6 @@ databases:
 
 # Expression-only mode (default) — component author wires env vars explicitly
 observability:
-  logs: true
-  traces: true
-  metrics: false
   attributes:
     team: backend
     tier: critical
@@ -33,9 +30,6 @@ observability:
 #
 # observability:
 #   inject: true
-#   logs: true
-#   traces: true
-#   metrics: false
 #   attributes:
 #     team: backend
 #     tier: critical
@@ -54,6 +48,8 @@ deployments:
       OTEL_EXPORTER_OTLP_PROTOCOL: ${{ observability.protocol }}
       OTEL_RESOURCE_ATTRIBUTES: ${{ observability.attributes }}
       OTEL_SERVICE_NAME: otel-app-api
+      # To disable a specific signal, set the exporter to "none":
+      # OTEL_METRICS_EXPORTER: none
     cpu: "0.5"
     memory: "512Mi"
     replicas: 2
