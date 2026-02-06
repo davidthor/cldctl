@@ -79,6 +79,9 @@ func init() {
 	rootCmd.AddCommand(newUpCmd())
 	rootCmd.AddCommand(newVersionCmd())
 
+	// Artifact cache commands
+	rootCmd.AddCommand(newImagesCmd())
+
 	// Observability commands
 	rootCmd.AddCommand(newLogsCmd())
 	rootCmd.AddCommand(newObservabilityCmd())

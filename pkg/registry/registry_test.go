@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,10 +18,11 @@ func TestRegistry_AddAndGet(t *testing.T) {
 	reg, err := NewRegistryWithPath(regPath)
 	require.NoError(t, err)
 
-	entry := ComponentEntry{
+	entry := ArtifactEntry{
 		Reference:  "ghcr.io/org/app:v1.0.0",
 		Repository: "ghcr.io/org/app",
 		Tag:        "v1.0.0",
+		Type:       TypeComponent,
 		Digest:     "sha256:abc123",
 		Source:     SourceBuilt,
 		Size:       1024,
@@ -37,6 +39,7 @@ func TestRegistry_AddAndGet(t *testing.T) {
 	assert.Equal(t, entry.Repository, got.Repository)
 	assert.Equal(t, entry.Tag, got.Tag)
 	assert.Equal(t, entry.Source, got.Source)
+	assert.Equal(t, TypeComponent, got.Type)
 }
 
 func TestRegistry_AddUpdatesExisting(t *testing.T) {
@@ -46,10 +49,11 @@ func TestRegistry_AddUpdatesExisting(t *testing.T) {
 	reg, err := NewRegistryWithPath(regPath)
 	require.NoError(t, err)
 
-	entry1 := ComponentEntry{
+	entry1 := ArtifactEntry{
 		Reference:  "ghcr.io/org/app:v1.0.0",
 		Repository: "ghcr.io/org/app",
 		Tag:        "v1.0.0",
+		Type:       TypeComponent,
 		Source:     SourcePulled,
 		Size:       1024,
 		CreatedAt:  time.Now(),
@@ -59,10 +63,11 @@ func TestRegistry_AddUpdatesExisting(t *testing.T) {
 	require.NoError(t, err)
 
 	// Update with new entry
-	entry2 := ComponentEntry{
+	entry2 := ArtifactEntry{
 		Reference:  "ghcr.io/org/app:v1.0.0",
 		Repository: "ghcr.io/org/app",
 		Tag:        "v1.0.0",
+		Type:       TypeComponent,
 		Source:     SourceBuilt,
 		Size:       2048,
 		CreatedAt:  time.Now(),
@@ -86,10 +91,11 @@ func TestRegistry_Remove(t *testing.T) {
 	reg, err := NewRegistryWithPath(regPath)
 	require.NoError(t, err)
 
-	entry := ComponentEntry{
+	entry := ArtifactEntry{
 		Reference:  "ghcr.io/org/app:v1.0.0",
 		Repository: "ghcr.io/org/app",
 		Tag:        "v1.0.0",
+		Type:       TypeComponent,
 		Source:     SourceBuilt,
 		CreatedAt:  time.Now(),
 	}
@@ -113,11 +119,12 @@ func TestRegistry_List(t *testing.T) {
 
 	// Add multiple entries with different times
 	now := time.Now()
-	entries := []ComponentEntry{
+	entries := []ArtifactEntry{
 		{
 			Reference:  "ghcr.io/org/app:v1.0.0",
 			Repository: "ghcr.io/org/app",
 			Tag:        "v1.0.0",
+			Type:       TypeComponent,
 			Source:     SourceBuilt,
 			CreatedAt:  now.Add(-2 * time.Hour),
 		},
@@ -125,6 +132,7 @@ func TestRegistry_List(t *testing.T) {
 			Reference:  "ghcr.io/org/app:v2.0.0",
 			Repository: "ghcr.io/org/app",
 			Tag:        "v2.0.0",
+			Type:       TypeComponent,
 			Source:     SourcePulled,
 			CreatedAt:  now.Add(-1 * time.Hour),
 		},
@@ -132,6 +140,7 @@ func TestRegistry_List(t *testing.T) {
 			Reference:  "docker.io/library/nginx:latest",
 			Repository: "docker.io/library/nginx",
 			Tag:        "latest",
+			Type:       TypeComponent,
 			Source:     SourcePulled,
 			CreatedAt:  now,
 		},
@@ -152,6 +161,33 @@ func TestRegistry_List(t *testing.T) {
 	assert.Equal(t, "ghcr.io/org/app:v1.0.0", list[2].Reference)
 }
 
+func TestRegistry_ListByType(t *testing.T) {
+	tempDir := t.TempDir()
+	regPath := filepath.Join(tempDir, "registry.json")
+
+	reg, err := NewRegistryWithPath(regPath)
+	require.NoError(t, err)
+
+	now := time.Now()
+	entries := []ArtifactEntry{
+		{Reference: "myapp:v1", Repository: "myapp", Tag: "v1", Type: TypeComponent, Source: SourceBuilt, CreatedAt: now},
+		{Reference: "my-dc:latest", Repository: "my-dc", Tag: "latest", Type: TypeDatacenter, Source: SourceBuilt, CreatedAt: now},
+		{Reference: "otherapp:v2", Repository: "otherapp", Tag: "v2", Type: TypeComponent, Source: SourcePulled, CreatedAt: now},
+	}
+	for _, e := range entries {
+		require.NoError(t, reg.Add(e))
+	}
+
+	components, err := reg.ListByType(TypeComponent)
+	require.NoError(t, err)
+	assert.Len(t, components, 2)
+
+	datacenters, err := reg.ListByType(TypeDatacenter)
+	require.NoError(t, err)
+	assert.Len(t, datacenters, 1)
+	assert.Equal(t, "my-dc:latest", datacenters[0].Reference)
+}
+
 func TestRegistry_Clear(t *testing.T) {
 	tempDir := t.TempDir()
 	regPath := filepath.Join(tempDir, "registry.json")
@@ -159,10 +195,11 @@ func TestRegistry_Clear(t *testing.T) {
 	reg, err := NewRegistryWithPath(regPath)
 	require.NoError(t, err)
 
-	entry := ComponentEntry{
+	entry := ArtifactEntry{
 		Reference:  "ghcr.io/org/app:v1.0.0",
 		Repository: "ghcr.io/org/app",
 		Tag:        "v1.0.0",
+		Type:       TypeComponent,
 		Source:     SourceBuilt,
 		CreatedAt:  time.Now(),
 	}
@@ -198,10 +235,11 @@ func TestRegistry_PersistenceAcrossInstances(t *testing.T) {
 	reg1, err := NewRegistryWithPath(regPath)
 	require.NoError(t, err)
 
-	entry := ComponentEntry{
+	entry := ArtifactEntry{
 		Reference:  "ghcr.io/org/app:v1.0.0",
 		Repository: "ghcr.io/org/app",
 		Tag:        "v1.0.0",
+		Type:       TypeComponent,
 		Source:     SourceBuilt,
 		CreatedAt:  time.Now(),
 	}
@@ -225,10 +263,11 @@ func TestRegistry_CreatesDirectory(t *testing.T) {
 	reg, err := NewRegistryWithPath(regPath)
 	require.NoError(t, err)
 
-	entry := ComponentEntry{
+	entry := ArtifactEntry{
 		Reference:  "test:v1",
 		Repository: "test",
 		Tag:        "v1",
+		Type:       TypeComponent,
 		Source:     SourceBuilt,
 		CreatedAt:  time.Now(),
 	}
@@ -239,6 +278,46 @@ func TestRegistry_CreatesDirectory(t *testing.T) {
 	// File should exist
 	_, err = os.Stat(regPath)
 	require.NoError(t, err)
+}
+
+func TestRegistry_MigrateLegacy(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Write a legacy components.json
+	legacyPath := filepath.Join(tempDir, "components.json")
+	legacy := map[string]interface{}{
+		"version": "v1",
+		"components": []map[string]interface{}{
+			{
+				"reference":  "ghcr.io/org/app:v1",
+				"repository": "ghcr.io/org/app",
+				"tag":        "v1",
+				"source":     "built",
+				"size":       1024,
+				"createdAt":  time.Now().Format(time.RFC3339Nano),
+				"cachePath":  "/tmp/cache",
+			},
+		},
+	}
+	data, _ := json.Marshal(legacy)
+	require.NoError(t, os.WriteFile(legacyPath, data, 0644))
+
+	// Create registry at the new path — should auto-migrate
+	newPath := filepath.Join(tempDir, "artifacts.json")
+	reg, err := NewRegistryWithPath(newPath)
+	require.NoError(t, err)
+
+	entries, err := reg.List()
+	require.NoError(t, err)
+	assert.Len(t, entries, 1)
+	assert.Equal(t, "ghcr.io/org/app:v1", entries[0].Reference)
+	assert.Equal(t, TypeComponent, entries[0].Type)
+}
+
+func TestCacheKey(t *testing.T) {
+	assert.Equal(t, "ghcr.io_org_app_v1", CacheKey("ghcr.io/org/app:v1"))
+	assert.Equal(t, "local_latest", CacheKey("local:latest"))
+	assert.Equal(t, "myapp_dev", CacheKey("myapp:dev"))
 }
 
 func TestParseReference(t *testing.T) {

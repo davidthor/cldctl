@@ -32,7 +32,8 @@ arcctl pull component <repo:tag> [options]
 ## Description
 
 This command downloads the component artifact and registers it in the local
-component registry. The component can then be used for deployment or inspection.
+artifact registry. The component can then be used for deployment or inspection.
+Once pulled, the component appears in `arcctl images`.
 
 ## Examples
 
@@ -55,7 +56,7 @@ $ arcctl pull component ghcr.io/myorg/myapp:v1.0.0
 Pulling component: ghcr.io/myorg/myapp:v1.0.0
 [pull] Downloading ghcr.io/myorg/myapp:v1.0.0...
 [success] Pulled ghcr.io/myorg/myapp:v1.0.0
-  Cache: /home/user/.arcctl/cache/components/ghcr.io_myorg_myapp_v1.0.0
+  Cache: /home/user/.arcctl/cache/artifacts/ghcr.io_myorg_myapp_v1.0.0
 ```
 
 ## See Also

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
@@ -47,7 +48,10 @@ func newBuildComponentCmd() *cobra.Command {
 
 When building a component, arcctl creates multiple artifacts:
   - Root artifact containing the component configuration
-  - Child artifacts for each deployment, function, cronjob, and migration`,
+  - Child artifacts for each deployment, function, cronjob, and migration
+
+If no tag is provided, the artifact is identified by its content digest
+(similar to 'docker build' without -t).`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := "."
@@ -87,11 +91,22 @@ When building a component, arcctl creates multiple artifacts:
 
 			// Determine child artifacts
 			childArtifacts := make(map[string]string)
-			baseRef := strings.TrimSuffix(tag, filepath.Ext(tag))
-			tagPart := ""
-			if idx := strings.LastIndex(tag, ":"); idx != -1 {
-				baseRef = tag[:idx]
-				tagPart = tag[idx:]
+
+			// Derive base reference for child artifacts.
+			// When no tag is given, use the component directory name as a
+			// temporary local-only base so Docker images still get valid tags.
+			var baseRef, tagPart string
+			if tag != "" {
+				baseRef = strings.TrimSuffix(tag, filepath.Ext(tag))
+				if idx := strings.LastIndex(tag, ":"); idx != -1 {
+					baseRef = tag[:idx]
+					tagPart = tag[idx:]
+				}
+			} else {
+				// No tag — use directory basename as a local-only base name
+				absPath, _ := filepath.Abs(path)
+				baseRef = filepath.Base(absPath)
+				tagPart = ":latest"
 			}
 
 			// Process top-level builds
@@ -290,7 +305,29 @@ When building a component, arcctl creates multiple artifacts:
 				return fmt.Errorf("failed to build artifact: %w", err)
 			}
 
-			artifact.Reference = tag
+			// Compute content digest from config + layers
+			h := sha256.New()
+			h.Write(artifact.Config)
+			for _, layer := range artifact.Layers {
+				h.Write(layer.Data)
+			}
+			digest := fmt.Sprintf("sha256:%x", h.Sum(nil))
+			artifact.Digest = digest
+
+			// Determine reference, repository, and tag for registry entry.
+			// When no -t flag was given, mimic Docker: the artifact is
+			// identified by its digest with <none> for repo/tag.
+			ref := tag
+			repo := ""
+			tagPortion := ""
+			if ref != "" {
+				repo, tagPortion = registry.ParseReference(ref)
+			} else {
+				ref = digest
+				repo = "<none>"
+				tagPortion = "<none>"
+			}
+			artifact.Reference = ref
 
 			// Register in local registry
 			reg, err := registry.NewRegistry()
@@ -298,23 +335,22 @@ When building a component, arcctl creates multiple artifacts:
 				return fmt.Errorf("failed to create local registry: %w", err)
 			}
 
-			repo, tagPortion := registry.ParseReference(tag)
 			var totalSize int64
 			for _, layer := range artifact.Layers {
 				totalSize += int64(len(layer.Data))
 			}
 
-			// Calculate cache path for the component
-			homeDir, _ := os.UserHomeDir()
-			cacheKey := strings.ReplaceAll(tag, "/", "_")
-			cacheKey = strings.ReplaceAll(cacheKey, ":", "_")
-			cachePath := filepath.Join(homeDir, ".arcctl", "cache", "components", cacheKey)
+			cachePath, err := registry.CachePathForRef(ref)
+			if err != nil {
+				return fmt.Errorf("failed to compute cache path: %w", err)
+			}
 
-			entry := registry.ComponentEntry{
-				Reference:  tag,
+			entry := registry.ArtifactEntry{
+				Reference:  ref,
 				Repository: repo,
 				Tag:        tagPortion,
-				Digest:     artifact.Digest,
+				Type:       registry.TypeComponent,
+				Digest:     digest,
 				Source:     registry.SourceBuilt,
 				Size:       totalSize,
 				CreatedAt:  time.Now(),
@@ -325,19 +361,18 @@ When building a component, arcctl creates multiple artifacts:
 				return fmt.Errorf("failed to register component: %w", err)
 			}
 
-			fmt.Printf("[success] Built %s\n", tag)
+			fmt.Printf("[success] Built %s\n", ref)
 
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVarP(&tag, "tag", "t", "", "Tag for the root component artifact (required)")
+	cmd.Flags().StringVarP(&tag, "tag", "t", "", "Tag for the root component artifact (omit to use content digest)")
 	cmd.Flags().StringArrayVar(&artifactTags, "artifact-tag", nil, "Override tag for a specific child artifact (name=repo:tag)")
 	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to architect.yml if not in default location")
 	cmd.Flags().StringVar(&platform, "platform", "", "Target platform (linux/amd64, linux/arm64)")
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "Disable build cache")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be built without building")
-	_ = cmd.MarkFlagRequired("tag")
 
 	return cmd
 }
@@ -359,7 +394,10 @@ func newBuildDatacenterCmd() *cobra.Command {
 
 When building a datacenter, arcctl bundles all IaC modules:
   - Root artifact containing the datacenter configuration
-  - Module artifacts for each IaC module referenced`,
+  - Module artifacts for each IaC module referenced
+
+If no tag is provided, the artifact is identified by its content digest
+(similar to 'docker build' without -t).`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := "."
@@ -407,17 +445,23 @@ When building a datacenter, arcctl bundles all IaC modules:
 
 			// Build the module artifact reference map from discovered modules
 			moduleArtifacts := make(map[string]string)
-			baseRef := tag
-			tagPart := ""
-			if idx := strings.LastIndex(tag, ":"); idx != -1 {
-				baseRef = tag[:idx]
-				tagPart = tag[idx:]
+			modBaseRef := tag
+			modTagPart := ""
+			if tag != "" {
+				if idx := strings.LastIndex(tag, ":"); idx != -1 {
+					modBaseRef = tag[:idx]
+					modTagPart = tag[idx:]
+				}
+			} else {
+				// No tag — use directory basename as local-only base name
+				modBaseRef = filepath.Base(dcDir)
+				modTagPart = ":latest"
 			}
 
 			for modulePath := range allModules {
 				// Generate OCI reference for this module (e.g., repo-module-name:tag)
 				modName := strings.TrimPrefix(modulePath, "module/")
-				modRef := fmt.Sprintf("%s-module-%s%s", baseRef, modName, tagPart)
+				modRef := fmt.Sprintf("%s-module-%s%s", modBaseRef, modName, modTagPart)
 				moduleArtifacts[modulePath] = modRef
 			}
 
@@ -493,16 +537,77 @@ When building a datacenter, arcctl bundles all IaC modules:
 				return fmt.Errorf("failed to build artifact: %w", err)
 			}
 
-			artifact.Reference = tag
-			fmt.Printf("[success] Built %s\n", tag)
+			// Compute content digest
+			dh := sha256.New()
+			dh.Write(artifact.Config)
+			for _, layer := range artifact.Layers {
+				dh.Write(layer.Data)
+			}
+			dcDigest := fmt.Sprintf("sha256:%x", dh.Sum(nil))
+
+			// Determine reference for registry entry
+			dcRef := tag
+			dcRepo := ""
+			dcTagPortion := ""
+			if dcRef != "" {
+				dcRepo, dcTagPortion = registry.ParseReference(dcRef)
+			} else {
+				dcRef = dcDigest
+				dcRepo = "<none>"
+				dcTagPortion = "<none>"
+			}
+			artifact.Reference = dcRef
+			artifact.Digest = dcDigest
+
+			// Cache the datacenter source and register in local registry
+			cachePath, err := registry.CachePathForRef(dcRef)
+			if err != nil {
+				return fmt.Errorf("failed to compute cache path: %w", err)
+			}
+			os.RemoveAll(cachePath)
+			if err := os.MkdirAll(cachePath, 0755); err != nil {
+				return fmt.Errorf("failed to create cache directory: %w", err)
+			}
+			if err := copyDirectory(dcDir, cachePath); err != nil {
+				return fmt.Errorf("failed to cache datacenter: %w", err)
+			}
+
+			var totalSize int64
+			for _, layer := range artifact.Layers {
+				totalSize += int64(len(layer.Data))
+			}
+
+			reg, err := registry.NewRegistry()
+			if err != nil {
+				return fmt.Errorf("failed to create local registry: %w", err)
+			}
+			dcEntry := registry.ArtifactEntry{
+				Reference:  dcRef,
+				Repository: dcRepo,
+				Tag:        dcTagPortion,
+				Type:       registry.TypeDatacenter,
+				Digest:     dcDigest,
+				Source:     registry.SourceBuilt,
+				Size:       totalSize,
+				CreatedAt:  time.Now(),
+				CachePath:  cachePath,
+			}
+			if err := reg.Add(dcEntry); err != nil {
+				return fmt.Errorf("failed to register datacenter: %w", err)
+			}
+
+			fmt.Printf("[success] Built %s\n", dcRef)
 
 			// Push to remote registry if --push flag is set
 			if push {
-				fmt.Printf("[push] Pushing %s...\n", tag)
+				if tag == "" {
+					return fmt.Errorf("--push requires a tag (-t)")
+				}
+				fmt.Printf("[push] Pushing %s...\n", dcRef)
 				if err := client.Push(ctx, artifact); err != nil {
 					return fmt.Errorf("failed to push artifact: %w", err)
 				}
-				fmt.Printf("[success] Pushed %s\n", tag)
+				fmt.Printf("[success] Pushed %s\n", dcRef)
 
 				// Print summary of all pushed artifacts
 				pushedModules := 0
@@ -512,7 +617,7 @@ When building a datacenter, arcctl bundles all IaC modules:
 					}
 				}
 				fmt.Printf("\nPushed %d artifact(s) total (1 root + %d modules):\n", 1+pushedModules, pushedModules)
-				fmt.Printf("  %s\n", tag)
+				fmt.Printf("  %s\n", dcRef)
 				for modulePath, ref := range moduleArtifacts {
 					modInfo := allModules[modulePath]
 					if modInfo.plugin != "native" {
@@ -525,12 +630,11 @@ When building a datacenter, arcctl bundles all IaC modules:
 		},
 	}
 
-	cmd.Flags().StringVarP(&tag, "tag", "t", "", "Tag for the root datacenter artifact (required)")
+	cmd.Flags().StringVarP(&tag, "tag", "t", "", "Tag for the root datacenter artifact (omit to use content digest)")
 	cmd.Flags().StringArrayVar(&moduleTags, "module-tag", nil, "Override tag for a specific module (name=repo:tag)")
 	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to datacenter.hcl if not in default location")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be built without building")
-	cmd.Flags().BoolVar(&push, "push", false, "Push to registry after building")
-	_ = cmd.MarkFlagRequired("tag")
+	cmd.Flags().BoolVar(&push, "push", false, "Push to registry after building (requires -t)")
 
 	return cmd
 }

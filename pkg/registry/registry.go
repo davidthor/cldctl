@@ -1,4 +1,4 @@
-// Package registry provides a local registry for tracking built and pulled components.
+// Package registry provides a local registry for tracking built and pulled artifacts.
 package registry
 
 import (
@@ -7,63 +7,89 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
 
-// ComponentEntry represents a component stored in the local registry.
-type ComponentEntry struct {
-	// Reference is the OCI reference (e.g., ghcr.io/org/app:v1.0.0)
+// ArtifactType identifies the type of artifact in the registry.
+type ArtifactType string
+
+const (
+	// TypeComponent identifies a component artifact.
+	TypeComponent ArtifactType = "component"
+
+	// TypeDatacenter identifies a datacenter artifact.
+	TypeDatacenter ArtifactType = "datacenter"
+)
+
+// ArtifactSource indicates how an artifact was added to the local registry.
+type ArtifactSource string
+
+const (
+	// SourceBuilt indicates the artifact was built locally.
+	SourceBuilt ArtifactSource = "built"
+
+	// SourcePulled indicates the artifact was pulled from a remote registry.
+	SourcePulled ArtifactSource = "pulled"
+)
+
+// ArtifactEntry represents an artifact stored in the local registry.
+type ArtifactEntry struct {
+	// Reference is the full tag (e.g., ghcr.io/org/app:v1.0.0, my-dc:latest)
 	Reference string `json:"reference"`
 
 	// Repository is the repository portion (e.g., ghcr.io/org/app)
 	Repository string `json:"repository"`
 
-	// Tag is the tag portion (e.g., v1.0.0)
+	// Tag is the tag portion (e.g., v1.0.0, latest)
 	Tag string `json:"tag"`
+
+	// Type identifies the artifact type (component or datacenter)
+	Type ArtifactType `json:"type"`
 
 	// Digest is the content digest (sha256:...)
 	Digest string `json:"digest,omitempty"`
 
-	// Source indicates how the component was added (built, pulled)
-	Source ComponentSource `json:"source"`
+	// Source indicates how the artifact was added (built, pulled)
+	Source ArtifactSource `json:"source"`
 
-	// Size is the size in bytes of the component artifact
+	// Size is the size in bytes of the artifact
 	Size int64 `json:"size"`
 
-	// CreatedAt is when the component was added to the registry
+	// CreatedAt is when the artifact was added to the registry
 	CreatedAt time.Time `json:"createdAt"`
 
-	// CachePath is the local path where the component is cached
+	// CachePath is the local path where the artifact is cached
 	CachePath string `json:"cachePath"`
 }
 
-// ComponentSource indicates how a component was added to the local registry.
-type ComponentSource string
+// ---- Backward-compatible type aliases ----
 
-const (
-	// SourceBuilt indicates the component was built locally
-	SourceBuilt ComponentSource = "built"
+// ComponentEntry is an alias for ArtifactEntry (backward compatibility).
+type ComponentEntry = ArtifactEntry
 
-	// SourcePulled indicates the component was pulled from a remote registry
-	SourcePulled ComponentSource = "pulled"
-)
+// ComponentSource is an alias for ArtifactSource (backward compatibility).
+type ComponentSource = ArtifactSource
 
-// Registry provides access to the local component registry.
+// Registry provides access to the local artifact registry.
 type Registry interface {
-	// Add adds or updates a component in the registry
-	Add(entry ComponentEntry) error
+	// Add adds or updates an artifact in the registry.
+	Add(entry ArtifactEntry) error
 
-	// Remove removes a component from the registry
+	// Remove removes an artifact from the registry by reference.
 	Remove(reference string) error
 
-	// Get retrieves a component by reference
-	Get(reference string) (*ComponentEntry, error)
+	// Get retrieves an artifact by reference.
+	Get(reference string) (*ArtifactEntry, error)
 
-	// List returns all components in the registry
-	List() ([]ComponentEntry, error)
+	// List returns all artifacts in the registry.
+	List() ([]ArtifactEntry, error)
 
-	// Clear removes all components from the registry
+	// ListByType returns artifacts filtered by type.
+	ListByType(artifactType ArtifactType) ([]ArtifactEntry, error)
+
+	// Clear removes all artifacts from the registry.
 	Clear() error
 }
 
@@ -75,8 +101,8 @@ type registry struct {
 
 // registryData is the structure stored in the registry file.
 type registryData struct {
-	Version    string           `json:"version"`
-	Components []ComponentEntry `json:"components"`
+	Version   string          `json:"version"`
+	Artifacts []ArtifactEntry `json:"artifacts"`
 }
 
 // DefaultRegistryPath returns the default path for the local registry.
@@ -85,7 +111,32 @@ func DefaultRegistryPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
-	return filepath.Join(homeDir, ".arcctl", "registry", "components.json"), nil
+	return filepath.Join(homeDir, ".arcctl", "registry", "artifacts.json"), nil
+}
+
+// DefaultCachePath returns the default base path for the artifact cache.
+func DefaultCachePath() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+	return filepath.Join(homeDir, ".arcctl", "cache", "artifacts"), nil
+}
+
+// CacheKey converts an OCI-style reference into a filesystem-safe key.
+func CacheKey(reference string) string {
+	key := strings.ReplaceAll(reference, "/", "_")
+	key = strings.ReplaceAll(key, ":", "_")
+	return key
+}
+
+// CachePathForRef returns the full cache directory path for an artifact reference.
+func CachePathForRef(reference string) (string, error) {
+	base, err := DefaultCachePath()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, CacheKey(reference)), nil
 }
 
 // NewRegistry creates a new registry with the default path.
@@ -105,17 +156,82 @@ func NewRegistryWithPath(path string) (Registry, error) {
 		return nil, fmt.Errorf("failed to create registry directory: %w", err)
 	}
 
-	return &registry{
-		filePath: path,
-	}, nil
+	r := &registry{filePath: path}
+
+	// Migrate from legacy components.json if needed
+	if err := r.migrateIfNeeded(); err != nil {
+		// Non-fatal: log and continue with empty registry
+		fmt.Fprintf(os.Stderr, "warning: failed to migrate legacy registry: %v\n", err)
+	}
+
+	return r, nil
+}
+
+// migrateIfNeeded checks for legacy components.json and migrates to the new format.
+func (r *registry) migrateIfNeeded() error {
+	// Only migrate when using the default path convention
+	if _, err := os.Stat(r.filePath); err == nil {
+		return nil // artifacts.json already exists, nothing to migrate
+	}
+
+	// Check for legacy components.json in the same directory
+	legacyPath := filepath.Join(filepath.Dir(r.filePath), "components.json")
+	legacyData, err := os.ReadFile(legacyPath)
+	if err != nil {
+		return nil // No legacy file, nothing to migrate
+	}
+
+	// Parse legacy format
+	var legacy struct {
+		Version    string `json:"version"`
+		Components []struct {
+			Reference  string    `json:"reference"`
+			Repository string    `json:"repository"`
+			Tag        string    `json:"tag"`
+			Digest     string    `json:"digest,omitempty"`
+			Source     string    `json:"source"`
+			Size       int64     `json:"size"`
+			CreatedAt  time.Time `json:"createdAt"`
+			CachePath  string    `json:"cachePath"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(legacyData, &legacy); err != nil {
+		return fmt.Errorf("failed to parse legacy registry: %w", err)
+	}
+
+	// Convert to new format
+	data := &registryData{
+		Version:   "v2",
+		Artifacts: make([]ArtifactEntry, 0, len(legacy.Components)),
+	}
+	for _, c := range legacy.Components {
+		data.Artifacts = append(data.Artifacts, ArtifactEntry{
+			Reference:  c.Reference,
+			Repository: c.Repository,
+			Tag:        c.Tag,
+			Type:       TypeComponent,
+			Digest:     c.Digest,
+			Source:     ArtifactSource(c.Source),
+			Size:       c.Size,
+			CreatedAt:  c.CreatedAt,
+			CachePath:  c.CachePath,
+		})
+	}
+
+	// Save new format
+	if err := r.save(data); err != nil {
+		return fmt.Errorf("failed to save migrated registry: %w", err)
+	}
+
+	return nil
 }
 
 func (r *registry) load() (*registryData, error) {
 	data, err := os.ReadFile(r.filePath)
 	if os.IsNotExist(err) {
 		return &registryData{
-			Version:    "v1",
-			Components: []ComponentEntry{},
+			Version:   "v2",
+			Artifacts: []ArtifactEntry{},
 		}, nil
 	}
 	if err != nil {
@@ -125,6 +241,22 @@ func (r *registry) load() (*registryData, error) {
 	var reg registryData
 	if err := json.Unmarshal(data, &reg); err != nil {
 		return nil, fmt.Errorf("failed to parse registry file: %w", err)
+	}
+
+	// Handle v1 format (had "components" key instead of "artifacts")
+	if reg.Artifacts == nil {
+		var v1 struct {
+			Components []ArtifactEntry `json:"components"`
+		}
+		if err := json.Unmarshal(data, &v1); err == nil && len(v1.Components) > 0 {
+			reg.Artifacts = v1.Components
+			// Default type to component for entries migrated inline
+			for i := range reg.Artifacts {
+				if reg.Artifacts[i].Type == "" {
+					reg.Artifacts[i].Type = TypeComponent
+				}
+			}
+		}
 	}
 
 	return &reg, nil
@@ -151,7 +283,7 @@ func (r *registry) save(data *registryData) error {
 	return nil
 }
 
-func (r *registry) Add(entry ComponentEntry) error {
+func (r *registry) Add(entry ArtifactEntry) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -160,18 +292,18 @@ func (r *registry) Add(entry ComponentEntry) error {
 		return err
 	}
 
-	// Check if component already exists and update or add
+	// Check if artifact already exists and update or add
 	found := false
-	for i, existing := range data.Components {
+	for i, existing := range data.Artifacts {
 		if existing.Reference == entry.Reference {
-			data.Components[i] = entry
+			data.Artifacts[i] = entry
 			found = true
 			break
 		}
 	}
 
 	if !found {
-		data.Components = append(data.Components, entry)
+		data.Artifacts = append(data.Artifacts, entry)
 	}
 
 	return r.save(data)
@@ -186,19 +318,18 @@ func (r *registry) Remove(reference string) error {
 		return err
 	}
 
-	// Filter out the component
-	filtered := make([]ComponentEntry, 0, len(data.Components))
-	for _, entry := range data.Components {
+	filtered := make([]ArtifactEntry, 0, len(data.Artifacts))
+	for _, entry := range data.Artifacts {
 		if entry.Reference != reference {
 			filtered = append(filtered, entry)
 		}
 	}
 
-	data.Components = filtered
+	data.Artifacts = filtered
 	return r.save(data)
 }
 
-func (r *registry) Get(reference string) (*ComponentEntry, error) {
+func (r *registry) Get(reference string) (*ArtifactEntry, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -207,16 +338,16 @@ func (r *registry) Get(reference string) (*ComponentEntry, error) {
 		return nil, err
 	}
 
-	for _, entry := range data.Components {
+	for _, entry := range data.Artifacts {
 		if entry.Reference == reference {
 			return &entry, nil
 		}
 	}
 
-	return nil, fmt.Errorf("component %q not found in local registry", reference)
+	return nil, fmt.Errorf("artifact %q not found in local registry", reference)
 }
 
-func (r *registry) List() ([]ComponentEntry, error) {
+func (r *registry) List() ([]ArtifactEntry, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -226,11 +357,26 @@ func (r *registry) List() ([]ComponentEntry, error) {
 	}
 
 	// Sort by created time (most recent first)
-	sort.Slice(data.Components, func(i, j int) bool {
-		return data.Components[i].CreatedAt.After(data.Components[j].CreatedAt)
+	sort.Slice(data.Artifacts, func(i, j int) bool {
+		return data.Artifacts[i].CreatedAt.After(data.Artifacts[j].CreatedAt)
 	})
 
-	return data.Components, nil
+	return data.Artifacts, nil
+}
+
+func (r *registry) ListByType(artifactType ArtifactType) ([]ArtifactEntry, error) {
+	all, err := r.List()
+	if err != nil {
+		return nil, err
+	}
+
+	filtered := make([]ArtifactEntry, 0)
+	for _, entry := range all {
+		if entry.Type == artifactType {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered, nil
 }
 
 func (r *registry) Clear() error {
@@ -238,8 +384,8 @@ func (r *registry) Clear() error {
 	defer r.mu.Unlock()
 
 	data := &registryData{
-		Version:    "v1",
-		Components: []ComponentEntry{},
+		Version:   "v2",
+		Artifacts: []ArtifactEntry{},
 	}
 
 	return r.save(data)

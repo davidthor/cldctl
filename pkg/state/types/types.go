@@ -9,7 +9,8 @@ import (
 type DatacenterState struct {
 	// Metadata
 	Name        string    `json:"name"`
-	Version     string    `json:"version"`
+	Version     string    `json:"version"`              // Tag/reference (e.g., "my-dc:latest", "ghcr.io/org/dc:v1")
+	Source      string    `json:"source,omitempty"`      // Original source (filesystem path or OCI reference)
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 

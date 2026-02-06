@@ -24,9 +24,11 @@ go mod tidy   # Clean up dependencies
 arcctl uses an action-first command structure: `arcctl <action> <resource> [args] [flags]`
 
 ```bash
-# Build commands
+# Build commands (tag is optional; omit -t to identify by digest)
 arcctl build component ./my-app -t ghcr.io/myorg/app:v1
+arcctl build component ./my-app                           # digest-only
 arcctl build datacenter ./dc -t ghcr.io/myorg/dc:v1
+arcctl build datacenter ./dc                              # digest-only
 
 # Deploy commands
 arcctl deploy component ./my-app -e production
@@ -45,9 +47,12 @@ arcctl destroy component my-app -e staging
 arcctl destroy component shared-db -e staging --force  # Override dependency check
 
 # Artifact management
+arcctl images                                              # List all cached artifacts
+arcctl images --type component                             # Filter by type
 arcctl tag component ghcr.io/myorg/app:v1 ghcr.io/myorg/app:latest
 arcctl push component ghcr.io/myorg/app:v1
 arcctl pull component ghcr.io/myorg/app:v1
+arcctl pull datacenter docker.io/davidthor/startup-datacenter:latest
 
 # Validation
 arcctl validate component ./my-app

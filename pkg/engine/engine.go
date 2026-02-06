@@ -16,6 +16,7 @@ import (
 	"github.com/architect-io/arcctl/pkg/graph"
 	"github.com/architect-io/arcctl/pkg/iac"
 	"github.com/architect-io/arcctl/pkg/oci"
+	"github.com/architect-io/arcctl/pkg/registry"
 	"github.com/architect-io/arcctl/pkg/schema/component"
 	"github.com/architect-io/arcctl/pkg/schema/datacenter"
 	"github.com/architect-io/arcctl/pkg/schema/environment"
@@ -38,14 +39,10 @@ type Engine struct {
 	envLoader    environment.Loader
 	dcLoader     datacenter.Loader
 	ociClient    OCIClient
-	cacheDir     string
 }
 
 // NewEngine creates a new deployment engine.
 func NewEngine(stateManager state.Manager, iacRegistry *iac.Registry) *Engine {
-	homeDir, _ := os.UserHomeDir()
-	cacheDir := filepath.Join(homeDir, ".arcctl", "cache", "datacenters")
-
 	return &Engine{
 		stateManager: stateManager,
 		iacRegistry:  iacRegistry,
@@ -53,7 +50,6 @@ func NewEngine(stateManager state.Manager, iacRegistry *iac.Registry) *Engine {
 		envLoader:    environment.NewLoader(),
 		dcLoader:     datacenter.NewLoader(),
 		ociClient:    oci.NewClient(),
-		cacheDir:     cacheDir,
 	}
 }
 
@@ -200,9 +196,18 @@ func (e *Engine) Deploy(ctx context.Context, opts DeployOptions) (*DeployResult,
 }
 
 // loadDatacenterConfig loads a datacenter configuration from a path or OCI reference.
+// Resolution order: local filesystem path → unified artifact registry → remote OCI pull.
 func (e *Engine) loadDatacenterConfig(ref string) (datacenter.Datacenter, error) {
-	// Check if this is a local path
-	isLocalPath := !strings.Contains(ref, ":") || strings.HasPrefix(ref, "./") || strings.HasPrefix(ref, "/") || strings.HasPrefix(ref, "../")
+	// Check if this is a local filesystem path
+	isLocalPath := strings.HasPrefix(ref, "./") || strings.HasPrefix(ref, "/") || strings.HasPrefix(ref, "../")
+	if !isLocalPath {
+		// Also treat paths without ":" as local (but not bare names like "mydc:latest")
+		if !strings.Contains(ref, ":") {
+			if _, err := os.Stat(ref); err == nil {
+				isLocalPath = true
+			}
+		}
+	}
 
 	if isLocalPath {
 		// Resolve to absolute path
@@ -215,7 +220,6 @@ func (e *Engine) loadDatacenterConfig(ref string) (datacenter.Datacenter, error)
 			absPath = filepath.Join(cwd, ref)
 		}
 
-		// Check if it's a directory
 		info, err := os.Stat(absPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to access datacenter path: %w", err)
@@ -223,7 +227,6 @@ func (e *Engine) loadDatacenterConfig(ref string) (datacenter.Datacenter, error)
 
 		dcFile := absPath
 		if info.IsDir() {
-			// Look for datacenter file in directory
 			dcFile = filepath.Join(absPath, "datacenter.dc")
 			if _, err := os.Stat(dcFile); os.IsNotExist(err) {
 				dcFile = filepath.Join(absPath, "datacenter.hcl")
@@ -233,48 +236,34 @@ func (e *Engine) loadDatacenterConfig(ref string) (datacenter.Datacenter, error)
 		return e.dcLoader.Load(dcFile)
 	}
 
-	// Load from OCI reference
+	// Not a local path — check the unified artifact registry first (like docker run).
+	reg, err := registry.NewRegistry()
+	if err == nil {
+		entry, err := reg.Get(ref)
+		if err == nil && entry.CachePath != "" {
+			// Found in local registry — verify cache still exists on disk
+			dcFile := findDatacenterFile(entry.CachePath)
+			if dcFile != "" {
+				return e.dcLoader.Load(dcFile)
+			}
+			// Cache directory is gone; fall through to remote pull
+		}
+	}
+
+	// Not in local registry — pull from remote OCI registry
 	return e.loadDatacenterFromOCI(context.Background(), ref)
 }
 
-// loadDatacenterFromOCI pulls a datacenter artifact from an OCI registry and loads it.
+// loadDatacenterFromOCI pulls a datacenter artifact from a remote OCI registry,
+// caches it locally, registers it in the unified artifact registry, and loads it.
 func (e *Engine) loadDatacenterFromOCI(ctx context.Context, ref string) (datacenter.Datacenter, error) {
-	// Create a cache key from the reference
-	cacheKey := strings.ReplaceAll(ref, "/", "_")
-	cacheKey = strings.ReplaceAll(cacheKey, ":", "_")
-	dcDir := filepath.Join(e.cacheDir, cacheKey)
-	digestFile := filepath.Join(dcDir, ".digest")
-
-	// Check if already cached
-	dcFile := findDatacenterFile(dcDir)
-	if dcFile != "" {
-		// Cache exists - check if we need to update
-		needsUpdate := false
-
-		// Parse the reference to check if it includes a digest
-		ociRef, _ := oci.ParseReference(ref)
-		if ociRef != nil && ociRef.Digest == "" {
-			// No pinned digest, check if remote has changed
-			cachedDigest, _ := os.ReadFile(digestFile)
-			exists, _ := e.ociClient.Exists(ctx, ref)
-			if exists {
-				remoteConfig, err := e.ociClient.PullConfig(ctx, ref)
-				if err == nil && len(remoteConfig) > 0 {
-					remoteDigest := fmt.Sprintf("%x", remoteConfig)
-					if string(cachedDigest) != "" && string(cachedDigest) != remoteDigest {
-						needsUpdate = true
-					}
-				}
-			}
-		}
-
-		if !needsUpdate {
-			return e.dcLoader.Load(dcFile)
-		}
-
-		// Remove stale cache
-		os.RemoveAll(dcDir)
+	dcDir, err := registry.CachePathForRef(ref)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute cache path: %w", err)
 	}
+
+	// Remove any stale cache
+	os.RemoveAll(dcDir)
 
 	// Pull from registry
 	if err := os.MkdirAll(dcDir, 0755); err != nil {
@@ -286,18 +275,51 @@ func (e *Engine) loadDatacenterFromOCI(ctx context.Context, ref string) (datacen
 		return nil, fmt.Errorf("failed to pull datacenter from registry: %w", err)
 	}
 
-	// Store digest for future cache validation
-	remoteConfig, err := e.ociClient.PullConfig(ctx, ref)
-	if err == nil && len(remoteConfig) > 0 {
-		remoteDigest := fmt.Sprintf("%x", remoteConfig)
-		_ = os.WriteFile(digestFile, []byte(remoteDigest), 0644)
-	}
-
 	// Find the datacenter file in pulled content
-	dcFile = findDatacenterFile(dcDir)
+	dcFile := findDatacenterFile(dcDir)
 	if dcFile == "" {
 		os.RemoveAll(dcDir)
 		return nil, fmt.Errorf("no datacenter.dc or datacenter.hcl found in pulled artifact: %s", ref)
+	}
+
+	// Calculate size
+	var totalSize int64
+	_ = filepath.Walk(dcDir, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			totalSize += info.Size()
+		}
+		return nil
+	})
+
+	// Get digest if available
+	digest := ""
+	remoteConfig, err := e.ociClient.PullConfig(ctx, ref)
+	if err == nil && len(remoteConfig) > 0 {
+		digest = fmt.Sprintf("sha256:%x", remoteConfig)
+		if len(digest) > 71 {
+			digest = digest[:71] + "..."
+		}
+	}
+
+	// Register in unified artifact registry
+	reg, regErr := registry.NewRegistry()
+	if regErr == nil {
+		repo, tag := registry.ParseReference(ref)
+		entry := registry.ArtifactEntry{
+			Reference:  ref,
+			Repository: repo,
+			Tag:        tag,
+			Type:       registry.TypeDatacenter,
+			Digest:     digest,
+			Source:     registry.SourcePulled,
+			Size:       totalSize,
+			CreatedAt:  time.Now(),
+			CachePath:  dcDir,
+		}
+		_ = reg.Add(entry)
 	}
 
 	return e.dcLoader.Load(dcFile)

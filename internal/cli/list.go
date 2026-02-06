@@ -127,7 +127,7 @@ func listLocalComponents(outputFormat string) error {
 		return fmt.Errorf("failed to create local registry: %w", err)
 	}
 
-	entries, err := reg.List()
+	entries, err := reg.ListByType(registry.TypeComponent)
 	if err != nil {
 		return fmt.Errorf("failed to list components: %w", err)
 	}
@@ -352,6 +352,16 @@ Examples:
 }
 
 // Helper functions for list commands
+
+// shortDigest returns a short (12-char) version of a sha256 digest, or
+// the full string if it is shorter. Similar to Docker's IMAGE ID.
+func shortDigest(d string) string {
+	d = strings.TrimPrefix(d, "sha256:")
+	if len(d) > 12 {
+		return d[:12]
+	}
+	return d
+}
 
 // truncateString truncates a string to a maximum length.
 func truncateString(s string, maxLen int) string {

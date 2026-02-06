@@ -12,6 +12,8 @@ import (
 
 	"github.com/architect-io/arcctl/pkg/engine"
 	"github.com/architect-io/arcctl/pkg/engine/executor"
+	"github.com/architect-io/arcctl/pkg/oci"
+	"github.com/architect-io/arcctl/pkg/registry"
 	"github.com/architect-io/arcctl/pkg/schema/component"
 	"github.com/architect-io/arcctl/pkg/schema/datacenter"
 	"github.com/architect-io/arcctl/pkg/state/types"
@@ -394,47 +396,68 @@ Examples:
 				}
 			}
 
-			// Display execution plan
-			fmt.Printf("Datacenter: %s\n", dcName)
-			fmt.Printf("Source:     %s\n", configRef)
-			fmt.Println()
-
-			fmt.Println("Execution Plan:")
-			fmt.Println()
-
 			// Check if this is an OCI reference or local path
 			isLocalPath := !strings.Contains(configRef, ":") || strings.HasPrefix(configRef, "./") || strings.HasPrefix(configRef, "/")
 
+			// Determine the tag and source for this datacenter
+			tag := configRef // For OCI refs, the tag IS the reference
+			source := configRef
+			if isLocalPath {
+				absPath, err := filepath.Abs(configRef)
+				if err != nil {
+					return fmt.Errorf("failed to resolve absolute path: %w", err)
+				}
+				source = absPath
+				tag = fmt.Sprintf("%s:latest", dcName)
+			}
+
+			// Display execution plan
+			fmt.Printf("Datacenter: %s\n", dcName)
+			fmt.Printf("Source:     %s\n", source)
+			fmt.Printf("Tag:        %s\n", tag)
+			fmt.Println()
+
+			// Load datacenter to show execution plan
+			var dc datacenter.Datacenter
+			var dcDir string
+			var allModules map[string]moduleInfo
+
 			if isLocalPath {
 				// Load datacenter from local path
-				// Check if configRef is a file or directory
-				dcFile := configRef
-				info, err := os.Stat(configRef)
+				dcFile := source
+				dcDir = source
+				info, err := os.Stat(source)
 				if err != nil {
 					return fmt.Errorf("failed to access config path: %w", err)
 				}
 				if info.IsDir() {
-					// Look for datacenter file in directory
-					// Try datacenter.dc first, then datacenter.hcl
-					dcFile = filepath.Join(configRef, "datacenter.dc")
+					dcFile = filepath.Join(source, "datacenter.dc")
 					if _, err := os.Stat(dcFile); os.IsNotExist(err) {
-						dcFile = filepath.Join(configRef, "datacenter.hcl")
+						dcFile = filepath.Join(source, "datacenter.hcl")
 					}
+				} else {
+					dcDir = filepath.Dir(source)
 				}
 				loader := datacenter.NewLoader()
-				dc, err := loader.Load(dcFile)
+				dc, err = loader.Load(dcFile)
 				if err != nil {
 					return fmt.Errorf("failed to load datacenter: %w", err)
 				}
 
-				// Show modules that will be deployed
-				for _, mod := range dc.Modules() {
-					fmt.Printf("  module %q\n", mod.Name())
-					fmt.Printf("    + create: Module %q\n\n", mod.Name())
-				}
+				// Collect all modules
+				allModules = collectAllModules(dc, dcDir)
 
-				fmt.Printf("Plan: %d modules to deploy\n", len(dc.Modules()))
+				fmt.Println("Build Plan:")
+				if len(allModules) > 0 {
+					fmt.Printf("  %d module(s) to build:\n", len(allModules))
+					for modulePath, modInfo := range allModules {
+						fmt.Printf("    %-24s (%s)\n", modulePath, modInfo.plugin)
+					}
+				} else {
+					fmt.Println("  No modules to build.")
+				}
 			} else {
+				fmt.Println("Build Plan:")
 				fmt.Println("  (modules will be determined from OCI artifact)")
 			}
 
@@ -455,40 +478,111 @@ Examples:
 			fmt.Println()
 			fmt.Printf("[deploy] Deploying datacenter %q...\n", dcName)
 
-			// Resolve the config reference to an absolute path if it's a local path
-			// This ensures the datacenter can be loaded from any working directory later
-			resolvedRef := configRef
 			if isLocalPath {
-				absPath, err := filepath.Abs(configRef)
-				if err != nil {
-					return fmt.Errorf("failed to resolve absolute path: %w", err)
+				// Build module Docker images
+				if len(allModules) > 0 {
+					moduleBuilder, err := createModuleBuilder()
+					if err != nil {
+						return fmt.Errorf("failed to create module builder: %w", err)
+					}
+					defer moduleBuilder.Close()
+
+					// Compute module artifact tags
+					baseRef := tag
+					tagPart := ""
+					if idx := strings.LastIndex(tag, ":"); idx != -1 {
+						baseRef = tag[:idx]
+						tagPart = tag[idx:]
+					}
+
+					for modulePath, modInfo := range allModules {
+						modName := strings.TrimPrefix(modulePath, "module/")
+						modRef := fmt.Sprintf("%s-module-%s%s", baseRef, modName, tagPart)
+
+						fmt.Printf("[build] Building %s...\n", modulePath)
+						buildResult, err := moduleBuilder.Build(ctx, modInfo.sourceDir, modInfo.plugin, modRef)
+						if err != nil {
+							return fmt.Errorf("failed to build module %s: %w", modulePath, err)
+						}
+						fmt.Printf("[success] Built %s (%s)\n", modRef, buildResult.ModuleType)
+					}
 				}
-				resolvedRef = absPath
+
+				// Snapshot the datacenter source to a stable cache directory.
+				// This makes the deployed datacenter immutable — source changes
+				// won't affect it until explicitly re-deployed.
+				cacheDir, err := registry.CachePathForRef(tag)
+				if err != nil {
+					return fmt.Errorf("failed to compute cache path: %w", err)
+				}
+
+				// Remove old cache if present
+				os.RemoveAll(cacheDir)
+				if err := os.MkdirAll(cacheDir, 0755); err != nil {
+					return fmt.Errorf("failed to create cache directory: %w", err)
+				}
+
+				if err := copyDirectory(dcDir, cacheDir); err != nil {
+					return fmt.Errorf("failed to snapshot datacenter source: %w", err)
+				}
+
+				// Register in unified artifact registry
+				reg, err := registry.NewRegistry()
+				if err != nil {
+					return fmt.Errorf("failed to create local registry: %w", err)
+				}
+
+				repo, tagPortion := registry.ParseReference(tag)
+				dcEntry := registry.ArtifactEntry{
+					Reference:  tag,
+					Repository: repo,
+					Tag:        tagPortion,
+					Type:       registry.TypeDatacenter,
+					Source:     registry.SourceBuilt,
+					CreatedAt:  time.Now(),
+					CachePath:  cacheDir,
+				}
+				if err := reg.Add(dcEntry); err != nil {
+					return fmt.Errorf("failed to register datacenter: %w", err)
+				}
+
+				fmt.Printf("[success] Datacenter cached at %s\n", cacheDir)
+			} else {
+				// For OCI references, verify the artifact exists
+				client := oci.NewClient()
+				exists, err := client.Exists(ctx, configRef)
+				if err != nil {
+					return fmt.Errorf("failed to check artifact: %w", err)
+				}
+				if !exists {
+					return fmt.Errorf("artifact %s not found in registry", configRef)
+				}
 			}
 
-			// Create or update datacenter state
-			// Note: Datacenter "deployment" registers the datacenter configuration so it can
-			// be used by environments. Datacenter modules are hooks that get executed when
-			// components are deployed to environments that use this datacenter.
+			// Preserve existing environment references on update
+			existingDC, _ := mgr.GetDatacenter(ctx, dcName)
+			var existingEnvs []string
+			if existingDC != nil {
+				existingEnvs = existingDC.Environments
+			}
+
+			// Save datacenter state
 			dcState := &types.DatacenterState{
-				Name:      dcName,
-				Version:   resolvedRef,
-				Variables: vars,
-				Modules:   make(map[string]*types.ModuleState),
-				CreatedAt: time.Now(),
-				UpdatedAt: time.Now(),
+				Name:         dcName,
+				Version:      tag,
+				Source:        source,
+				Variables:    vars,
+				Modules:      make(map[string]*types.ModuleState),
+				Environments: existingEnvs,
+				CreatedAt:    time.Now(),
+				UpdatedAt:    time.Now(),
 			}
 
 			if err := mgr.SaveDatacenter(ctx, dcState); err != nil {
 				return fmt.Errorf("failed to save datacenter state: %w", err)
 			}
 
-			// Note: Datacenter-level modules (if any) would be executed here.
-			// Currently, datacenter modules are hooks that are triggered during component
-			// deployment. If the datacenter has top-level modules that need to run once
-			// (e.g., VPC setup), that would require Engine.DeployDatacenter() implementation.
-
-			fmt.Printf("[success] Datacenter registered successfully\n")
+			fmt.Printf("[success] Datacenter %q deployed as %s\n", dcName, tag)
 			fmt.Println()
 			fmt.Println("The datacenter is now available for use with environments.")
 			fmt.Println("Infrastructure modules will be executed when components are deployed.")
@@ -692,4 +786,50 @@ func parseVarFile(data []byte, vars map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// copyDirectory copies the contents of srcDir into destDir, excluding
+// hidden files/directories and common build artifacts. destDir must
+// already exist.
+func copyDirectory(srcDir, destDir string) error {
+	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip hidden files/directories
+		name := info.Name()
+		if strings.HasPrefix(name, ".") && path != srcDir {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Skip common build artifacts
+		if info.IsDir() {
+			switch name {
+			case "node_modules", "__pycache__", ".terraform", ".pulumi":
+				return filepath.SkipDir
+			}
+		}
+
+		relPath, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+
+		destPath := filepath.Join(destDir, relPath)
+
+		if info.IsDir() {
+			return os.MkdirAll(destPath, info.Mode())
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		return os.WriteFile(destPath, data, info.Mode())
+	})
 }

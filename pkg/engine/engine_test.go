@@ -462,10 +462,10 @@ func TestLoadDatacenterConfig_LocalPathNotFound(t *testing.T) {
 
 func TestLoadDatacenterConfig_OCIReference(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
 
 	sm := newMockStateManager()
 	eng := NewEngine(sm, iac.DefaultRegistry)
-	eng.cacheDir = tmpDir
 
 	ociMock := &mockOCIClient{
 		pullFn: func(ctx context.Context, reference string, destDir string) error {
@@ -486,10 +486,10 @@ func TestLoadDatacenterConfig_OCIReference(t *testing.T) {
 
 func TestLoadDatacenterConfig_OCIReferenceCached(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
 
 	sm := newMockStateManager()
 	eng := NewEngine(sm, iac.DefaultRegistry)
-	eng.cacheDir = tmpDir
 
 	pullCount := 0
 	ociMock := &mockOCIClient{
@@ -506,7 +506,7 @@ func TestLoadDatacenterConfig_OCIReferenceCached(t *testing.T) {
 	}
 	eng.ociClient = ociMock
 
-	// First call - should pull
+	// First call - should pull and register in unified registry
 	_, err := eng.loadDatacenterConfig("ghcr.io/myorg/mydc:v1")
 	if err != nil {
 		t.Fatalf("first load failed: %v", err)
@@ -515,22 +515,22 @@ func TestLoadDatacenterConfig_OCIReferenceCached(t *testing.T) {
 		t.Fatalf("expected 1 pull, got %d", pullCount)
 	}
 
-	// Second call - should use cache (digest matches)
+	// Second call - should use registry cache (no remote pull)
 	_, err = eng.loadDatacenterConfig("ghcr.io/myorg/mydc:v1")
 	if err != nil {
 		t.Fatalf("second load failed: %v", err)
 	}
 	if pullCount != 1 {
-		t.Fatalf("expected still 1 pull (cached), got %d", pullCount)
+		t.Fatalf("expected still 1 pull (cached in registry), got %d", pullCount)
 	}
 }
 
 func TestLoadDatacenterConfig_OCIReferenceNoFile(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
 
 	sm := newMockStateManager()
 	eng := NewEngine(sm, iac.DefaultRegistry)
-	eng.cacheDir = tmpDir
 
 	ociMock := &mockOCIClient{
 		pullFn: func(ctx context.Context, reference string, destDir string) error {
@@ -551,10 +551,10 @@ func TestLoadDatacenterConfig_OCIReferenceNoFile(t *testing.T) {
 
 func TestLoadDatacenterConfig_OCIPullFailure(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
 
 	sm := newMockStateManager()
 	eng := NewEngine(sm, iac.DefaultRegistry)
-	eng.cacheDir = tmpDir
 
 	ociMock := &mockOCIClient{
 		pullFn: func(ctx context.Context, reference string, destDir string) error {

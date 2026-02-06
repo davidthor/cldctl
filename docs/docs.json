@@ -175,7 +175,8 @@
             "group": "Overview",
             "pages": [
               "cli/overview",
-              "cli/up"
+              "cli/up",
+              "cli/images"
             ]
           },
           {
@@ -252,7 +253,8 @@
           {
             "group": "pull",
             "pages": [
-              "cli/pull/component"
+              "cli/pull/component",
+              "cli/pull/datacenter"
             ]
           },
           {

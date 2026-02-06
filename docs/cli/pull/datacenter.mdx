@@ -1,0 +1,68 @@
+---
+title: "pull datacenter"
+description: "Pull a datacenter artifact from an OCI registry"
+---
+
+# arcctl pull datacenter
+
+Pull a datacenter artifact from an OCI registry to the local cache.
+
+<Note>
+Use `arcctl pull dc` as shorthand for `arcctl pull datacenter`.
+</Note>
+
+## Synopsis
+
+```bash
+arcctl pull datacenter <repo:tag> [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<repo:tag>` | Datacenter artifact reference |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-q, --quiet` | Suppress output |
+
+## Description
+
+This command downloads the datacenter artifact and registers it in the local
+artifact registry. The datacenter can then be used for deployment or inspection.
+
+Once pulled, the datacenter appears in `arcctl images` and can be referenced by
+tag when deploying, without requiring another network fetch.
+
+## Examples
+
+```bash
+# Pull a datacenter
+arcctl pull datacenter docker.io/davidthor/startup-datacenter:latest
+
+# Using alias
+arcctl pull dc docker.io/davidthor/startup-datacenter:latest
+
+# Pull with quiet mode
+arcctl pull datacenter ghcr.io/myorg/my-dc:v1.0.0 -q
+```
+
+## Output
+
+```
+$ arcctl pull datacenter docker.io/davidthor/startup-datacenter:latest
+
+Pulling datacenter: docker.io/davidthor/startup-datacenter:latest
+[pull] Downloading docker.io/davidthor/startup-datacenter:latest...
+[success] Pulled docker.io/davidthor/startup-datacenter:latest
+  Cache: /home/user/.arcctl/cache/artifacts/docker.io_davidthor_startup-datacenter_latest
+```
+
+## See Also
+
+- [`arcctl push datacenter`](/cli/push/datacenter) - Push a datacenter
+- [`arcctl images`](/cli/images) - List locally cached artifacts
+- [`arcctl deploy datacenter`](/cli/deploy/datacenter) - Deploy a datacenter

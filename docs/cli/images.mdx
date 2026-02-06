@@ -1,0 +1,89 @@
+---
+title: "images"
+description: "List locally cached artifacts"
+---
+
+# arcctl images
+
+List all component and datacenter artifacts in the local cache.
+
+This is similar to `docker images` — it shows every artifact that has been
+built locally or pulled from a remote registry.
+
+## Synopsis
+
+```bash
+arcctl images [options]
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--type <type>` | Filter by artifact type: `component` or `datacenter` |
+| `-o, --output <format>` | Output format: `table` (default), `json`, `yaml` |
+
+## Description
+
+The local artifact cache stores metadata about artifacts that have been:
+
+- **Built locally** using `arcctl build component` or `arcctl build datacenter`
+- **Pulled manually** using `arcctl pull component` or `arcctl pull datacenter`
+- **Pulled implicitly** during deploy operations when the engine resolves an OCI reference
+
+The cache is stored at `~/.arcctl/registry/artifacts.json` with artifact content
+cached at `~/.arcctl/cache/artifacts/`.
+
+When a build command is run without the `-t` flag, the artifact is identified by
+its content digest (similar to `docker build` without `-t`). These entries appear
+with `<none>` for both REPOSITORY and TAG.
+
+## Examples
+
+```bash
+# List all cached artifacts
+arcctl images
+
+# List only components
+arcctl images --type component
+
+# List only datacenters
+arcctl images --type datacenter
+
+# JSON output (for scripting)
+arcctl images -o json
+
+# YAML output
+arcctl images -o yaml
+```
+
+## Output
+
+```
+$ arcctl images
+
+REPOSITORY                               TAG             ARTIFACT ID    TYPE         SOURCE     SIZE     CREATED
+ghcr.io/myorg/web-app                   v1.0.0          a1b2c3d4e5f6   component    built      44.6MB   2 hours ago
+docker.io/davidthor/startup-datacenter  latest          f6e5d4c3b2a1   datacenter   pulled     12.3KB   1 day ago
+my-dc                                   latest          1234abcd5678   datacenter   built      8.4KB    3 days ago
+```
+
+### Table Columns
+
+| Column | Description |
+|--------|-------------|
+| `REPOSITORY` | Repository portion of the artifact reference (or `<none>` for untagged builds) |
+| `TAG` | Tag portion (or `<none>` for untagged builds) |
+| `ARTIFACT ID` | Short content digest (first 12 hex characters) |
+| `TYPE` | `component` or `datacenter` |
+| `SOURCE` | `built` (locally) or `pulled` (from remote registry) |
+| `SIZE` | Artifact size in human-readable format |
+| `CREATED` | Relative time since the artifact was added |
+
+## See Also
+
+- [`arcctl build component`](/cli/build/component) - Build a component artifact
+- [`arcctl build datacenter`](/cli/build/datacenter) - Build a datacenter artifact
+- [`arcctl pull component`](/cli/pull/component) - Pull a component from a registry
+- [`arcctl pull datacenter`](/cli/pull/datacenter) - Pull a datacenter from a registry
+- [`arcctl list component`](/cli/list/component) - List deployed components in an environment
