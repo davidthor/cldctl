@@ -95,7 +95,7 @@ func TestQuery_Success(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer ts.Close()
 
@@ -129,7 +129,7 @@ func TestQuery_Success(t *testing.T) {
 func TestQuery_Error(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("bad query"))
+		_, _ = w.Write([]byte("bad query"))
 	}))
 	defer ts.Close()
 
@@ -152,7 +152,7 @@ func TestQuery_WithLimit(t *testing.T) {
 		capturedLimit = r.URL.Query().Get("limit")
 		resp := queryRangeResponse{Status: "success", Data: queryRangeData{ResultType: "streams"}}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer ts.Close()
 
@@ -161,7 +161,7 @@ func TestQuery_WithLimit(t *testing.T) {
 		t.Fatalf("failed to create querier: %v", err)
 	}
 
-	q.(*Querier).Query(context.Background(), logs.QueryOptions{
+	_, _ = q.(*Querier).Query(context.Background(), logs.QueryOptions{
 		Environment: "test-env",
 		Limit:       50,
 	})
@@ -224,11 +224,11 @@ func TestTail_StreamsEntries(t *testing.T) {
 		}
 
 		data, _ := json.Marshal(msg1)
-		conn.WriteMessage(websocket.TextMessage, data)
+		_ = conn.WriteMessage(websocket.TextMessage, data)
 
 		// Small delay, then close
 		time.Sleep(50 * time.Millisecond)
-		conn.WriteMessage(websocket.CloseMessage,
+		_ = conn.WriteMessage(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 	}))
 	defer ts.Close()

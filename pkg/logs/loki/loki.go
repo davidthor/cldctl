@@ -173,7 +173,7 @@ func (q *Querier) Tail(ctx context.Context, opts logs.QueryOptions) (*logs.LogSt
 	}()
 
 	closer := func() {
-		conn.WriteMessage(websocket.CloseMessage,
+		_ = conn.WriteMessage(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 		conn.Close()
 	}
