@@ -27,7 +27,7 @@ arcctl create environment <name> [options]
 
 | Option | Description |
 |--------|-------------|
-| `-d, --datacenter <name>` | Target datacenter (required) |
+| `-d, --datacenter <name>` | Target datacenter (resolved from flag, `ARCCTL_DATACENTER` env var, or CLI config default) |
 | `--if-not-exists` | Don't error if environment already exists |
 | `--backend <type>` | State backend type |
 | `--backend-config <key=value>` | Backend configuration |

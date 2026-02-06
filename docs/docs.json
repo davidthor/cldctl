@@ -177,7 +177,9 @@
             "pages": [
               "cli/overview",
               "cli/up",
-              "cli/images"
+              "cli/images",
+              "cli/config",
+              "cli/migrate"
             ]
           },
           {

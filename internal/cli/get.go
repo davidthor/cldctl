@@ -27,6 +27,7 @@ func newGetCmd() *cobra.Command {
 func newGetComponentCmd() *cobra.Command {
 	var (
 		environment   string
+		datacenter    string
 		outputFormat  string
 		backendType   string
 		backendConfig []string
@@ -46,6 +47,12 @@ Examples:
 			componentName := args[0]
 			ctx := context.Background()
 
+			// Resolve datacenter
+			dc, err := resolveDatacenter(datacenter)
+			if err != nil {
+				return err
+			}
+
 			// Create state manager
 			mgr, err := createStateManagerWithConfig(backendType, backendConfig)
 			if err != nil {
@@ -53,15 +60,9 @@ Examples:
 			}
 
 			// Get component state
-			comp, err := mgr.GetComponent(ctx, environment, componentName)
+			comp, err := mgr.GetComponent(ctx, dc, environment, componentName)
 			if err != nil {
 				return fmt.Errorf("failed to get component: %w", err)
-			}
-
-			// Get environment state for datacenter info
-			envState, err := mgr.GetEnvironment(ctx, environment)
-			if err != nil {
-				return fmt.Errorf("failed to get environment: %w", err)
 			}
 
 			// Handle output format
@@ -82,7 +83,7 @@ Examples:
 				// Table format
 				fmt.Printf("Component:   %s\n", comp.Name)
 				fmt.Printf("Environment: %s\n", environment)
-				fmt.Printf("Datacenter:  %s\n", envState.Datacenter)
+				fmt.Printf("Datacenter:  %s\n", dc)
 				fmt.Printf("Source:      %s\n", comp.Source)
 				fmt.Printf("Status:      %s\n", comp.Status)
 				fmt.Printf("Deployed:    %s\n", comp.DeployedAt.Format("2006-01-02 15:04:05"))
@@ -129,6 +130,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVarP(&environment, "environment", "e", "", "Target environment (required)")
+	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Target datacenter (uses default if not set)")
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format: table, json, yaml")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
@@ -212,16 +214,18 @@ Examples:
 					fmt.Println()
 				}
 
-				if len(dc.Environments) > 0 {
+				// List environments from state hierarchy
+				envRefs, err := mgr.ListEnvironments(ctx, dcName)
+				if err == nil && len(envRefs) > 0 {
 					fmt.Println("Environments:")
 					fmt.Printf("  %-16s %-12s %s\n", "NAME", "COMPONENTS", "CREATED")
-					for _, envName := range dc.Environments {
-						env, err := mgr.GetEnvironment(ctx, envName)
+					for _, envRef := range envRefs {
+						env, err := mgr.GetEnvironment(ctx, dcName, envRef.Name)
 						if err != nil {
 							continue
 						}
 						fmt.Printf("  %-16s %-12d %s\n",
-							envName,
+							envRef.Name,
 							len(env.Components),
 							env.CreatedAt.Format("2006-01-02"),
 						)
@@ -242,6 +246,7 @@ Examples:
 
 func newGetEnvironmentCmd() *cobra.Command {
 	var (
+		datacenter    string
 		outputFormat  string
 		backendType   string
 		backendConfig []string
@@ -261,6 +266,12 @@ Examples:
 			envName := args[0]
 			ctx := context.Background()
 
+			// Resolve datacenter
+			dc, err := resolveDatacenter(datacenter)
+			if err != nil {
+				return err
+			}
+
 			// Create state manager
 			mgr, err := createStateManagerWithConfig(backendType, backendConfig)
 			if err != nil {
@@ -268,9 +279,9 @@ Examples:
 			}
 
 			// Get environment state
-			env, err := mgr.GetEnvironment(ctx, envName)
+			env, err := mgr.GetEnvironment(ctx, dc, envName)
 			if err != nil {
-				return fmt.Errorf("environment %q not found: %w", envName, err)
+				return fmt.Errorf("environment %q not found in datacenter %q: %w", envName, dc, err)
 			}
 
 			// Handle output format
@@ -340,6 +351,7 @@ Examples:
 		},
 	}
 
+	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Target datacenter (uses default if not set)")
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format: table, json, yaml")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")

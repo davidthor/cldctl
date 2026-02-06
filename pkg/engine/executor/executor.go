@@ -139,7 +139,7 @@ func (e *Executor) Execute(ctx context.Context, plan *planner.Plan, g *graph.Gra
 	}
 
 	// Get or create environment state
-	envState, err := e.stateManager.GetEnvironment(ctx, plan.Environment)
+	envState, err := e.stateManager.GetEnvironment(ctx, plan.Datacenter, plan.Environment)
 	if err != nil {
 		// Create new state if it doesn't exist
 		envState = &types.EnvironmentState{
@@ -240,7 +240,7 @@ func (e *Executor) Execute(ctx context.Context, plan *planner.Plan, g *graph.Gra
 	envState.UpdatedAt = time.Now()
 
 	// Save state
-	if err := e.stateManager.SaveEnvironment(ctx, envState); err != nil {
+	if err := e.stateManager.SaveEnvironment(ctx, plan.Datacenter, envState); err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("failed to save state: %w", err))
 	}
 
@@ -1741,7 +1741,7 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 	}
 
 	// Get or create environment state
-	envState, err := e.stateManager.GetEnvironment(ctx, plan.Environment)
+	envState, err := e.stateManager.GetEnvironment(ctx, plan.Datacenter, plan.Environment)
 	if err != nil {
 		envState = &types.EnvironmentState{
 			Name:       plan.Environment,
@@ -1982,7 +1982,7 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 		// Still save state and return
 		envState.Status = types.EnvironmentStatusFailed
 		envState.UpdatedAt = time.Now()
-		_ = e.stateManager.SaveEnvironment(ctx, envState)
+		_ = e.stateManager.SaveEnvironment(ctx, plan.Datacenter, envState)
 		result.Duration = time.Since(startTime)
 		return result, nil
 	}
@@ -2022,7 +2022,7 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 	envState.UpdatedAt = time.Now()
 
 	// Save state
-	if err := e.stateManager.SaveEnvironment(ctx, envState); err != nil {
+	if err := e.stateManager.SaveEnvironment(ctx, plan.Datacenter, envState); err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("failed to save state: %w", err))
 	}
 

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/architect-io/arcctl/pkg/engine"
 	"github.com/architect-io/arcctl/pkg/schema/environment"
@@ -67,6 +66,12 @@ Examples:
 				configFile = args[1]
 			}
 
+			// Resolve datacenter
+			dc, err := resolveDatacenter(datacenter)
+			if err != nil {
+				return err
+			}
+
 			// Create state manager
 			mgr, err := createStateManagerWithConfig(backendType, backendConfig)
 			if err != nil {
@@ -74,50 +79,25 @@ Examples:
 			}
 
 			// Get environment state
-			env, err := mgr.GetEnvironment(ctx, envName)
+			env, err := mgr.GetEnvironment(ctx, dc, envName)
 			if err != nil {
-				return fmt.Errorf("environment %q not found: %w", envName, err)
+				return fmt.Errorf("environment %q not found in datacenter %q: %w", envName, dc, err)
 			}
 
 			// If a config file is provided, apply it
 			if configFile != "" {
-				return applyEnvironmentConfig(ctx, mgr, env, configFile, autoApprove)
+				return applyEnvironmentConfig(ctx, mgr, dc, env, configFile, autoApprove)
 			}
 
 			// Otherwise, update individual settings
-			hasChanges := false
-
-			// Update datacenter if specified
-			if datacenter != "" && datacenter != env.Datacenter {
-				// Verify new datacenter exists
-				_, err := mgr.GetDatacenter(ctx, datacenter)
-				if err != nil {
-					return fmt.Errorf("datacenter %q not found: %w", datacenter, err)
-				}
-
-				fmt.Printf("Updating environment %q datacenter from %q to %q\n", envName, env.Datacenter, datacenter)
-				env.Datacenter = datacenter
-				hasChanges = true
-			}
-
-			if !hasChanges {
-				fmt.Println("No changes specified. Use --datacenter or provide a config file.")
-				return nil
-			}
-
-			env.UpdatedAt = time.Now()
-
-			if err := mgr.SaveEnvironment(ctx, env); err != nil {
-				return fmt.Errorf("failed to save environment state: %w", err)
-			}
-
-			fmt.Printf("[success] Environment updated successfully\n")
-
+			// Note: datacenter migration is not supported through this command
+			// since environments are now nested under datacenters
+			fmt.Println("No changes specified. Provide a config file to update environment components.")
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Change target datacenter")
+	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Target datacenter (uses default if not set)")
 	cmd.Flags().BoolVar(&autoApprove, "auto-approve", false, "Skip confirmation prompt (when using config file)")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
@@ -126,7 +106,7 @@ Examples:
 }
 
 // applyEnvironmentConfig applies an environment configuration file to an existing environment.
-func applyEnvironmentConfig(ctx context.Context, mgr state.Manager, env *types.EnvironmentState, configFile string, autoApprove bool) error {
+func applyEnvironmentConfig(ctx context.Context, mgr state.Manager, dc string, env *types.EnvironmentState, configFile string, autoApprove bool) error {
 	// Load and validate the environment file
 	loader := environment.NewLoader()
 	envConfig, err := loader.Load(configFile)
@@ -238,6 +218,7 @@ func applyEnvironmentConfig(ctx context.Context, mgr state.Manager, env *types.E
 
 		result, err := eng.DestroyComponent(ctx, engine.DestroyComponentOptions{
 			Environment: env.Name,
+			Datacenter:  dc,
 			Component:   name,
 			Output:      os.Stdout,
 			DryRun:      false,
@@ -269,7 +250,7 @@ func applyEnvironmentConfig(ctx context.Context, mgr state.Manager, env *types.E
 		// Deploy the component
 		result, err := eng.Deploy(ctx, engine.DeployOptions{
 			Environment: env.Name,
-			Datacenter:  env.Datacenter,
+			Datacenter:  dc,
 			Components:  map[string]string{name: comp.Source()},
 			Variables:   map[string]map[string]interface{}{name: vars},
 			Output:      os.Stdout,

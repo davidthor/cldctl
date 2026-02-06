@@ -31,20 +31,28 @@ arcctl build datacenter ./dc -t ghcr.io/myorg/dc:v1
 arcctl build datacenter ./dc                              # digest-only
 
 # Deploy commands
-arcctl deploy component ./my-app -e production
+arcctl deploy component ./my-app -e production -d my-datacenter
 arcctl deploy datacenter my-dc ./datacenter
 
 # Environment management
 arcctl create environment staging -d my-datacenter
-arcctl list environment
-arcctl update environment staging environment.yml
-arcctl destroy environment staging
+arcctl list environment -d my-datacenter
+arcctl update environment staging environment.yml -d my-datacenter
+arcctl destroy environment staging -d my-datacenter
 
 # Resource management
-arcctl list component -e staging
-arcctl get component my-app -e production
-arcctl destroy component my-app -e staging
-arcctl destroy component shared-db -e staging --force  # Override dependency check
+arcctl list component -e staging -d my-datacenter
+arcctl get component my-app -e production -d my-datacenter
+arcctl destroy component my-app -e staging -d my-datacenter
+arcctl destroy component shared-db -e staging -d my-datacenter --force  # Override dependency check
+
+# CLI configuration
+arcctl config set default_datacenter my-datacenter  # Set default datacenter
+arcctl config get default_datacenter                 # Get default datacenter
+arcctl config list                                   # List all config values
+
+# State migration (from old flat structure to new nested hierarchy)
+arcctl migrate state
 
 # Artifact management
 arcctl images                                              # List all cached artifacts
@@ -60,8 +68,8 @@ arcctl validate datacenter ./dc
 arcctl validate environment ./env.yml
 
 # Logs and observability
-arcctl logs -e staging                            # All logs in the environment
-arcctl logs -e staging my-app                     # Logs from one component
+arcctl logs -e staging -d my-datacenter           # All logs in the environment
+arcctl logs -e staging my-app                     # Logs from one component (uses default DC)
 arcctl logs -e staging my-app/deployment          # All deployments in a component
 arcctl logs -e staging my-app/deployment/api      # A specific deployment
 arcctl logs -e staging -f                         # Stream logs in real-time
@@ -70,6 +78,20 @@ arcctl observability dashboard -e staging         # Open observability UI in bro
 ```
 
 Aliases: `comp` for `component`, `dc` for `datacenter`, `env` for `environment`, `ls` for `list`, `obs` for `observability`
+
+### Datacenter Resolution
+
+All environment-scoped commands require a datacenter to be specified. The datacenter is resolved in this order:
+1. `--datacenter / -d` flag on the command
+2. `ARCCTL_DATACENTER` environment variable
+3. `default_datacenter` in `~/.arcctl/config.yaml` (auto-set on `arcctl deploy datacenter`)
+
+This means after deploying a datacenter once, subsequent commands can omit `-d`:
+```bash
+arcctl deploy datacenter my-dc ./datacenter  # auto-sets default_datacenter
+arcctl create environment staging            # uses my-dc from config
+arcctl deploy component ./my-app -e staging  # uses my-dc from config
+```
 
 ### Key Directories
 | Path | Purpose |

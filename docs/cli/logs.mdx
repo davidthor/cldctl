@@ -28,6 +28,7 @@ arcctl logs [component[/type[/name]]] -e <environment> [options]
 | Option | Description |
 |--------|-------------|
 | `-e, --environment <name>` | Target environment (required) |
+| `-d, --datacenter <name>` | Target datacenter (resolved from flag, `ARCCTL_DATACENTER` env var, or CLI config default) |
 | `-f, --follow` | Stream logs in real-time |
 | `-n, --tail <count>` | Number of recent lines to show (default: 100) |
 | `--since <duration>` | Show logs since a duration (e.g., `5m`, `1h`, `24h`) |

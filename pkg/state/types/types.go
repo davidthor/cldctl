@@ -19,9 +19,6 @@ type DatacenterState struct {
 
 	// Module states (datacenter-level modules)
 	Modules map[string]*ModuleState `json:"modules,omitempty"`
-
-	// Environment references
-	Environments []string `json:"environments,omitempty"`
 }
 
 // EnvironmentState represents the state of an environment.

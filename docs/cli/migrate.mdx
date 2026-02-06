@@ -1,0 +1,76 @@
+---
+title: "migrate"
+description: "Migrate state to the latest format"
+---
+
+# arcctl migrate
+
+Migrate arcctl state between format versions.
+
+## arcctl migrate state
+
+Migrate state from the old flat structure to the new datacenter-nested hierarchy.
+
+### Synopsis
+
+```bash
+arcctl migrate state [options]
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--backend <type>` | State backend type |
+| `--backend-config <key=value>` | Backend configuration |
+
+### Description
+
+In earlier versions of arcctl, environment state was stored as a peer to datacenters:
+
+```
+environments/<name>/environment.state.json
+environments/<name>/components/<component>/...
+```
+
+The current version nests environments under their parent datacenter:
+
+```
+datacenters/<datacenter>/environments/<name>/environment.state.json
+datacenters/<datacenter>/environments/<name>/resources/<component>/...
+```
+
+This migration reads each environment's `Datacenter` field from its state file and moves the files to the correct nested location.
+
+### Examples
+
+```bash
+# Migrate local state (default backend)
+arcctl migrate state
+
+# Migrate S3 backend state
+arcctl migrate state --backend s3 --backend-config bucket=my-arcctl-state
+
+# Migrate with custom local path
+arcctl migrate state --backend local --backend-config path=/opt/arcctl/state
+```
+
+### Output
+
+```
+$ arcctl migrate state
+
+Migrating state from flat to nested structure...
+  environments/staging -> datacenters/aws-production/environments/staging (4 files)
+  environments/preview-123 -> datacenters/aws-staging/environments/preview-123 (2 files)
+
+Migration complete: 2 environments migrated
+```
+
+<Warning>
+Back up your state before running the migration. While the migration is designed to be safe, it's always good practice to back up your state files first.
+</Warning>
+
+## See Also
+
+- [State Backends](/advanced/state-backends) - Configure state storage

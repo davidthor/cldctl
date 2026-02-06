@@ -46,19 +46,20 @@ func TestUpCmd_Flags(t *testing.T) {
 	}
 }
 
-func TestUpCmd_RequiredFlags(t *testing.T) {
+func TestUpCmd_DatacenterFlag(t *testing.T) {
 	cmd := newUpCmd()
 
-	// Check that datacenter is required
+	// Check that datacenter flag exists
 	dcFlag := cmd.Flags().Lookup("datacenter")
 	if dcFlag == nil {
 		t.Fatal("expected --datacenter flag")
 	}
 
-	// Check the required annotation
+	// Datacenter is no longer marked as required because it can be
+	// resolved from the ARCCTL_DATACENTER env var or default_datacenter config
 	annotations := dcFlag.Annotations
-	if _, ok := annotations["cobra_annotation_bash_completion_one_required_flag"]; !ok {
-		t.Error("expected --datacenter to be marked as required")
+	if _, ok := annotations["cobra_annotation_bash_completion_one_required_flag"]; ok {
+		t.Error("--datacenter should NOT be marked as required (resolved via flag, env var, or config)")
 	}
 }
 

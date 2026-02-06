@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/architect-io/arcctl/pkg/registry"
-	"github.com/architect-io/arcctl/pkg/state/types"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -31,6 +30,7 @@ func newListCmd() *cobra.Command {
 func newListComponentCmd() *cobra.Command {
 	var (
 		environment   string
+		datacenter    string
 		outputFormat  string
 		backendType   string
 		backendConfig []string
@@ -58,6 +58,12 @@ Examples:
 				return listLocalComponents(outputFormat)
 			}
 
+			// Resolve datacenter
+			dc, err := resolveDatacenter(datacenter)
+			if err != nil {
+				return err
+			}
+
 			// Otherwise, list deployed components
 			// Create state manager
 			mgr, err := createStateManagerWithConfig(backendType, backendConfig)
@@ -66,7 +72,7 @@ Examples:
 			}
 
 			// Get environment state
-			envState, err := mgr.GetEnvironment(ctx, environment)
+			envState, err := mgr.GetEnvironment(ctx, dc, environment)
 			if err != nil {
 				return fmt.Errorf("failed to get environment: %w", err)
 			}
@@ -88,7 +94,7 @@ Examples:
 			default:
 				// Table format
 				fmt.Printf("Environment: %s\n", environment)
-				fmt.Printf("Datacenter:  %s\n\n", envState.Datacenter)
+				fmt.Printf("Datacenter:  %s\n\n", dc)
 
 				if len(envState.Components) == 0 {
 					fmt.Println("No components deployed.")
@@ -113,6 +119,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVarP(&environment, "environment", "e", "", "Target environment (lists deployed components)")
+	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Target datacenter (uses default if not set)")
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format: table, json, yaml")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
@@ -201,26 +208,53 @@ Examples:
 				return fmt.Errorf("failed to list datacenters: %w", err)
 			}
 
-			// Load full datacenter states
-			var datacenters []*types.DatacenterState
+			// Load full datacenter states and count environments
+			type dcInfo struct {
+				name string
+				version string
+				envCount int
+			}
+			var datacenters []dcInfo
 			for _, name := range dcNames {
 				dc, err := mgr.GetDatacenter(ctx, name)
 				if err != nil {
 					continue // Skip datacenters that can't be read
 				}
-				datacenters = append(datacenters, dc)
+				envRefs, _ := mgr.ListEnvironments(ctx, name)
+				datacenters = append(datacenters, dcInfo{
+					name:     dc.Name,
+					version:  dc.Version,
+					envCount: len(envRefs),
+				})
 			}
 
 			// Handle output format
 			switch outputFormat {
 			case "json":
-				data, err := json.MarshalIndent(datacenters, "", "  ")
+				// For json/yaml, load full states
+				var fullStates []interface{}
+				for _, name := range dcNames {
+					dc, err := mgr.GetDatacenter(ctx, name)
+					if err != nil {
+						continue
+					}
+					fullStates = append(fullStates, dc)
+				}
+				data, err := json.MarshalIndent(fullStates, "", "  ")
 				if err != nil {
 					return fmt.Errorf("failed to marshal JSON: %w", err)
 				}
 				fmt.Println(string(data))
 			case "yaml":
-				data, err := yaml.Marshal(datacenters)
+				var fullStates []interface{}
+				for _, name := range dcNames {
+					dc, err := mgr.GetDatacenter(ctx, name)
+					if err != nil {
+						continue
+					}
+					fullStates = append(fullStates, dc)
+				}
+				data, err := yaml.Marshal(fullStates)
 				if err != nil {
 					return fmt.Errorf("failed to marshal YAML: %w", err)
 				}
@@ -234,14 +268,10 @@ Examples:
 
 				fmt.Printf("%-18s %-45s %s\n", "NAME", "SOURCE", "ENVIRONMENTS")
 				for _, dc := range datacenters {
-					envs := strings.Join(dc.Environments, ", ")
-					if len(envs) > 30 {
-						envs = envs[:27] + "..."
-					}
-					fmt.Printf("%-18s %-45s %s\n",
-						dc.Name,
-						truncateString(dc.Version, 45),
-						envs,
+					fmt.Printf("%-18s %-45s %d\n",
+						dc.name,
+						truncateString(dc.version, 45),
+						dc.envCount,
 					)
 				}
 			}
@@ -269,7 +299,10 @@ func newListEnvironmentCmd() *cobra.Command {
 		Use:     "environment",
 		Aliases: []string{"env", "envs", "environments"},
 		Short:   "List environments",
-		Long: `List all environments.
+		Long: `List environments for a datacenter.
+
+The datacenter is resolved from --datacenter/-d flag, ARCCTL_DATACENTER
+environment variable, or the default datacenter set in config.
 
 Examples:
   arcctl list environment
@@ -278,27 +311,22 @@ Examples:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 
+			// Resolve datacenter
+			dc, err := resolveDatacenter(datacenter)
+			if err != nil {
+				return err
+			}
+
 			// Create state manager
 			mgr, err := createStateManagerWithConfig(backendType, backendConfig)
 			if err != nil {
 				return fmt.Errorf("failed to create state manager: %w", err)
 			}
 
-			// List environments
-			envRefs, err := mgr.ListEnvironments(ctx)
+			// List environments for this datacenter
+			envRefs, err := mgr.ListEnvironments(ctx, dc)
 			if err != nil {
 				return fmt.Errorf("failed to list environments: %w", err)
-			}
-
-			// Filter by datacenter if specified
-			if datacenter != "" {
-				filtered := make([]types.EnvironmentRef, 0)
-				for _, ref := range envRefs {
-					if ref.Datacenter == datacenter {
-						filtered = append(filtered, ref)
-					}
-				}
-				envRefs = filtered
 			}
 
 			// Handle output format
@@ -318,21 +346,21 @@ Examples:
 			default:
 				// Table format
 				if len(envRefs) == 0 {
-					fmt.Println("No environments found.")
+					fmt.Printf("No environments found in datacenter %q.\n", dc)
 					return nil
 				}
 
-				fmt.Printf("%-16s %-20s %-12s %s\n", "NAME", "DATACENTER", "COMPONENTS", "CREATED")
+				fmt.Printf("Datacenter: %s\n\n", dc)
+				fmt.Printf("%-16s %-12s %s\n", "NAME", "COMPONENTS", "CREATED")
 				for _, ref := range envRefs {
 					// Get full environment state for component count
-					env, err := mgr.GetEnvironment(ctx, ref.Name)
+					env, err := mgr.GetEnvironment(ctx, dc, ref.Name)
 					componentCount := 0
 					if err == nil {
 						componentCount = len(env.Components)
 					}
-					fmt.Printf("%-16s %-20s %-12d %s\n",
+					fmt.Printf("%-16s %-12d %s\n",
 						ref.Name,
-						ref.Datacenter,
 						componentCount,
 						ref.CreatedAt.Format("2006-01-02"),
 					)
@@ -343,7 +371,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Filter by datacenter")
+	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Target datacenter (uses default if not set)")
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format: table, json, yaml")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")

@@ -57,6 +57,10 @@ manager, err := state.NewManagerFromConfig(backend.Config{
 
 ### Manager Interface
 
+Environments are scoped under datacenters, so environment, component, and resource
+operations require a `datacenter` parameter. This allows environments with the same
+name to exist on different datacenters without collisions.
+
 ```go
 type Manager interface {
     // Datacenter operations
@@ -65,21 +69,21 @@ type Manager interface {
     DeleteDatacenter(ctx context.Context, name string) error
     ListDatacenters(ctx context.Context) ([]string, error)
     
-    // Environment operations
-    ListEnvironments(ctx context.Context) ([]types.EnvironmentRef, error)
-    GetEnvironment(ctx context.Context, name string) (*types.EnvironmentState, error)
-    SaveEnvironment(ctx context.Context, state *types.EnvironmentState) error
-    DeleteEnvironment(ctx context.Context, name string) error
+    // Environment operations (datacenter-scoped)
+    ListEnvironments(ctx context.Context, datacenter string) ([]types.EnvironmentRef, error)
+    GetEnvironment(ctx context.Context, datacenter, name string) (*types.EnvironmentState, error)
+    SaveEnvironment(ctx context.Context, datacenter string, state *types.EnvironmentState) error
+    DeleteEnvironment(ctx context.Context, datacenter, name string) error
     
-    // Component operations
-    GetComponent(ctx context.Context, env, name string) (*types.ComponentState, error)
-    SaveComponent(ctx context.Context, env string, state *types.ComponentState) error
-    DeleteComponent(ctx context.Context, env, name string) error
+    // Component operations (datacenter-scoped)
+    GetComponent(ctx context.Context, dc, env, name string) (*types.ComponentState, error)
+    SaveComponent(ctx context.Context, dc, env string, state *types.ComponentState) error
+    DeleteComponent(ctx context.Context, dc, env, name string) error
     
-    // Resource operations
-    GetResource(ctx context.Context, env, comp, name string) (*types.ResourceState, error)
-    SaveResource(ctx context.Context, env, comp string, state *types.ResourceState) error
-    DeleteResource(ctx context.Context, env, comp, name string) error
+    // Resource operations (datacenter-scoped)
+    GetResource(ctx context.Context, dc, env, comp, name string) (*types.ResourceState, error)
+    SaveResource(ctx context.Context, dc, env, comp string, state *types.ResourceState) error
+    DeleteResource(ctx context.Context, dc, env, comp, name string) error
     
     // Locking
     Lock(ctx context.Context, scope LockScope) (backend.Lock, error)
@@ -94,6 +98,7 @@ type Manager interface {
 ```go
 // Acquire a lock before modifying state
 lock, err := manager.Lock(ctx, state.LockScope{
+    Datacenter:  "aws-us-east",
     Environment: "production",
     Component:   "api",
     Operation:   "deploy",
@@ -119,9 +124,11 @@ type DatacenterState struct {
     UpdatedAt    time.Time
     Variables    map[string]string
     Modules      map[string]ModuleState
-    Environments []string
 }
 ```
+
+Note: Environments are children of datacenters in the state hierarchy. Use
+`ListEnvironments(ctx, datacenter)` to discover environments for a datacenter.
 
 ### EnvironmentState
 
@@ -314,14 +321,19 @@ backend.Register("custom", func(config map[string]string) (backend.Backend, erro
 
 ## State Path Structure
 
-State files follow a hierarchical structure:
+Environments are nested under their parent datacenter in the state hierarchy.
+This allows the same environment name to exist on different datacenters without collisions.
 
 ```
-datacenters/<name>/datacenter.state.json
-environments/<name>/environment.state.json
-environments/<env>/components/<component>/component.state.json
-environments/<env>/components/<component>/resources/<resource>.state.json
+datacenters/<datacenter>/datacenter.state.json
+datacenters/<datacenter>/modules/<module>.state.json
+datacenters/<datacenter>/environments/<env>/environment.state.json
+datacenters/<datacenter>/environments/<env>/modules/<module>.state.json
+datacenters/<datacenter>/environments/<env>/resources/<component>/<resource>.state.json
 ```
+
+Use `arcctl migrate state` to migrate from the old flat structure
+(`environments/<name>/...`) to the new nested structure.
 
 ## Locking
 
@@ -382,8 +394,11 @@ func main() {
         log.Fatal(err)
     }
     
+    datacenter := "aws-us-east"
+    
     // Acquire lock
     lock, err := manager.Lock(ctx, state.LockScope{
+        Datacenter:  datacenter,
         Environment: "production",
         Operation:   "deploy",
         Who:         "ci-pipeline",
@@ -393,12 +408,12 @@ func main() {
     }
     defer lock.Unlock(ctx)
     
-    // Get or create environment state
-    env, err := manager.GetEnvironment(ctx, "production")
+    // Get or create environment state (scoped to datacenter)
+    env, err := manager.GetEnvironment(ctx, datacenter, "production")
     if err == backend.ErrNotFound {
         env = &types.EnvironmentState{
             Name:       "production",
-            Datacenter: "aws-us-east",
+            Datacenter: datacenter,
             CreatedAt:  time.Now(),
             Status:     types.EnvironmentStatusPending,
         }
@@ -408,12 +423,12 @@ func main() {
     env.Status = types.EnvironmentStatusProvisioning
     env.UpdatedAt = time.Now()
     
-    err = manager.SaveEnvironment(ctx, env)
+    err = manager.SaveEnvironment(ctx, datacenter, env)
     if err != nil {
         log.Fatal(err)
     }
     
-    // Save component state
+    // Save component state (scoped to datacenter + environment)
     compState := &types.ComponentState{
         Name:       "api",
         Version:    "v1.0.0",
@@ -422,7 +437,7 @@ func main() {
         Status:     "ready",
     }
     
-    err = manager.SaveComponent(ctx, "production", compState)
+    err = manager.SaveComponent(ctx, datacenter, "production", compState)
     if err != nil {
         log.Fatal(err)
     }

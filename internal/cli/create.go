@@ -43,6 +43,12 @@ Examples:
 			envName := args[0]
 			ctx := context.Background()
 
+			// Resolve datacenter
+			dc, err := resolveDatacenter(datacenter)
+			if err != nil {
+				return err
+			}
+
 			// Create state manager
 			mgr, err := createStateManagerWithConfig(backendType, backendConfig)
 			if err != nil {
@@ -50,23 +56,23 @@ Examples:
 			}
 
 			// Check if environment already exists
-			existingEnv, err := mgr.GetEnvironment(ctx, envName)
+			existingEnv, err := mgr.GetEnvironment(ctx, dc, envName)
 			if err == nil && existingEnv != nil {
 				if ifNotExists {
 					fmt.Printf("Environment %q already exists, skipping creation.\n", envName)
 					return nil
 				}
-				return fmt.Errorf("environment %q already exists", envName)
+				return fmt.Errorf("environment %q already exists in datacenter %q", envName, dc)
 			}
 
 			// Verify datacenter exists
-			dc, err := mgr.GetDatacenter(ctx, datacenter)
+			_, err = mgr.GetDatacenter(ctx, dc)
 			if err != nil {
-				return fmt.Errorf("datacenter %q not found: %w", datacenter, err)
+				return fmt.Errorf("datacenter %q not found: %w", dc, err)
 			}
 
 			fmt.Printf("Environment: %s\n", envName)
-			fmt.Printf("Datacenter:  %s\n", datacenter)
+			fmt.Printf("Datacenter:  %s\n", dc)
 			fmt.Println()
 
 			fmt.Printf("[create] Creating environment %q...\n", envName)
@@ -74,22 +80,15 @@ Examples:
 			// Create environment state
 			envState := &types.EnvironmentState{
 				Name:       envName,
-				Datacenter: datacenter,
+				Datacenter: dc,
 				Status:     types.EnvironmentStatusReady,
 				CreatedAt:  time.Now(),
 				UpdatedAt:  time.Now(),
 				Components: make(map[string]*types.ComponentState),
 			}
 
-			if err := mgr.SaveEnvironment(ctx, envState); err != nil {
+			if err := mgr.SaveEnvironment(ctx, dc, envState); err != nil {
 				return fmt.Errorf("failed to save environment state: %w", err)
-			}
-
-			// Update datacenter with environment reference
-			dc.Environments = append(dc.Environments, envName)
-			dc.UpdatedAt = time.Now()
-			if err := mgr.SaveDatacenter(ctx, dc); err != nil {
-				return fmt.Errorf("failed to update datacenter state: %w", err)
 			}
 
 			fmt.Printf("[success] Environment created successfully\n")
@@ -98,11 +97,10 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Datacenter to use (required)")
+	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Datacenter to use (uses default if not set)")
 	cmd.Flags().BoolVar(&ifNotExists, "if-not-exists", false, "Don't error if environment already exists")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
-	_ = cmd.MarkFlagRequired("datacenter")
 
 	return cmd
 }

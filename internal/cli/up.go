@@ -96,6 +96,12 @@ Examples:
 				return fmt.Errorf("failed to load component: %w", err)
 			}
 
+			// Resolve datacenter
+			dc, err := resolveDatacenter(datacenter)
+			if err != nil {
+				return err
+			}
+
 			// Determine environment name from flag or derive from directory name
 			envName := name
 			if envName == "" {
@@ -126,7 +132,7 @@ Examples:
 			componentName := filepath.Base(absPath)
 
 			fmt.Printf("Component: %s\n", componentName)
-			fmt.Printf("Datacenter: %s\n", datacenter)
+			fmt.Printf("Datacenter: %s\n", dc)
 			fmt.Printf("Environment: %s\n", envName)
 			fmt.Println()
 
@@ -141,9 +147,9 @@ Examples:
 			defer cancel()
 
 			// Verify datacenter exists
-			dc, err := mgr.GetDatacenter(ctx, datacenter)
+			_, err = mgr.GetDatacenter(ctx, dc)
 			if err != nil {
-				return fmt.Errorf("datacenter %q not found: %w\nDeploy a datacenter first with: arcctl deploy datacenter <name> <path>", datacenter, err)
+				return fmt.Errorf("datacenter %q not found: %w\nDeploy a datacenter first with: arcctl deploy datacenter <name> <path>", dc, err)
 			}
 
 			// Track if we've started provisioning (for cleanup purposes)
@@ -165,6 +171,7 @@ Examples:
 				eng := createEngine(mgr)
 				_, err := eng.Destroy(cleanupCtx, engine.DestroyOptions{
 					Environment: envName,
+					Datacenter:  dc,
 					Output:      os.Stdout,
 					DryRun:      false,
 					AutoApprove: true,
@@ -175,21 +182,8 @@ Examples:
 				}
 
 				// Delete environment state
-				if err := mgr.DeleteEnvironment(cleanupCtx, envName); err != nil {
+				if err := mgr.DeleteEnvironment(cleanupCtx, dc, envName); err != nil {
 					fmt.Printf("Warning: failed to delete environment state: %v\n", err)
-				}
-
-				// Update datacenter to remove environment reference
-				if dc, err := mgr.GetDatacenter(cleanupCtx, datacenter); err == nil {
-					newEnvs := make([]string, 0, len(dc.Environments))
-					for _, e := range dc.Environments {
-						if e != envName {
-							newEnvs = append(newEnvs, e)
-						}
-					}
-					dc.Environments = newEnvs
-					dc.UpdatedAt = time.Now()
-					_ = mgr.SaveDatacenter(cleanupCtx, dc)
 				}
 
 				fmt.Println("Cleanup complete.")
@@ -216,34 +210,18 @@ Examples:
 			}()
 
 			// Create or get environment
-			_, err = mgr.GetEnvironment(ctx, envName)
+			_, err = mgr.GetEnvironment(ctx, dc, envName)
 			if err != nil {
 				env := &types.EnvironmentState{
 					Name:       envName,
-					Datacenter: datacenter,
+					Datacenter: dc,
 					Status:     types.EnvironmentStatusPending,
 					CreatedAt:  time.Now(),
 					UpdatedAt:  time.Now(),
 					Components: make(map[string]*types.ComponentState),
 				}
 
-				// Add to datacenter only if not already present (avoid duplicates)
-				envExists := false
-				for _, e := range dc.Environments {
-					if e == envName {
-						envExists = true
-						break
-					}
-				}
-				if !envExists {
-					dc.Environments = append(dc.Environments, envName)
-					dc.UpdatedAt = time.Now()
-					if err := mgr.SaveDatacenter(ctx, dc); err != nil {
-						return fmt.Errorf("failed to update datacenter: %w", err)
-					}
-				}
-
-				if err := mgr.SaveEnvironment(ctx, env); err != nil {
+				if err := mgr.SaveEnvironment(ctx, dc, env); err != nil {
 					return fmt.Errorf("failed to create environment: %w", err)
 				}
 			}
@@ -358,7 +336,7 @@ Examples:
 			// interfere with the progress table's ANSI cursor management
 			result, err := eng.Deploy(ctx, engine.DeployOptions{
 				Environment: envName,
-				Datacenter:  datacenter,
+				Datacenter:  dc,
 				Components:  map[string]string{componentName: componentFile},
 				Variables:   map[string]map[string]interface{}{componentName: varsInterface},
 				Output:      nil, // Suppress plan summary - progress table handles display
@@ -398,7 +376,7 @@ Examples:
 			}
 
 			// Try to get route URLs from state
-			updatedEnv, err := mgr.GetEnvironment(ctx, envName)
+			updatedEnv, err := mgr.GetEnvironment(ctx, dc, envName)
 			if err == nil {
 				if compState, ok := updatedEnv.Components[componentName]; ok {
 					for resName, resState := range compState.Resources {
@@ -453,14 +431,13 @@ Examples:
 	}
 
 	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to architect.yml if not in default location")
-	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Datacenter to use for provisioning (required)")
+	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Datacenter to use for provisioning (uses default if not set)")
 	cmd.Flags().StringVarP(&name, "name", "n", "", "Environment name (default: auto-generated from component name)")
 	cmd.Flags().StringArrayVar(&variables, "var", nil, "Set a component variable (key=value)")
 	cmd.Flags().StringVar(&varFile, "var-file", "", "Load variables from a file")
 	cmd.Flags().BoolVar(&detach, "detach", false, "Run in background (don't watch for changes)")
 	cmd.Flags().BoolVar(&noOpen, "no-open", false, "Don't open browser to application URL")
 	cmd.Flags().IntVar(&port, "port", 0, "Override the port for local access (default: 8080)")
-	_ = cmd.MarkFlagRequired("datacenter")
 
 	return cmd
 }

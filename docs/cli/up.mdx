@@ -24,10 +24,11 @@ arcctl up [path] [options]
 | Option | Description |
 |--------|-------------|
 | `-f, --file <path>` | Path to architect.yml if not in default location |
+| `-d, --datacenter <name>` | Target datacenter (resolved from flag, `ARCCTL_DATACENTER` env var, or CLI config default) |
 | `-n, --name <name>` | Environment name (default: auto-generated from component name) |
 | `--var <key=value>` | Set a component variable (repeatable) |
 | `--var-file <path>` | Load variables from a file |
-| `--detach, -d` | Run in background (don't watch for changes) |
+| `--detach` | Run in background (don't watch for changes) |
 | `--no-open` | Don't open browser to application URL |
 | `--port <port>` | Override the port for local access |
 

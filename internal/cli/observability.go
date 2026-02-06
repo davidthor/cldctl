@@ -24,6 +24,7 @@ func newObservabilityCmd() *cobra.Command {
 func newObservabilityDashboardCmd() *cobra.Command {
 	var (
 		environment   string
+		datacenter    string
 		backendType   string
 		backendConfig []string
 	)
@@ -43,6 +44,12 @@ Examples:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 
+			// Resolve datacenter
+			dc, err := resolveDatacenter(datacenter)
+			if err != nil {
+				return err
+			}
+
 			// Create state manager
 			mgr, err := createStateManagerWithConfig(backendType, backendConfig)
 			if err != nil {
@@ -50,7 +57,7 @@ Examples:
 			}
 
 			// Load environment state
-			envState, err := mgr.GetEnvironment(ctx, environment)
+			envState, err := mgr.GetEnvironment(ctx, dc, environment)
 			if err != nil {
 				return fmt.Errorf("failed to get environment %q: %w", environment, err)
 			}
@@ -70,6 +77,7 @@ Examples:
 
 	cmd.Flags().StringVarP(&environment, "environment", "e", "", "Target environment (required)")
 	_ = cmd.MarkFlagRequired("environment")
+	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Target datacenter (uses default if not set)")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
 

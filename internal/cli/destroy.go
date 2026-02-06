@@ -28,6 +28,7 @@ func newDestroyCmd() *cobra.Command {
 func newDestroyComponentCmd() *cobra.Command {
 	var (
 		environment   string
+		datacenter    string
 		autoApprove   bool
 		force         bool
 		backendType   string
@@ -52,6 +53,12 @@ Examples:
 			componentName := args[0]
 			ctx := context.Background()
 
+			// Resolve datacenter
+			dc, err := resolveDatacenter(datacenter)
+			if err != nil {
+				return err
+			}
+
 			// Create state manager
 			mgr, err := createStateManagerWithConfig(backendType, backendConfig)
 			if err != nil {
@@ -59,7 +66,7 @@ Examples:
 			}
 
 			// Get component state
-			comp, err := mgr.GetComponent(ctx, environment, componentName)
+			comp, err := mgr.GetComponent(ctx, dc, environment, componentName)
 			if err != nil {
 				return fmt.Errorf("component %q not found in environment %q: %w", componentName, environment, err)
 			}
@@ -67,6 +74,7 @@ Examples:
 			// Display what will be destroyed
 			fmt.Printf("Component:   %s\n", componentName)
 			fmt.Printf("Environment: %s\n", environment)
+			fmt.Printf("Datacenter:  %s\n", dc)
 			fmt.Println()
 
 			fmt.Println("The following resources will be destroyed:")
@@ -103,6 +111,7 @@ Examples:
 			// Execute destroy using the engine
 			result, err := eng.DestroyComponent(ctx, engine.DestroyComponentOptions{
 				Environment: environment,
+				Datacenter:  dc,
 				Component:   componentName,
 				Output:      os.Stdout,
 				DryRun:      false,
@@ -133,6 +142,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVarP(&environment, "environment", "e", "", "Target environment (required)")
+	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Target datacenter (uses default if not set)")
 	cmd.Flags().BoolVar(&autoApprove, "auto-approve", false, "Skip confirmation prompt")
 	cmd.Flags().BoolVar(&force, "force", false, "Force destroy even if other components depend on this one")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
@@ -177,15 +187,21 @@ Examples:
 				return fmt.Errorf("datacenter %q not found: %w", dcName, err)
 			}
 
+			// List environments under this datacenter
+			envRefs, err := mgr.ListEnvironments(ctx, dcName)
+			if err != nil {
+				return fmt.Errorf("failed to list environments: %w", err)
+			}
+
 			// Display what will be destroyed
 			fmt.Printf("Datacenter: %s\n", dcName)
 			fmt.Printf("Source:     %s\n", dc.Version)
 			fmt.Println()
 
-			if len(dc.Environments) > 0 {
+			if len(envRefs) > 0 {
 				fmt.Println("WARNING: The following environments will also be destroyed:")
-				for _, env := range dc.Environments {
-					fmt.Printf("  - %s\n", env)
+				for _, env := range envRefs {
+					fmt.Printf("  - %s\n", env.Name)
 				}
 				fmt.Println()
 			}
@@ -209,22 +225,16 @@ Examples:
 			fmt.Println()
 
 			// Destroy environments first
-			for _, envName := range dc.Environments {
-				fmt.Printf("[destroy] Destroying environment %q...\n", envName)
-				if err := mgr.DeleteEnvironment(ctx, envName); err != nil {
-					return fmt.Errorf("failed to destroy environment %q: %w", envName, err)
+			for _, envRef := range envRefs {
+				fmt.Printf("[destroy] Destroying environment %q...\n", envRef.Name)
+				if err := mgr.DeleteEnvironment(ctx, dcName, envRef.Name); err != nil {
+					return fmt.Errorf("failed to destroy environment %q: %w", envRef.Name, err)
 				}
 			}
 
 			fmt.Printf("[destroy] Destroying datacenter %q...\n", dcName)
 
-			// Note: Datacenter "destroy" removes the datacenter registration.
-			// Datacenter modules are hooks that were executed during component deployment.
-			// The actual infrastructure cleanup happens when components/environments are destroyed.
-			// If the datacenter has top-level modules that created infrastructure,
-			// those would need Engine.DestroyDatacenter() implementation.
-
-			// Delete datacenter state
+			// Delete datacenter state (this deletes everything under datacenters/<name>/)
 			if err := mgr.DeleteDatacenter(ctx, dcName); err != nil {
 				return fmt.Errorf("failed to delete datacenter state: %w", err)
 			}
@@ -247,6 +257,7 @@ Examples:
 
 func newDestroyEnvironmentCmd() *cobra.Command {
 	var (
+		datacenter    string
 		autoApprove   bool
 		backendType   string
 		backendConfig []string
@@ -268,6 +279,12 @@ Examples:
 			envName := args[0]
 			ctx := context.Background()
 
+			// Resolve datacenter
+			dc, err := resolveDatacenter(datacenter)
+			if err != nil {
+				return err
+			}
+
 			// Create state manager
 			mgr, err := createStateManagerWithConfig(backendType, backendConfig)
 			if err != nil {
@@ -275,9 +292,9 @@ Examples:
 			}
 
 			// Get environment state
-			env, err := mgr.GetEnvironment(ctx, envName)
+			env, err := mgr.GetEnvironment(ctx, dc, envName)
 			if err != nil {
-				return fmt.Errorf("environment %q not found: %w", envName, err)
+				return fmt.Errorf("environment %q not found in datacenter %q: %w", envName, dc, err)
 			}
 
 			// Display what will be destroyed
@@ -324,22 +341,8 @@ Examples:
 			fmt.Printf("[destroy] Removing environment...\n")
 
 			// Delete environment state
-			if err := mgr.DeleteEnvironment(ctx, envName); err != nil {
+			if err := mgr.DeleteEnvironment(ctx, dc, envName); err != nil {
 				return fmt.Errorf("failed to delete environment state: %w", err)
-			}
-
-			// Update datacenter to remove environment reference
-			dc, err := mgr.GetDatacenter(ctx, env.Datacenter)
-			if err == nil {
-				newEnvs := make([]string, 0, len(dc.Environments))
-				for _, e := range dc.Environments {
-					if e != envName {
-						newEnvs = append(newEnvs, e)
-					}
-				}
-				dc.Environments = newEnvs
-				dc.UpdatedAt = time.Now()
-				_ = mgr.SaveDatacenter(ctx, dc)
 			}
 
 			fmt.Printf("[success] Environment destroyed successfully\n")
@@ -348,6 +351,7 @@ Examples:
 		},
 	}
 
+	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Target datacenter (uses default if not set)")
 	cmd.Flags().BoolVar(&autoApprove, "auto-approve", false, "Skip confirmation prompt")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")

@@ -30,33 +30,45 @@ func newMockStateManager() *mockStateManager {
 	}
 }
 
-func (m *mockStateManager) GetEnvironment(ctx context.Context, name string) (*types.EnvironmentState, error) {
+func (m *mockStateManager) GetEnvironment(ctx context.Context, datacenter, name string) (*types.EnvironmentState, error) {
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
+	key := datacenter + "/" + name
+	if env, ok := m.environments[key]; ok {
+		return env, nil
+	}
+	// Fallback: try just name for backward compat in tests
 	if env, ok := m.environments[name]; ok {
 		return env, nil
 	}
 	return nil, backend.ErrNotFound
 }
 
-func (m *mockStateManager) SaveEnvironment(ctx context.Context, s *types.EnvironmentState) error {
+func (m *mockStateManager) SaveEnvironment(ctx context.Context, datacenter string, s *types.EnvironmentState) error {
 	if m.saveErr != nil {
 		return m.saveErr
 	}
+	key := datacenter + "/" + s.Name
+	m.environments[key] = s
+	// Also store by name for simpler test lookups
 	m.environments[s.Name] = s
 	return nil
 }
 
-func (m *mockStateManager) ListEnvironments(ctx context.Context) ([]types.EnvironmentRef, error) {
+func (m *mockStateManager) ListEnvironments(ctx context.Context, datacenter string) ([]types.EnvironmentRef, error) {
 	var refs []types.EnvironmentRef
-	for name := range m.environments {
-		refs = append(refs, types.EnvironmentRef{Name: name})
+	for _, env := range m.environments {
+		if env.Datacenter == datacenter {
+			refs = append(refs, types.EnvironmentRef{Name: env.Name, Datacenter: env.Datacenter})
+		}
 	}
 	return refs, nil
 }
 
-func (m *mockStateManager) DeleteEnvironment(ctx context.Context, name string) error {
+func (m *mockStateManager) DeleteEnvironment(ctx context.Context, datacenter, name string) error {
+	key := datacenter + "/" + name
+	delete(m.environments, key)
 	delete(m.environments, name)
 	return nil
 }
@@ -77,27 +89,27 @@ func (m *mockStateManager) ListDatacenters(ctx context.Context) ([]string, error
 	return nil, nil
 }
 
-func (m *mockStateManager) GetComponent(ctx context.Context, env, name string) (*types.ComponentState, error) {
+func (m *mockStateManager) GetComponent(ctx context.Context, dc, env, name string) (*types.ComponentState, error) {
 	return nil, nil
 }
 
-func (m *mockStateManager) SaveComponent(ctx context.Context, env string, s *types.ComponentState) error {
+func (m *mockStateManager) SaveComponent(ctx context.Context, dc, env string, s *types.ComponentState) error {
 	return nil
 }
 
-func (m *mockStateManager) DeleteComponent(ctx context.Context, env, name string) error {
+func (m *mockStateManager) DeleteComponent(ctx context.Context, dc, env, name string) error {
 	return nil
 }
 
-func (m *mockStateManager) GetResource(ctx context.Context, env, comp, name string) (*types.ResourceState, error) {
+func (m *mockStateManager) GetResource(ctx context.Context, dc, env, comp, name string) (*types.ResourceState, error) {
 	return nil, nil
 }
 
-func (m *mockStateManager) SaveResource(ctx context.Context, env, comp string, s *types.ResourceState) error {
+func (m *mockStateManager) SaveResource(ctx context.Context, dc, env, comp string, s *types.ResourceState) error {
 	return nil
 }
 
-func (m *mockStateManager) DeleteResource(ctx context.Context, env, comp, name string) error {
+func (m *mockStateManager) DeleteResource(ctx context.Context, dc, env, comp, name string) error {
 	return nil
 }
 
@@ -197,6 +209,7 @@ func TestDestroyOptions(t *testing.T) {
 	var buf bytes.Buffer
 	opts := DestroyOptions{
 		Environment: "staging",
+		Datacenter:  "test-dc",
 		Output:      &buf,
 		DryRun:      true,
 		AutoApprove: false,
@@ -337,6 +350,7 @@ func TestDestroy_EnvironmentNotFound(t *testing.T) {
 
 	opts := DestroyOptions{
 		Environment: "nonexistent",
+		Datacenter:  "test-dc",
 	}
 
 	_, err := engine.Destroy(context.Background(), opts)
@@ -734,6 +748,7 @@ func TestDestroyComponent_BlockedByDependents(t *testing.T) {
 	// Destroying shared-db should fail because api depends on it
 	_, err := eng.DestroyComponent(context.Background(), DestroyComponentOptions{
 		Environment: "test-env",
+		Datacenter:  "test-dc",
 		Component:   "shared-db",
 		DryRun:      true,
 	})
@@ -772,6 +787,7 @@ func TestDestroyComponent_ForceOverridesDependents(t *testing.T) {
 	// Force should bypass the dependent check (dry run to avoid needing real IaC)
 	result, err := eng.DestroyComponent(context.Background(), DestroyComponentOptions{
 		Environment: "test-env",
+		Datacenter:  "test-dc",
 		Component:   "shared-db",
 		DryRun:      true,
 		Force:       true,

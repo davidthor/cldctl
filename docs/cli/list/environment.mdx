@@ -5,7 +5,7 @@ description: "List environments"
 
 # arcctl list environment
 
-List all environments.
+List environments for a datacenter.
 
 <Note>
 Use `arcctl ls env` or `arcctl list env` as shorthand.
@@ -21,21 +21,25 @@ arcctl list environment [options]
 
 | Option | Description |
 |--------|-------------|
-| `-d, --datacenter <name>` | Filter by datacenter |
+| `-d, --datacenter <name>` | Target datacenter (resolved from flag, `ARCCTL_DATACENTER` env var, or CLI config default) |
 | `-o, --output <format>` | Output format: `table`, `json`, `yaml` |
 | `--backend <type>` | State backend type |
 | `--backend-config <key=value>` | Backend configuration |
 
+<Note>
+Environments are scoped to a datacenter. The datacenter is resolved from the `-d` flag, the `ARCCTL_DATACENTER` environment variable, or the `default_datacenter` setting in `~/.arcctl/config.yaml`.
+</Note>
+
 ## Examples
 
 ```bash
-# List all environments
+# List environments for the default datacenter
 arcctl list environment
 
 # Using alias
 arcctl ls env
 
-# Filter by datacenter
+# List environments for a specific datacenter
 arcctl list environment -d aws-production
 
 # Output as JSON
@@ -45,13 +49,11 @@ arcctl list environment -o json
 ## Output
 
 ```
-$ arcctl list environment
+$ arcctl list environment -d aws-production
 
 NAME             DATACENTER           COMPONENTS   CREATED
 production       aws-production       5            2024-01-15
 staging          aws-production       3            2024-01-10
-dev              aws-dev              2            2024-01-20
-preview-123      aws-dev              1            2024-01-25
 ```
 
 ## See Also

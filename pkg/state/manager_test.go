@@ -68,12 +68,16 @@ func TestNewManagerFromConfig_InvalidBackend(t *testing.T) {
 
 func TestLockScope(t *testing.T) {
 	scope := LockScope{
+		Datacenter:  "aws-us-east",
 		Environment: "production",
 		Component:   "api",
 		Operation:   "deploy",
 		Who:         "user@example.com",
 	}
 
+	if scope.Datacenter != "aws-us-east" {
+		t.Errorf("Datacenter: got %q", scope.Datacenter)
+	}
 	if scope.Environment != "production" {
 		t.Errorf("Environment: got %q", scope.Environment)
 	}
@@ -190,12 +194,16 @@ func TestEnvironmentOperations(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
+	dc := "aws-us-east"
+
+	// Create datacenter first
+	_ = m.SaveDatacenter(ctx, &types.DatacenterState{Name: dc})
 
 	t.Run("save and get environment", func(t *testing.T) {
 		now := time.Now()
 		state := &types.EnvironmentState{
 			Name:       "production",
-			Datacenter: "aws-us-east",
+			Datacenter: dc,
 			Status:     types.EnvironmentStatusReady,
 			Components: map[string]*types.ComponentState{
 				"api": {
@@ -207,12 +215,12 @@ func TestEnvironmentOperations(t *testing.T) {
 			UpdatedAt: now,
 		}
 
-		err := m.SaveEnvironment(ctx, state)
+		err := m.SaveEnvironment(ctx, dc, state)
 		if err != nil {
 			t.Fatalf("SaveEnvironment failed: %v", err)
 		}
 
-		retrieved, err := m.GetEnvironment(ctx, "production")
+		retrieved, err := m.GetEnvironment(ctx, dc, "production")
 		if err != nil {
 			t.Fatalf("GetEnvironment failed: %v", err)
 		}
@@ -220,7 +228,7 @@ func TestEnvironmentOperations(t *testing.T) {
 		if retrieved.Name != "production" {
 			t.Errorf("Name: got %q, want %q", retrieved.Name, "production")
 		}
-		if retrieved.Datacenter != "aws-us-east" {
+		if retrieved.Datacenter != dc {
 			t.Errorf("Datacenter: got %q", retrieved.Datacenter)
 		}
 		if len(retrieved.Components) != 1 {
@@ -232,11 +240,11 @@ func TestEnvironmentOperations(t *testing.T) {
 		// Save another environment
 		state := &types.EnvironmentState{
 			Name:       "staging",
-			Datacenter: "aws-us-east",
+			Datacenter: dc,
 		}
-		_ = m.SaveEnvironment(ctx, state)
+		_ = m.SaveEnvironment(ctx, dc, state)
 
-		refs, err := m.ListEnvironments(ctx)
+		refs, err := m.ListEnvironments(ctx, dc)
 		if err != nil {
 			t.Fatalf("ListEnvironments failed: %v", err)
 		}
@@ -250,7 +258,7 @@ func TestEnvironmentOperations(t *testing.T) {
 		for _, ref := range refs {
 			if ref.Name == "production" {
 				found = true
-				if ref.Datacenter != "aws-us-east" {
+				if ref.Datacenter != dc {
 					t.Errorf("Datacenter in ref: got %q", ref.Datacenter)
 				}
 			}
@@ -260,20 +268,55 @@ func TestEnvironmentOperations(t *testing.T) {
 		}
 	})
 
+	t.Run("environments scoped to datacenter", func(t *testing.T) {
+		// Create another datacenter with its own environment
+		dc2 := "gcp-us-central"
+		_ = m.SaveDatacenter(ctx, &types.DatacenterState{Name: dc2})
+		_ = m.SaveEnvironment(ctx, dc2, &types.EnvironmentState{
+			Name:       "staging",
+			Datacenter: dc2,
+		})
+
+		// Listing environments for dc should not include dc2's environments
+		refs, err := m.ListEnvironments(ctx, dc)
+		if err != nil {
+			t.Fatalf("ListEnvironments failed: %v", err)
+		}
+
+		for _, ref := range refs {
+			if ref.Datacenter != dc {
+				t.Errorf("Found environment from wrong datacenter: %q (expected %q)", ref.Datacenter, dc)
+			}
+		}
+
+		// Both datacenters can have "staging" without collision
+		env1, err := m.GetEnvironment(ctx, dc, "staging")
+		if err != nil {
+			t.Fatalf("GetEnvironment dc failed: %v", err)
+		}
+		env2, err := m.GetEnvironment(ctx, dc2, "staging")
+		if err != nil {
+			t.Fatalf("GetEnvironment dc2 failed: %v", err)
+		}
+		if env1.Datacenter == env2.Datacenter {
+			t.Error("Environments should belong to different datacenters")
+		}
+	})
+
 	t.Run("delete environment", func(t *testing.T) {
-		err := m.DeleteEnvironment(ctx, "staging")
+		err := m.DeleteEnvironment(ctx, dc, "staging")
 		if err != nil {
 			t.Fatalf("DeleteEnvironment failed: %v", err)
 		}
 
-		_, err = m.GetEnvironment(ctx, "staging")
+		_, err = m.GetEnvironment(ctx, dc, "staging")
 		if err == nil {
 			t.Error("Expected error getting deleted environment")
 		}
 	})
 
 	t.Run("get nonexistent environment", func(t *testing.T) {
-		_, err := m.GetEnvironment(ctx, "nonexistent")
+		_, err := m.GetEnvironment(ctx, dc, "nonexistent")
 		if err == nil {
 			t.Error("Expected error for nonexistent environment")
 		}
@@ -285,13 +328,15 @@ func TestComponentOperations(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
+	dc := "test-dc"
 
-	// First create an environment
+	// First create datacenter and environment
+	_ = m.SaveDatacenter(ctx, &types.DatacenterState{Name: dc})
 	envState := &types.EnvironmentState{
 		Name:       "test-env",
-		Datacenter: "test-dc",
+		Datacenter: dc,
 	}
-	_ = m.SaveEnvironment(ctx, envState)
+	_ = m.SaveEnvironment(ctx, dc, envState)
 
 	t.Run("save and get component", func(t *testing.T) {
 		state := &types.ComponentState{
@@ -307,12 +352,12 @@ func TestComponentOperations(t *testing.T) {
 			UpdatedAt: time.Now(),
 		}
 
-		err := m.SaveComponent(ctx, "test-env", state)
+		err := m.SaveComponent(ctx, dc, "test-env", state)
 		if err != nil {
 			t.Fatalf("SaveComponent failed: %v", err)
 		}
 
-		retrieved, err := m.GetComponent(ctx, "test-env", "api")
+		retrieved, err := m.GetComponent(ctx, dc, "test-env", "api")
 		if err != nil {
 			t.Fatalf("GetComponent failed: %v", err)
 		}
@@ -326,19 +371,19 @@ func TestComponentOperations(t *testing.T) {
 	})
 
 	t.Run("delete component", func(t *testing.T) {
-		err := m.DeleteComponent(ctx, "test-env", "api")
+		err := m.DeleteComponent(ctx, dc, "test-env", "api")
 		if err != nil {
 			t.Fatalf("DeleteComponent failed: %v", err)
 		}
 
-		_, err = m.GetComponent(ctx, "test-env", "api")
+		_, err = m.GetComponent(ctx, dc, "test-env", "api")
 		if err == nil {
 			t.Error("Expected error getting deleted component")
 		}
 	})
 
 	t.Run("get nonexistent component", func(t *testing.T) {
-		_, err := m.GetComponent(ctx, "test-env", "nonexistent")
+		_, err := m.GetComponent(ctx, dc, "test-env", "nonexistent")
 		if err == nil {
 			t.Error("Expected error for nonexistent component")
 		}
@@ -350,10 +395,12 @@ func TestResourceOperations(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
+	dc := "test-dc"
 
-	// Create environment and component
-	_ = m.SaveEnvironment(ctx, &types.EnvironmentState{Name: "test-env"})
-	_ = m.SaveComponent(ctx, "test-env", &types.ComponentState{Name: "api"})
+	// Create datacenter, environment and component
+	_ = m.SaveDatacenter(ctx, &types.DatacenterState{Name: dc})
+	_ = m.SaveEnvironment(ctx, dc, &types.EnvironmentState{Name: "test-env", Datacenter: dc})
+	_ = m.SaveComponent(ctx, dc, "test-env", &types.ComponentState{Name: "api"})
 
 	t.Run("save and get resource", func(t *testing.T) {
 		state := &types.ResourceState{
@@ -371,13 +418,13 @@ func TestResourceOperations(t *testing.T) {
 			UpdatedAt: time.Now(),
 		}
 
-		err := m.SaveResource(ctx, "test-env", "api", state)
+		err := m.SaveResource(ctx, dc, "test-env", "api", state)
 		if err != nil {
 			t.Fatalf("SaveResource failed: %v", err)
 		}
 
 		// GetResource now uses type-qualified key
-		retrieved, err := m.GetResource(ctx, "test-env", "api", "deployment.main")
+		retrieved, err := m.GetResource(ctx, dc, "test-env", "api", "deployment.main")
 		if err != nil {
 			t.Fatalf("GetResource failed: %v", err)
 		}
@@ -397,19 +444,19 @@ func TestResourceOperations(t *testing.T) {
 	})
 
 	t.Run("delete resource", func(t *testing.T) {
-		err := m.DeleteResource(ctx, "test-env", "api", "deployment.main")
+		err := m.DeleteResource(ctx, dc, "test-env", "api", "deployment.main")
 		if err != nil {
 			t.Fatalf("DeleteResource failed: %v", err)
 		}
 
-		_, err = m.GetResource(ctx, "test-env", "api", "deployment.main")
+		_, err = m.GetResource(ctx, dc, "test-env", "api", "deployment.main")
 		if err == nil {
 			t.Error("Expected error getting deleted resource")
 		}
 	})
 
 	t.Run("get nonexistent resource", func(t *testing.T) {
-		_, err := m.GetResource(ctx, "test-env", "api", "nonexistent")
+		_, err := m.GetResource(ctx, dc, "test-env", "api", "nonexistent")
 		if err == nil {
 			t.Error("Expected error for nonexistent resource")
 		}
@@ -429,23 +476,23 @@ func TestPathHelpers(t *testing.T) {
 		},
 		{
 			name:     "environmentPath",
-			fn:       func() string { return environmentPath("production") },
-			expected: "environments/production/environment.state.json",
+			fn:       func() string { return environmentPath("aws-east", "production") },
+			expected: "datacenters/aws-east/environments/production/environment.state.json",
 		},
 		{
 			name:     "componentPath",
-			fn:       func() string { return componentPath("prod", "api") },
-			expected: "environments/prod/components/api/component.state.json",
+			fn:       func() string { return componentPath("aws-east", "prod", "api") },
+			expected: "datacenters/aws-east/environments/prod/components/api/component.state.json",
 		},
 		{
 			name:     "resourcePath",
-			fn:       func() string { return resourcePath("prod", "api", "main") },
-			expected: "environments/prod/components/api/resources/main.state.json",
+			fn:       func() string { return resourcePath("aws-east", "prod", "api", "main") },
+			expected: "datacenters/aws-east/environments/prod/components/api/resources/main.state.json",
 		},
 		{
 			name:     "resourcePath type-qualified",
-			fn:       func() string { return resourcePath("prod", "api", "deployment.main") },
-			expected: "environments/prod/components/api/resources/deployment.main.state.json",
+			fn:       func() string { return resourcePath("aws-east", "prod", "api", "deployment.main") },
+			expected: "datacenters/aws-east/environments/prod/components/api/resources/deployment.main.state.json",
 		},
 	}
 
@@ -464,7 +511,7 @@ func TestSplitPath(t *testing.T) {
 		path     string
 		expected []string
 	}{
-		{"environments/prod/environment.state.json", []string{"environments", "prod", "environment.state.json"}},
+		{"datacenters/aws/environments/prod/environment.state.json", []string{"datacenters", "aws", "environments", "prod", "environment.state.json"}},
 		{"datacenters/aws/datacenter.state.json", []string{"datacenters", "aws", "datacenter.state.json"}},
 		{"", []string{}},
 		{"single", []string{"single"}},
@@ -494,6 +541,7 @@ func TestLocking(t *testing.T) {
 	ctx := context.Background()
 
 	scope := LockScope{
+		Datacenter:  "test-dc",
 		Environment: "test-env",
 		Component:   "api",
 		Operation:   "deploy",
@@ -521,6 +569,7 @@ func TestLocking_EnvironmentOnly(t *testing.T) {
 	ctx := context.Background()
 
 	scope := LockScope{
+		Datacenter:  "test-dc",
 		Environment: "test-env",
 		Operation:   "destroy",
 		Who:         "test-user",

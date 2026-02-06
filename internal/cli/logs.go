@@ -18,14 +18,15 @@ import (
 
 func newLogsCmd() *cobra.Command {
 	var (
-		environment   string
-		follow        bool
-		tail          int
-		since         string
+		environment    string
+		datacenter     string
+		follow         bool
+		tail           int
+		since          string
 		showTimestamps bool
-		noColor       bool
-		backendType   string
-		backendConfig []string
+		noColor        bool
+		backendType    string
+		backendConfig  []string
 	)
 
 	cmd := &cobra.Command{
@@ -55,6 +56,12 @@ Filtering:
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 			defer cancel()
 
+			// Resolve datacenter
+			dc, err := resolveDatacenter(datacenter)
+			if err != nil {
+				return err
+			}
+
 			// Parse the optional component[/type[/name]] argument
 			var component, resourceType, workload string
 			if len(args) > 0 {
@@ -75,7 +82,7 @@ Filtering:
 			}
 
 			// Load environment state
-			envState, err := mgr.GetEnvironment(ctx, environment)
+			envState, err := mgr.GetEnvironment(ctx, dc, environment)
 			if err != nil {
 				return fmt.Errorf("failed to get environment %q: %w", environment, err)
 			}
@@ -153,6 +160,7 @@ Filtering:
 
 	cmd.Flags().StringVarP(&environment, "environment", "e", "", "Target environment (required)")
 	_ = cmd.MarkFlagRequired("environment")
+	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Target datacenter (uses default if not set)")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Stream logs in real-time")
 	cmd.Flags().IntVarP(&tail, "tail", "n", 100, "Number of recent lines to show")
 	cmd.Flags().StringVar(&since, "since", "", "Show logs since duration or timestamp (e.g., 5m, 1h, 2025-01-01T00:00:00Z)")

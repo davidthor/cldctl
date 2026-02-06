@@ -1,0 +1,93 @@
+---
+title: "config"
+description: "Manage CLI configuration settings"
+---
+
+# arcctl config
+
+Manage arcctl CLI configuration stored in `~/.arcctl/config.yaml`.
+
+## Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `arcctl config set <key> <value>` | Set a configuration value |
+| `arcctl config get <key>` | Get a configuration value |
+| `arcctl config list` | List all configuration values |
+
+## Configuration Keys
+
+| Key | Description |
+|-----|-------------|
+| `default_datacenter` | Default datacenter for environment-scoped commands |
+
+## arcctl config set
+
+Set a configuration value.
+
+### Synopsis
+
+```bash
+arcctl config set <key> <value>
+```
+
+### Examples
+
+```bash
+# Set the default datacenter
+arcctl config set default_datacenter my-datacenter
+
+# Alternative key format (underscores or hyphens)
+arcctl config set default-datacenter my-datacenter
+```
+
+## arcctl config get
+
+Get a configuration value.
+
+### Synopsis
+
+```bash
+arcctl config get <key>
+```
+
+### Examples
+
+```bash
+# Get the default datacenter
+arcctl config get default_datacenter
+```
+
+## arcctl config list
+
+List all configuration values.
+
+### Synopsis
+
+```bash
+arcctl config list
+```
+
+### Output
+
+```
+$ arcctl config list
+
+KEY                    VALUE
+default_datacenter     my-datacenter
+```
+
+## Datacenter Resolution
+
+When a command requires a datacenter, it is resolved in this order:
+
+1. **`--datacenter` / `-d` flag** on the command
+2. **`ARCCTL_DATACENTER` environment variable**
+3. **`default_datacenter`** in `~/.arcctl/config.yaml`
+
+The `default_datacenter` is automatically set when you run `arcctl deploy datacenter`, providing a seamless experience for subsequent commands.
+
+## See Also
+
+- [`arcctl deploy datacenter`](/cli/deploy/datacenter) - Deploy a datacenter (auto-sets default)
+- [`arcctl list environment`](/cli/list/environment) - List environments (uses default datacenter)

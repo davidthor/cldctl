@@ -37,6 +37,7 @@ func newDeployCmd() *cobra.Command {
 func newDeployComponentCmd() *cobra.Command {
 	var (
 		environment   string
+		datacenter    string
 		variables     []string
 		varFile       string
 		autoApprove   bool
@@ -63,13 +64,18 @@ values for any required variables that were not provided via --var or --var-file
 
 Examples:
   arcctl deploy component ./my-app -e production
-  arcctl deploy component ./my-app/architect.yml -e staging
-  arcctl deploy component ghcr.io/myorg/myapp:v1.0.0 -e production
-  arcctl deploy component ./my-app -e production --var api_key=secret123`,
+  arcctl deploy component ./my-app -e staging -d my-dc
+  arcctl deploy component ghcr.io/myorg/myapp:v1.0.0 -e production --var api_key=secret123`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			source := args[0]
 			ctx := context.Background()
+
+			// Resolve datacenter
+			dc, err := resolveDatacenter(datacenter)
+			if err != nil {
+				return err
+			}
 
 			// Create state manager
 			mgr, err := createStateManagerWithConfig(backendType, backendConfig)
@@ -78,9 +84,9 @@ Examples:
 			}
 
 			// Verify environment exists
-			envState, err := mgr.GetEnvironment(ctx, environment)
+			envState, err := mgr.GetEnvironment(ctx, dc, environment)
 			if err != nil {
-				return fmt.Errorf("environment %q not found: %w", environment, err)
+				return fmt.Errorf("environment %q not found in datacenter %q: %w", environment, dc, err)
 			}
 
 			// Load variables from file if specified
@@ -159,6 +165,7 @@ Examples:
 			// Display execution plan
 			fmt.Printf("Component:   %s\n", componentName)
 			fmt.Printf("Environment: %s\n", environment)
+			fmt.Printf("Datacenter:  %s\n", dc)
 			fmt.Printf("Source:      %s\n", source)
 			fmt.Println()
 
@@ -202,6 +209,7 @@ Examples:
 
 			// Handle targets filter
 			_ = targets
+			_ = envState
 
 			// Confirm unless --auto-approve is provided
 			if !autoApprove && isInteractive() {
@@ -303,7 +311,7 @@ Examples:
 			// Execute deployment using the engine
 			result, err := eng.Deploy(ctx, engine.DeployOptions{
 				Environment: environment,
-				Datacenter:  envState.Datacenter,
+				Datacenter:  dc,
 				Components:  map[string]string{componentName: componentPath},
 				Variables:   map[string]map[string]interface{}{componentName: varsInterface},
 				Output:      os.Stdout,
@@ -331,6 +339,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVarP(&environment, "environment", "e", "", "Target environment (required)")
+	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Target datacenter (uses default if not set)")
 	cmd.Flags().StringArrayVar(&variables, "var", nil, "Set variable (key=value)")
 	cmd.Flags().StringVar(&varFile, "var-file", "", "Load variables from file")
 	cmd.Flags().BoolVar(&autoApprove, "auto-approve", false, "Skip confirmation prompt")
@@ -559,27 +568,27 @@ Examples:
 				}
 			}
 
-			// Preserve existing environment references on update
-			existingDC, _ := mgr.GetDatacenter(ctx, dcName)
-			var existingEnvs []string
-			if existingDC != nil {
-				existingEnvs = existingDC.Environments
-			}
-
 			// Save datacenter state
 			dcState := &types.DatacenterState{
-				Name:         dcName,
-				Version:      tag,
-				Source:        source,
-				Variables:    vars,
-				Modules:      make(map[string]*types.ModuleState),
-				Environments: existingEnvs,
-				CreatedAt:    time.Now(),
-				UpdatedAt:    time.Now(),
+				Name:      dcName,
+				Version:   tag,
+				Source:     source,
+				Variables: vars,
+				Modules:   make(map[string]*types.ModuleState),
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
 			}
 
 			if err := mgr.SaveDatacenter(ctx, dcState); err != nil {
 				return fmt.Errorf("failed to save datacenter state: %w", err)
+			}
+
+			// Auto-set default datacenter in CLI config
+			if err := setDefaultDatacenter(dcName); err != nil {
+				// Non-fatal: warn but don't fail the deploy
+				fmt.Printf("Warning: failed to set default datacenter in config: %v\n", err)
+			} else {
+				fmt.Printf("[config] Default datacenter set to %q\n", dcName)
 			}
 
 			fmt.Printf("[success] Datacenter %q deployed as %s\n", dcName, tag)

@@ -135,7 +135,7 @@ func (e *Engine) Deploy(ctx context.Context, opts DeployOptions) (*DeployResult,
 	g := builder.Build()
 
 	// Get current state
-	currentState, _ := e.stateManager.GetEnvironment(ctx, opts.Environment)
+	currentState, _ := e.stateManager.GetEnvironment(ctx, opts.Datacenter, opts.Environment)
 
 	// Create plan
 	p := planner.NewPlanner()
@@ -344,6 +344,9 @@ type DestroyOptions struct {
 	// Environment name
 	Environment string
 
+	// Datacenter name
+	Datacenter string
+
 	// Output writer for progress
 	Output io.Writer
 
@@ -369,13 +372,13 @@ func (e *Engine) Destroy(ctx context.Context, opts DestroyOptions) (*DestroyResu
 	result := &DestroyResult{}
 
 	// Get current state
-	currentState, err := e.stateManager.GetEnvironment(ctx, opts.Environment)
+	currentState, err := e.stateManager.GetEnvironment(ctx, opts.Datacenter, opts.Environment)
 	if err != nil {
-		return nil, fmt.Errorf("environment %s not found", opts.Environment)
+		return nil, fmt.Errorf("environment %s not found in datacenter %s", opts.Environment, opts.Datacenter)
 	}
 
 	// Build graph from current state
-	g := graph.NewGraph(opts.Environment, currentState.Datacenter)
+	g := graph.NewGraph(opts.Environment, opts.Datacenter)
 
 	for compName, compState := range currentState.Components {
 		for resName, resState := range compState.Resources {
@@ -427,7 +430,7 @@ func (e *Engine) Destroy(ctx context.Context, opts DestroyOptions) (*DestroyResu
 
 	// Delete environment state if successful
 	if result.Success {
-		if err := e.stateManager.DeleteEnvironment(ctx, opts.Environment); err != nil {
+		if err := e.stateManager.DeleteEnvironment(ctx, opts.Datacenter, opts.Environment); err != nil {
 			// Log but don't fail
 			fmt.Fprintf(opts.Output, "Warning: failed to delete environment state: %v\n", err)
 		}
@@ -440,6 +443,9 @@ func (e *Engine) Destroy(ctx context.Context, opts DestroyOptions) (*DestroyResu
 type DestroyComponentOptions struct {
 	// Environment name
 	Environment string
+
+	// Datacenter name
+	Datacenter string
 
 	// Component name to destroy
 	Component string
@@ -484,9 +490,9 @@ func (e *Engine) DestroyComponent(ctx context.Context, opts DestroyComponentOpti
 	result := &DestroyResult{}
 
 	// Get current environment state
-	currentState, err := e.stateManager.GetEnvironment(ctx, opts.Environment)
+	currentState, err := e.stateManager.GetEnvironment(ctx, opts.Datacenter, opts.Environment)
 	if err != nil {
-		return nil, fmt.Errorf("environment %s not found", opts.Environment)
+		return nil, fmt.Errorf("environment %s not found in datacenter %s", opts.Environment, opts.Datacenter)
 	}
 
 	// Get component state
@@ -508,7 +514,7 @@ func (e *Engine) DestroyComponent(ctx context.Context, opts DestroyComponentOpti
 	}
 
 	// Build graph from component state only
-	g := graph.NewGraph(opts.Environment, currentState.Datacenter)
+	g := graph.NewGraph(opts.Environment, opts.Datacenter)
 
 	for resName, resState := range compState.Resources {
 		node := graph.NewNode(graph.NodeType(resState.Type), opts.Component, resName)
@@ -558,7 +564,7 @@ func (e *Engine) DestroyComponent(ctx context.Context, opts DestroyComponentOpti
 
 	// Delete component state if successful (but not the entire environment)
 	if result.Success {
-		if err := e.stateManager.DeleteComponent(ctx, opts.Environment, opts.Component); err != nil {
+		if err := e.stateManager.DeleteComponent(ctx, opts.Datacenter, opts.Environment, opts.Component); err != nil {
 			if opts.Output != nil {
 				fmt.Fprintf(opts.Output, "Warning: failed to delete component state: %v\n", err)
 			}

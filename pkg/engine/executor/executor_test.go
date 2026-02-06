@@ -26,9 +26,13 @@ func newMockStateManager() *mockStateManager {
 	}
 }
 
-func (m *mockStateManager) GetEnvironment(ctx context.Context, name string) (*types.EnvironmentState, error) {
+func (m *mockStateManager) GetEnvironment(ctx context.Context, datacenter, name string) (*types.EnvironmentState, error) {
 	if m.getErr != nil {
 		return nil, m.getErr
+	}
+	key := datacenter + "/" + name
+	if env, ok := m.environments[key]; ok {
+		return env, nil
 	}
 	if env, ok := m.environments[name]; ok {
 		return env, nil
@@ -36,19 +40,23 @@ func (m *mockStateManager) GetEnvironment(ctx context.Context, name string) (*ty
 	return nil, backend.ErrNotFound
 }
 
-func (m *mockStateManager) SaveEnvironment(ctx context.Context, s *types.EnvironmentState) error {
+func (m *mockStateManager) SaveEnvironment(ctx context.Context, datacenter string, s *types.EnvironmentState) error {
 	if m.saveErr != nil {
 		return m.saveErr
 	}
+	key := datacenter + "/" + s.Name
+	m.environments[key] = s
 	m.environments[s.Name] = s
 	return nil
 }
 
-func (m *mockStateManager) ListEnvironments(ctx context.Context) ([]types.EnvironmentRef, error) {
+func (m *mockStateManager) ListEnvironments(ctx context.Context, datacenter string) ([]types.EnvironmentRef, error) {
 	return nil, nil
 }
 
-func (m *mockStateManager) DeleteEnvironment(ctx context.Context, name string) error {
+func (m *mockStateManager) DeleteEnvironment(ctx context.Context, datacenter, name string) error {
+	key := datacenter + "/" + name
+	delete(m.environments, key)
 	delete(m.environments, name)
 	return nil
 }
@@ -69,27 +77,27 @@ func (m *mockStateManager) ListDatacenters(ctx context.Context) ([]string, error
 	return nil, nil
 }
 
-func (m *mockStateManager) GetComponent(ctx context.Context, env, name string) (*types.ComponentState, error) {
+func (m *mockStateManager) GetComponent(ctx context.Context, dc, env, name string) (*types.ComponentState, error) {
 	return nil, nil
 }
 
-func (m *mockStateManager) SaveComponent(ctx context.Context, env string, s *types.ComponentState) error {
+func (m *mockStateManager) SaveComponent(ctx context.Context, dc, env string, s *types.ComponentState) error {
 	return nil
 }
 
-func (m *mockStateManager) DeleteComponent(ctx context.Context, env, name string) error {
+func (m *mockStateManager) DeleteComponent(ctx context.Context, dc, env, name string) error {
 	return nil
 }
 
-func (m *mockStateManager) GetResource(ctx context.Context, env, comp, name string) (*types.ResourceState, error) {
+func (m *mockStateManager) GetResource(ctx context.Context, dc, env, comp, name string) (*types.ResourceState, error) {
 	return nil, nil
 }
 
-func (m *mockStateManager) SaveResource(ctx context.Context, env, comp string, s *types.ResourceState) error {
+func (m *mockStateManager) SaveResource(ctx context.Context, dc, env, comp string, s *types.ResourceState) error {
 	return nil
 }
 
-func (m *mockStateManager) DeleteResource(ctx context.Context, env, comp, name string) error {
+func (m *mockStateManager) DeleteResource(ctx context.Context, dc, env, comp, name string) error {
 	return nil
 }
 

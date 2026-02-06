@@ -28,40 +28,26 @@ arcctl update environment <name> [config-file] [options]
 
 | Option | Description |
 |--------|-------------|
-| `-d, --datacenter <name>` | Change target datacenter |
+| `-d, --datacenter <name>` | Target datacenter (resolved from flag, `ARCCTL_DATACENTER` env var, or CLI config default) |
 | `--auto-approve` | Skip confirmation prompt (when using config file) |
 | `--backend <type>` | State backend type |
 | `--backend-config <key=value>` | Backend configuration |
 
-## Update Methods
+## Description
 
-You can update an environment in two ways:
-
-**1. Update specific settings with flags:**
-
-```bash
-arcctl update environment staging --datacenter new-dc
-```
-
-**2. Apply a configuration file:**
-
-```bash
-arcctl update environment staging environment.yml
-```
-
-When providing a config file, the environment's components and configuration will be updated to match the file. Components not in the file will be removed, and new components will be deployed.
+Apply a configuration file to update an environment's components and settings. Components not in the file will be removed, and new components will be deployed.
 
 ## Examples
 
 ```bash
-# Update datacenter
-arcctl update environment staging --datacenter new-dc
-
-# Using alias
-arcctl update env staging -d new-dc
-
 # Apply configuration file
 arcctl update environment staging environment.yml
+
+# Using alias
+arcctl update env staging environment.yml
+
+# Specify datacenter explicitly
+arcctl update environment staging environment.yml -d my-datacenter
 
 # Apply with auto-approval
 arcctl update environment staging ./envs/staging.yml --auto-approve

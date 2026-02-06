@@ -31,6 +31,7 @@ arcctl destroy environment <name> [options]
 
 | Option | Description |
 |--------|-------------|
+| `-d, --datacenter <name>` | Target datacenter (resolved from flag, `ARCCTL_DATACENTER` env var, or CLI config default) |
 | `--auto-approve` | Skip confirmation prompt |
 | `--backend <type>` | State backend type |
 | `--backend-config <key=value>` | Backend configuration |
@@ -38,11 +39,14 @@ arcctl destroy environment <name> [options]
 ## Examples
 
 ```bash
-# Destroy an environment
+# Destroy an environment (uses default datacenter)
 arcctl destroy environment staging
 
 # Using alias
 arcctl destroy env staging
+
+# Specify datacenter explicitly
+arcctl destroy environment staging -d aws-production
 
 # Auto-approve (CI/CD)
 arcctl destroy environment preview-123 --auto-approve

@@ -28,6 +28,7 @@ arcctl deploy component <source> -e <environment> [options]
 | Option | Description |
 |--------|-------------|
 | `-e, --environment <name>` | Target environment (required) |
+| `-d, --datacenter <name>` | Target datacenter (resolved from flag, `ARCCTL_DATACENTER` env var, or CLI config default) |
 | `--var <key=value>` | Set a component variable (repeatable) |
 | `--var-file <path>` | Load variables from file |
 | `--auto-approve` | Skip confirmation prompt |
