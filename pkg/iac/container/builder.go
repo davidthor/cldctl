@@ -43,6 +43,10 @@ type BuildOptions struct {
 
 	// Output for build logs
 	Output io.Writer
+
+	// BaseImage is an optional pre-built base image (with providers pre-downloaded).
+	// Used by OpenTofu modules to avoid re-downloading providers for every module.
+	BaseImage string
 }
 
 // BuildResult contains the result of a module build.
@@ -70,7 +74,7 @@ func (b *Builder) Build(ctx context.Context, opts BuildOptions) (*BuildResult, e
 	}
 
 	// Generate Dockerfile
-	dockerfile, err := generateDockerfile(moduleType, opts.ModuleDir)
+	dockerfile, err := generateDockerfile(moduleType, opts.ModuleDir, opts.BaseImage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate dockerfile: %w", err)
 	}
@@ -82,27 +86,102 @@ func (b *Builder) Build(ctx context.Context, opts BuildOptions) (*BuildResult, e
 	}
 
 	// Build the image
+	result, err := b.buildImage(ctx, buildContext, opts.Tag, opts.Output)
+	if err != nil {
+		return nil, err
+	}
+
+	return &BuildResult{
+		Image:      opts.Tag,
+		Digest:     result.id,
+		ModuleType: moduleType,
+	}, nil
+}
+
+// BuildProviderBase builds a Docker base image containing OpenTofu with all
+// providers pre-downloaded. Each module directory is temporarily copied in
+// and initialized, populating a shared TF_PLUGIN_CACHE_DIR. This means
+// providers are only downloaded once across all modules in a template.
+func (b *Builder) BuildProviderBase(ctx context.Context, moduleDirectories map[string]string, tag string, output io.Writer) error {
+	// Generate Dockerfile
+	var df strings.Builder
+	df.WriteString(`FROM ghcr.io/opentofu/opentofu:minimal AS tofu
+
+FROM alpine:3.20
+
+COPY --from=tofu /usr/local/bin/tofu /usr/local/bin/tofu
+RUN apk add --no-cache git curl ca-certificates
+
+ENV TF_PLUGIN_CACHE_DIR=/usr/share/tofu/providers
+RUN mkdir -p $TF_PLUGIN_CACHE_DIR
+
+# Copy all module source files
+COPY modules/ /tmp/modules/
+
+# Initialize each module to populate the shared provider cache, then clean up
+RUN set -e; for dir in /tmp/modules/*/; do \
+      echo "--- Caching providers for $(basename "$dir") ---"; \
+      cd "$dir" && tofu init -backend=false 2>&1 && cd /; \
+    done && rm -rf /tmp/modules
+`)
+
+	dockerfileBytes := []byte(df.String())
+
+	// Build tar context: Dockerfile + modules/<name>/<files>
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+
+	// Add Dockerfile
+	if err := writeTarFile(tw, "Dockerfile", dockerfileBytes); err != nil {
+		return fmt.Errorf("failed to write dockerfile to tar: %w", err)
+	}
+
+	// Add each module directory under modules/<name>/
+	for name, dir := range moduleDirectories {
+		prefix := filepath.Join("modules", name)
+		if err := addDirToTar(tw, dir, prefix); err != nil {
+			return fmt.Errorf("failed to add module %s to build context: %w", name, err)
+		}
+	}
+
+	if err := tw.Close(); err != nil {
+		return fmt.Errorf("failed to close tar: %w", err)
+	}
+
+	_, err := b.buildImage(ctx, &buf, tag, output)
+	return err
+}
+
+// buildImageResult holds metadata returned by buildImage.
+type buildImageResult struct {
+	id string
+}
+
+// buildImage is the shared Docker image build routine. It streams the Docker
+// JSON output, captures the last N lines for error context, and returns the
+// image digest on success.
+func (b *Builder) buildImage(ctx context.Context, buildContext io.Reader, tag string, output io.Writer) (*buildImageResult, error) {
 	buildResp, err := b.dockerClient.ImageBuild(ctx, buildContext, build.ImageBuildOptions{
-		Tags:       []string{opts.Tag},
+		Tags:       []string{tag},
 		Dockerfile: "Dockerfile",
 		Remove:     true,
-		// Use multi-platform if available
-		Platform: "linux/amd64",
+		Platform:   "linux/amd64",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to build image: %w", err)
 	}
 	defer buildResp.Body.Close()
 
-	// Stream build output
-	output := opts.Output
 	if output == nil {
 		output = io.Discard
 	}
 
-	// Parse build output for errors and digest
+	// Keep a rolling buffer of recent stream lines for error context
+	const contextLines = 25
+	recentLines := make([]string, 0, contextLines)
+
 	decoder := json.NewDecoder(buildResp.Body)
-	var lastLine struct {
+	var msg struct {
 		Stream string `json:"stream"`
 		Error  string `json:"error"`
 		Aux    struct {
@@ -111,27 +190,32 @@ func (b *Builder) Build(ctx context.Context, opts BuildOptions) (*BuildResult, e
 	}
 
 	for {
-		if err := decoder.Decode(&lastLine); err != nil {
+		if err := decoder.Decode(&msg); err != nil {
 			if err == io.EOF {
 				break
 			}
 			return nil, fmt.Errorf("failed to decode build output: %w", err)
 		}
 
-		if lastLine.Error != "" {
-			return nil, fmt.Errorf("build error: %s", lastLine.Error)
+		if msg.Stream != "" {
+			fmt.Fprint(output, msg.Stream)
+			line := strings.TrimRight(msg.Stream, "\n")
+			if line != "" {
+				if len(recentLines) >= contextLines {
+					recentLines = recentLines[1:]
+				}
+				recentLines = append(recentLines, line)
+			}
 		}
 
-		if lastLine.Stream != "" {
-			fmt.Fprint(output, lastLine.Stream)
+		if msg.Error != "" {
+			context := strings.Join(recentLines, "\n")
+			return nil, fmt.Errorf("build error: %s\n\nBuild output (last %d lines):\n%s",
+				msg.Error, len(recentLines), context)
 		}
 	}
 
-	return &BuildResult{
-		Image:      opts.Tag,
-		Digest:     lastLine.Aux.ID,
-		ModuleType: moduleType,
-	}, nil
+	return &buildImageResult{id: msg.Aux.ID}, nil
 }
 
 // Close releases resources.
@@ -140,12 +224,12 @@ func (b *Builder) Close() error {
 }
 
 // generateDockerfile generates a Dockerfile for the given module type.
-func generateDockerfile(moduleType ModuleType, moduleDir string) (string, error) {
+func generateDockerfile(moduleType ModuleType, moduleDir string, baseImage string) (string, error) {
 	switch moduleType {
 	case ModuleTypePulumi:
 		return generatePulumiDockerfile(moduleDir)
 	case ModuleTypeOpenTofu:
-		return generateOpenTofuDockerfile(moduleDir)
+		return generateOpenTofuDockerfile(baseImage)
 	default:
 		return "", fmt.Errorf("unsupported module type: %s", moduleType)
 	}
@@ -254,9 +338,30 @@ ENTRYPOINT ["pulumi"]
 }
 
 // generateOpenTofuDockerfile generates a Dockerfile for an OpenTofu module.
-// Uses a multi-stage build: the minimal OpenTofu image provides the tofu binary,
-// and Alpine provides the runtime environment (see https://opentofu.org/docs/intro/install/docker/).
-func generateOpenTofuDockerfile(moduleDir string) (string, error) {
+// If baseImage is provided, the module extends the pre-built provider base
+// (which already has tofu + all providers cached). Otherwise it builds from
+// scratch using a multi-stage build per OpenTofu 1.10+ requirements.
+func generateOpenTofuDockerfile(baseImage string) (string, error) {
+	if baseImage != "" {
+		// Fast path: extend the provider base image (providers already cached)
+		return fmt.Sprintf(`# Auto-generated Dockerfile for OpenTofu module
+# Extends pre-built provider base image for fast builds
+
+FROM %s
+
+WORKDIR /app
+
+# Copy module files
+COPY . .
+
+# Initialize (providers are found in TF_PLUGIN_CACHE_DIR — no download needed)
+RUN tofu init -backend=false
+
+ENTRYPOINT ["tofu"]
+`, baseImage), nil
+	}
+
+	// Fallback: build from scratch (downloads providers from registry)
 	return `# Auto-generated Dockerfile for OpenTofu module
 # Uses multi-stage build per OpenTofu 1.10+ requirements
 
@@ -362,6 +467,56 @@ func createBuildContext(moduleDir string, dockerfile string) (io.Reader, error) 
 	}
 
 	return &buf, nil
+}
+
+// writeTarFile writes a single file entry to a tar writer.
+func writeTarFile(tw *tar.Writer, name string, data []byte) error {
+	if err := tw.WriteHeader(&tar.Header{
+		Name: name,
+		Mode: 0644,
+		Size: int64(len(data)),
+	}); err != nil {
+		return err
+	}
+	_, err := tw.Write(data)
+	return err
+}
+
+// addDirToTar walks a directory and adds all files to a tar writer under
+// the given prefix. Hidden files/directories and common build artifacts
+// are excluded.
+func addDirToTar(tw *tar.Writer, srcDir string, prefix string) error {
+	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		name := info.Name()
+		if strings.HasPrefix(name, ".") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.IsDir() {
+			if name == "node_modules" || name == "__pycache__" || name == ".terraform" || name == ".pulumi" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		relPath, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		return writeTarFile(tw, filepath.Join(prefix, relPath), data)
+	})
 }
 
 // fileExists checks if a file exists.

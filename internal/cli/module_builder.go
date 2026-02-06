@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/architect-io/arcctl/pkg/iac/container"
 	"github.com/architect-io/arcctl/pkg/schema/datacenter"
@@ -19,7 +21,8 @@ type moduleInfo struct {
 
 // moduleBuilder wraps the container builder for CLI use.
 type moduleBuilder struct {
-	builder *container.Builder
+	builder   *container.Builder
+	baseImage string // shared provider base image tag (set after BuildProviderBase)
 }
 
 // createModuleBuilder creates a new module builder.
@@ -29,6 +32,33 @@ func createModuleBuilder() (*moduleBuilder, error) {
 		return nil, err
 	}
 	return &moduleBuilder{builder: b}, nil
+}
+
+// BuildProviderBase creates a shared Docker base image containing OpenTofu
+// with all required providers pre-downloaded. This image is then used as the
+// FROM base for every OpenTofu module build, so providers are downloaded only
+// once instead of once per module.
+func (m *moduleBuilder) BuildProviderBase(ctx context.Context, modules map[string]moduleInfo, baseTag string) error {
+	// Collect only opentofu module directories (use clean names for tar structure)
+	dirs := make(map[string]string)
+	for name, mod := range modules {
+		if mod.plugin == "opentofu" || mod.plugin == "terraform" {
+			// Strip "module/" prefix so tar paths are flat: modules/<name>/
+			cleanName := strings.TrimPrefix(name, "module/")
+			dirs[cleanName] = mod.sourceDir
+		}
+	}
+	if len(dirs) == 0 {
+		return nil
+	}
+
+	fmt.Printf("[build] Building provider base image (%d modules)...\n", len(dirs))
+	if err := m.builder.BuildProviderBase(ctx, dirs, baseTag, os.Stderr); err != nil {
+		return fmt.Errorf("failed to build provider base image: %w", err)
+	}
+	m.baseImage = baseTag
+	fmt.Printf("[success] Provider base image ready: %s\n\n", baseTag)
+	return nil
 }
 
 // Build builds a module container image.
@@ -55,7 +85,8 @@ func (m *moduleBuilder) Build(ctx context.Context, sourceDir, plugin, tag string
 		ModuleDir:  sourceDir,
 		ModuleType: moduleType,
 		Tag:        tag,
-		Output:     io.Discard, // Suppress verbose build output
+		Output:     io.Discard, // Suppress verbose build output (errors still surface)
+		BaseImage:  m.baseImage,
 	})
 }
 

@@ -115,27 +115,35 @@ go 1.21
 }
 
 func TestGenerateOpenTofuDockerfile(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "opentofu-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	dockerfile, err := generateOpenTofuDockerfile(tmpDir)
+	// Test without base image (fallback: downloads from scratch)
+	dockerfile, err := generateOpenTofuDockerfile("")
 	if err != nil {
 		t.Fatalf("generateOpenTofuDockerfile failed: %v", err)
 	}
 
 	if !strings.Contains(dockerfile, "opentofu/opentofu") {
-		t.Error("Expected opentofu base image")
+		t.Error("Expected opentofu base image reference")
 	}
 	if !strings.Contains(dockerfile, "tofu init") {
+		t.Error("Expected tofu init")
+	}
+
+	// Test with base image (fast path: extends provider base)
+	dockerfileWithBase, err := generateOpenTofuDockerfile("my-provider-base:latest")
+	if err != nil {
+		t.Fatalf("generateOpenTofuDockerfile with base failed: %v", err)
+	}
+
+	if !strings.Contains(dockerfileWithBase, "FROM my-provider-base:latest") {
+		t.Error("Expected FROM base image")
+	}
+	if !strings.Contains(dockerfileWithBase, "tofu init") {
 		t.Error("Expected tofu init")
 	}
 }
 
 func TestGenerateDockerfile_UnsupportedType(t *testing.T) {
-	_, err := generateDockerfile("unsupported", "/tmp")
+	_, err := generateDockerfile("unsupported", "/tmp", "")
 	if err == nil {
 		t.Error("Expected error for unsupported module type")
 	}
