@@ -62,6 +62,7 @@ type EnvironmentBlockV1 struct {
 	CronjobHooks           []HookBlockV1   `hcl:"cronjob,block"`
 	SecretHooks            []HookBlockV1   `hcl:"secret,block"`
 	DockerBuildHooks       []HookBlockV1   `hcl:"dockerBuild,block"`
+	ObservabilityHooks     []HookBlockV1   `hcl:"observability,block"`
 	Remain                 hcl.Body        `hcl:",remain"`
 }
 

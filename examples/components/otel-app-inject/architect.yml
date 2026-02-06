@@ -1,0 +1,56 @@
+# Example: Application with auto-injected OTel environment variables
+#
+# This component uses observability.inject: true so the engine automatically
+# injects standard OTEL_* environment variables into all workloads. No need
+# to wire ${{ observability.* }} expressions manually.
+#
+# Auto-injected variables (won't overwrite any you set explicitly):
+#   OTEL_EXPORTER_OTLP_ENDPOINT  - from datacenter hook
+#   OTEL_EXPORTER_OTLP_PROTOCOL  - from datacenter hook
+#   OTEL_SERVICE_NAME            - <component>-<workload>
+#   OTEL_LOGS_EXPORTER           - otlp or none
+#   OTEL_TRACES_EXPORTER         - otlp or none
+#   OTEL_METRICS_EXPORTER        - otlp or none
+#   OTEL_RESOURCE_ATTRIBUTES     - service.namespace, deployment.environment, custom attrs
+
+databases:
+  main:
+    type: postgres:^16
+
+observability:
+  inject: true
+  logs: true
+  traces: true
+  metrics: true
+  attributes:
+    team: backend
+
+builds:
+  api:
+    context: .
+
+deployments:
+  api:
+    image: ${{ builds.api.image }}
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+      # OTEL_* env vars are injected automatically by the engine
+    cpu: "0.5"
+    memory: "512Mi"
+
+  worker:
+    image: ${{ builds.api.image }}
+    command: ["node", "worker.js"]
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+      # Worker also gets OTEL_* vars with OTEL_SERVICE_NAME=otel-app-inject-worker
+
+services:
+  api:
+    deployment: api
+    port: 8080
+
+routes:
+  api:
+    type: http
+    service: api

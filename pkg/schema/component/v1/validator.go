@@ -57,6 +57,9 @@ func (v *Validator) Validate(schema *SchemaV1) []ValidationError {
 	// Validate cronjobs
 	errs = append(errs, v.validateCronjobs(schema.Cronjobs)...)
 
+	// Validate observability
+	errs = append(errs, v.validateObservability(schema.Observability)...)
+
 	// Validate variables
 	errs = append(errs, v.validateVariables(schema.Variables)...)
 
@@ -511,6 +514,13 @@ func (v *Validator) validateCronjobs(cronjobs map[string]CronjobV1) []Validation
 	}
 
 	return errs
+}
+
+func (v *Validator) validateObservability(obs *ObservabilityV1) []ValidationError {
+	// Observability is optional and has no required fields.
+	// When set to false (Enabled=false), it's a valid no-op.
+	// When set to true or an object, all fields have sensible defaults.
+	return nil
 }
 
 func (v *Validator) validateVariables(variables map[string]VariableV1) []ValidationError {

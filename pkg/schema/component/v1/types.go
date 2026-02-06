@@ -19,9 +19,46 @@ type SchemaV1 struct {
 	Routes         map[string]RouteV1         `yaml:"routes,omitempty" json:"routes,omitempty"`
 	Cronjobs       map[string]CronjobV1       `yaml:"cronjobs,omitempty" json:"cronjobs,omitempty"`
 
+	Observability *ObservabilityV1 `yaml:"observability,omitempty" json:"observability,omitempty"`
+
 	Variables    map[string]VariableV1 `yaml:"variables,omitempty" json:"variables,omitempty"`
 	Dependencies map[string]string     `yaml:"dependencies,omitempty" json:"dependencies,omitempty"`
 	Outputs      map[string]OutputV1   `yaml:"outputs,omitempty" json:"outputs,omitempty"`
+}
+
+// ObservabilityV1 represents observability configuration in the v1 schema.
+// Supports both boolean shorthand (true/false) and full object form.
+// When enabled, the datacenter's observability hook provides OTel infrastructure
+// and outputs are available via ${{ observability.endpoint }} expressions.
+// When inject is true, the engine also auto-injects standard OTEL_* env vars
+// into all workloads.
+type ObservabilityV1 struct {
+	Enabled    bool              `yaml:"-" json:"-"`                                         // Internal: tracks if observability is enabled
+	Inject     *bool             `yaml:"inject,omitempty" json:"inject,omitempty"`           // Auto-inject OTEL_* env vars (default: false)
+	Logs       *bool             `yaml:"logs,omitempty" json:"logs,omitempty"`               // Export logs (default: true)
+	Traces     *bool             `yaml:"traces,omitempty" json:"traces,omitempty"`           // Export traces (default: true)
+	Metrics    *bool             `yaml:"metrics,omitempty" json:"metrics,omitempty"`         // Export metrics (default: true)
+	Attributes map[string]string `yaml:"attributes,omitempty" json:"attributes,omitempty"`   // Custom OTel resource attributes
+}
+
+// UnmarshalYAML supports both boolean shorthand (true/false) and full object form.
+func (o *ObservabilityV1) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	// Try boolean shorthand first
+	var b bool
+	if err := unmarshal(&b); err == nil {
+		o.Enabled = b
+		return nil
+	}
+
+	// Fall back to full object form
+	type rawObservability ObservabilityV1
+	var raw rawObservability
+	if err := unmarshal(&raw); err != nil {
+		return fmt.Errorf("observability must be a boolean or an object: %w", err)
+	}
+	*o = ObservabilityV1(raw)
+	o.Enabled = true
+	return nil
 }
 
 // DatabaseV1 represents a database in the v1 schema.

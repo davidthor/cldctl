@@ -22,6 +22,9 @@ type InternalComponent struct {
 	Routes         []InternalRoute
 	Cronjobs       []InternalCronjob
 
+	// Observability
+	Observability *InternalObservability
+
 	// Configuration
 	Variables    []InternalVariable
 	Dependencies []InternalDependency
@@ -30,6 +33,19 @@ type InternalComponent struct {
 	// Source information
 	SourceVersion string // Which schema version this came from
 	SourcePath    string // Original file path
+}
+
+// InternalObservability represents the observability configuration for a component.
+// When present, the datacenter's observability hook provides OTel infrastructure.
+// Component authors reference outputs via ${{ observability.endpoint }} expressions.
+// When Inject is true, the engine also auto-injects standard OTEL_* environment
+// variables into all workloads (deployments, functions, cronjobs).
+type InternalObservability struct {
+	Inject     bool              // Auto-inject OTEL_* env vars into workloads (default: false)
+	Logs       bool              // Whether to export logs (default: true)
+	Traces     bool              // Whether to export traces (default: true)
+	Metrics    bool              // Whether to export metrics (default: true)
+	Attributes map[string]string // Custom OTel resource attributes
 }
 
 // InternalComponentBuild represents a top-level named Docker build configuration.

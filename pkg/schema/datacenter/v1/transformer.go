@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"os"
+
 	"github.com/architect-io/arcctl/pkg/schema/datacenter/internal"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
@@ -126,6 +128,7 @@ func (t *Transformer) transformEnvironment(env *EnvironmentBlockV1) internal.Int
 	ie.Hooks.Cronjob = t.transformHooks(env.CronjobHooks)
 	ie.Hooks.Secret = t.transformHooks(env.SecretHooks)
 	ie.Hooks.DockerBuild = t.transformHooks(env.DockerBuildHooks)
+	ie.Hooks.Observability = t.transformHooks(env.ObservabilityHooks)
 
 	return ie
 }
@@ -167,19 +170,26 @@ func (t *Transformer) transformHooks(hooks []HookBlockV1) []internal.InternalHoo
 }
 
 // exprToString converts an HCL expression to its string representation.
+// For simple literals it returns the evaluated value. For complex expressions
+// (e.g. module.postgres.url) it reads the original source text from the file.
 func exprToString(expr hcl.Expression) string {
-	// Get the source range and extract the text
-	// Note: r.Filename could be used to read from the source file
-	// in production, but for now we use simplified string representation
-	_ = expr.Range()
-
-	// Try to evaluate as a simple value
+	// Try to evaluate as a simple value first (covers literals)
 	val, diags := expr.Value(nil)
 	if !diags.HasErrors() {
 		return ctyValueToString(val)
 	}
 
-	// Return placeholder for complex expressions
+	// For complex expressions, read the original source text from the file
+	rng := expr.Range()
+	if rng.Filename != "" {
+		data, err := os.ReadFile(rng.Filename)
+		if err == nil && rng.Start.Byte < len(data) && rng.End.Byte <= len(data) {
+			return string(data[rng.Start.Byte:rng.End.Byte])
+		}
+	}
+
+	// Last resort: try to get source text from the expression's native range
+	// (works for in-memory parsed expressions using hclsyntax)
 	return "<expression>"
 }
 

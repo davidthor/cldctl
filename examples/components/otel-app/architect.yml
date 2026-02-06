@@ -1,0 +1,69 @@
+# Example: Application with OpenTelemetry observability
+#
+# This component demonstrates both observability modes:
+#
+# 1. Expression-only (default): Wire ${{ observability.* }} expressions into
+#    workload env vars for full control over OTel configuration.
+#
+# 2. Auto-inject (inject: true): Let the engine inject standard OTEL_* env vars
+#    automatically. Great for quick setup with sensible conventions.
+#
+# The ${{ observability.attributes }} expression returns a merged key=value string
+# combining: auto-generated (service.namespace, deployment.environment) +
+# datacenter attributes (e.g. cloud.provider) + component attributes (below).
+#
+# If the datacenter doesn't provide an observability hook, expressions resolve
+# to empty strings and auto-injection is a no-op, so the OTel SDK won't activate.
+
+databases:
+  main:
+    type: postgres:^16
+
+# Expression-only mode (default) — component author wires env vars explicitly
+observability:
+  logs: true
+  traces: true
+  metrics: false
+  attributes:
+    team: backend
+    tier: critical
+
+# To use auto-inject mode instead, uncomment the following and remove the
+# explicit OTEL_* env vars from the deployment below:
+#
+# observability:
+#   inject: true
+#   logs: true
+#   traces: true
+#   metrics: false
+#   attributes:
+#     team: backend
+#     tier: critical
+
+builds:
+  api:
+    context: .
+
+deployments:
+  api:
+    image: ${{ builds.api.image }}
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+      # Wire OTel configuration from the datacenter's observability hook
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ observability.endpoint }}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ observability.protocol }}
+      OTEL_RESOURCE_ATTRIBUTES: ${{ observability.attributes }}
+      OTEL_SERVICE_NAME: otel-app-api
+    cpu: "0.5"
+    memory: "512Mi"
+    replicas: 2
+
+services:
+  api:
+    deployment: api
+    port: 8080
+
+routes:
+  api:
+    type: http
+    service: api

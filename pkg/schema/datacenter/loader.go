@@ -213,6 +213,7 @@ func (h *hooksWrapper) Route() []Hook             { return wrapHooks(h.h.Route) 
 func (h *hooksWrapper) Cronjob() []Hook           { return wrapHooks(h.h.Cronjob) }
 func (h *hooksWrapper) Secret() []Hook            { return wrapHooks(h.h.Secret) }
 func (h *hooksWrapper) DockerBuild() []Hook       { return wrapHooks(h.h.DockerBuild) }
+func (h *hooksWrapper) Observability() []Hook     { return wrapHooks(h.h.Observability) }
 
 func wrapHooks(hooks []internal.InternalHook) []Hook {
 	result := make([]Hook, len(hooks))

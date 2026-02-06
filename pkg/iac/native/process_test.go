@@ -1,9 +1,14 @@
 package native
 
 import (
+	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -160,6 +165,113 @@ CMD ["node", "server.js"]
 	result, err := evaluateFunction("dockerfile_cmd(inputs.context)", ctx)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"node", "server.js"}, result)
+}
+
+func newTestProcessManager() *ProcessManager {
+	return &ProcessManager{
+		processes: make(map[string]*managedProcess),
+	}
+}
+
+func TestWaitForReady_TCPSuccess(t *testing.T) {
+	// Start a TCP listener
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer listener.Close()
+
+	pm := newTestProcessManager()
+	readiness := &ReadinessCheck{
+		Type:     "tcp",
+		Endpoint: listener.Addr().String(),
+		Interval: 50 * time.Millisecond,
+		Timeout:  2 * time.Second,
+	}
+
+	err = pm.waitForReady(context.Background(), readiness)
+	assert.NoError(t, err)
+}
+
+func TestWaitForReady_TCPTimeout(t *testing.T) {
+	// Use a port that nothing is listening on
+	pm := newTestProcessManager()
+	readiness := &ReadinessCheck{
+		Type:     "tcp",
+		Endpoint: "127.0.0.1:1", // Port 1 is unlikely to be open
+		Interval: 50 * time.Millisecond,
+		Timeout:  200 * time.Millisecond,
+	}
+
+	err := pm.waitForReady(context.Background(), readiness)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "did not become ready")
+}
+
+func TestWaitForReady_TCPContextCancelled(t *testing.T) {
+	pm := newTestProcessManager()
+	readiness := &ReadinessCheck{
+		Type:     "tcp",
+		Endpoint: "127.0.0.1:1",
+		Interval: 50 * time.Millisecond,
+		Timeout:  10 * time.Second,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	err := pm.waitForReady(ctx, readiness)
+	assert.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+}
+
+func TestWaitForReady_HTTPSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	pm := newTestProcessManager()
+	readiness := &ReadinessCheck{
+		Type:     "http",
+		Endpoint: server.URL,
+		Interval: 50 * time.Millisecond,
+		Timeout:  2 * time.Second,
+	}
+
+	err := pm.waitForReady(context.Background(), readiness)
+	assert.NoError(t, err)
+}
+
+func TestWaitForReady_HTTPTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	pm := newTestProcessManager()
+	readiness := &ReadinessCheck{
+		Type:     "http",
+		Endpoint: server.URL,
+		Interval: 50 * time.Millisecond,
+		Timeout:  200 * time.Millisecond,
+	}
+
+	err := pm.waitForReady(context.Background(), readiness)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "did not become ready")
+}
+
+func TestWaitForReady_UnsupportedType(t *testing.T) {
+	pm := newTestProcessManager()
+	readiness := &ReadinessCheck{
+		Type:     "exec",
+		Endpoint: "echo hello",
+		Interval: 50 * time.Millisecond,
+		Timeout:  200 * time.Millisecond,
+	}
+
+	err := pm.waitForReady(context.Background(), readiness)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported readiness check type")
 }
 
 func TestSplitFunctionArgs(t *testing.T) {

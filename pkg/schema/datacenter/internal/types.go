@@ -73,6 +73,7 @@ type InternalHooks struct {
 	Cronjob           []InternalHook
 	Secret            []InternalHook
 	DockerBuild       []InternalHook
+	Observability     []InternalHook
 }
 
 // InternalHook represents a resource hook.

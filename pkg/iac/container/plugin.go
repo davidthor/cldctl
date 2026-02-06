@@ -230,12 +230,6 @@ func isSensitiveKey(key string) bool {
 	return false
 }
 
-// GetState returns the current state.
-func (p *Plugin) GetState(ctx context.Context, opts iac.RunOptions) (interface{}, error) {
-	// State is managed by the container, return nil
-	return nil, nil
-}
-
 // executeModule runs a containerized module.
 func (p *Plugin) executeModule(ctx context.Context, action string, opts iac.RunOptions) (*ModuleResponse, error) {
 	// Determine the container image

@@ -262,19 +262,39 @@ func evaluateFunction(expr string, ctx *EvalContext) (interface{}, error) {
 		return cmd, nil
 
 	case "lookup_port":
-		// lookup_port(target, port) - In local Docker mode, containers use known ports
-		// For now, just return the port argument since we use fixed port assignments
+		// lookup_port(target, port) - Look up the host port for a container port mapping.
+		// Falls back to returning the port argument if no mapping is found.
 		args := splitFunctionArgs(argsStr)
 		if len(args) < 2 {
 			return nil, fmt.Errorf("lookup_port requires 2 arguments (target, port)")
 		}
-		// Return the port argument as-is
+
+		// Resolve the port argument (may be a quoted string or a reference)
 		portArg := strings.TrimSpace(args[1])
 		portVal, err := resolveReference(portArg, ctx)
 		if err != nil {
-			// Try parsing as literal
-			return portArg, nil
+			portVal = stripQuotes(portArg)
 		}
+
+		// Resolve the target argument (may be a quoted string or a reference)
+		targetArg := strings.TrimSpace(args[0])
+		target, _ := resolveReference(targetArg, ctx)
+		if target == nil {
+			target = stripQuotes(targetArg)
+		}
+
+		if targetName, ok := target.(string); ok && ctx != nil && ctx.Resources != nil {
+			if resource, ok := ctx.Resources[targetName]; ok && resource.Outputs != nil {
+				if ports, ok := resource.Outputs["ports"]; ok {
+					portStr := fmt.Sprintf("%v", portVal)
+					if hostPort := lookupPortMapping(ports, portStr); hostPort != nil {
+						return hostPort, nil
+					}
+				}
+			}
+		}
+
+		// Fall back to returning the port argument as-is
 		return portVal, nil
 
 	case "jsonencode":
@@ -403,6 +423,40 @@ func splitFunctionArgs(argsStr string) []string {
 	}
 
 	return args
+}
+
+// stripQuotes removes surrounding quotes from a string literal.
+func stripQuotes(s string) string {
+	if len(s) >= 2 && ((s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'')) {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
+// lookupPortMapping finds a host port in a port mapping (map[string]interface{} or map[string]int).
+// Tries exact match first, then appends "/tcp" suffix.
+func lookupPortMapping(ports interface{}, portSpec string) interface{} {
+	switch portMap := ports.(type) {
+	case map[string]interface{}:
+		if hostPort, ok := portMap[portSpec]; ok {
+			return hostPort
+		}
+		if !strings.Contains(portSpec, "/") {
+			if hostPort, ok := portMap[portSpec+"/tcp"]; ok {
+				return hostPort
+			}
+		}
+	case map[string]int:
+		if hostPort, ok := portMap[portSpec]; ok {
+			return hostPort
+		}
+		if !strings.Contains(portSpec, "/") {
+			if hostPort, ok := portMap[portSpec+"/tcp"]; ok {
+				return hostPort
+			}
+		}
+	}
+	return nil
 }
 
 // generateRandomString generates a random alphanumeric string.

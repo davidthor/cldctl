@@ -76,6 +76,7 @@ type Hooks interface {
 	Cronjob() []Hook
 	Secret() []Hook
 	DockerBuild() []Hook
+	Observability() []Hook
 }
 
 // Hook represents a resource hook.

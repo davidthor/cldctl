@@ -21,6 +21,7 @@ const (
 	NodeTypeSecret        NodeType = "secret"
 	NodeTypeDockerBuild   NodeType = "dockerBuild"
 	NodeTypeTask          NodeType = "task"
+	NodeTypeObservability NodeType = "observability"
 )
 
 // Node represents a resource in the dependency graph.

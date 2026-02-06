@@ -54,6 +54,9 @@ environment:
 | `databases.<name>.port` | Database port |
 | `buckets.<name>.endpoint` | Bucket endpoint |
 | `services.<name>.url` | Service URL |
+| `observability.endpoint` | OTel collector endpoint (from datacenter) |
+| `observability.protocol` | OTLP protocol (from datacenter) |
+| `observability.attributes` | Merged resource attributes (auto + datacenter + component) |
 | `variables.<name>` | Variable value |
 | `dependencies.<name>.<output>` | Dependency outputs |
 
@@ -240,6 +243,41 @@ routes:
     type: http
     function: web  # Simplified form - routes can point directly to functions
 ```
+
+## Observability (OpenTelemetry)
+
+The optional `observability` block declares OTel preferences. Two modes:
+
+### Expression-Only (default)
+Wire `${{ observability.* }}` expressions into env vars manually:
+```yaml
+observability:
+  attributes:
+    team: backend
+
+deployments:
+  api:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ observability.endpoint }}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ observability.protocol }}
+      OTEL_RESOURCE_ATTRIBUTES: ${{ observability.attributes }}
+```
+
+`${{ observability.attributes }}` returns merged `key=value,...` from: auto-generated (`service.namespace`, `deployment.environment`) + datacenter hook attributes + component attributes.
+
+### Auto-Inject
+Set `inject: true` to have the engine inject OTEL_* env vars into all workloads automatically:
+```yaml
+observability:
+  inject: true
+  logs: true
+  traces: true
+  metrics: false
+  attributes:
+    team: payments
+```
+
+Auto-injected vars: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_SERVICE_NAME`, `OTEL_LOGS_EXPORTER`, `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`, `OTEL_RESOURCE_ATTRIBUTES`. Component-declared values are never overwritten.
 
 ## Supported Database Types
 

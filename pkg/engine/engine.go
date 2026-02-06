@@ -14,11 +14,19 @@ import (
 	"github.com/architect-io/arcctl/pkg/engine/planner"
 	"github.com/architect-io/arcctl/pkg/graph"
 	"github.com/architect-io/arcctl/pkg/iac"
+	"github.com/architect-io/arcctl/pkg/oci"
 	"github.com/architect-io/arcctl/pkg/schema/component"
 	"github.com/architect-io/arcctl/pkg/schema/datacenter"
 	"github.com/architect-io/arcctl/pkg/schema/environment"
 	"github.com/architect-io/arcctl/pkg/state"
 )
+
+// OCIClient defines the interface for OCI registry operations needed by the engine.
+type OCIClient interface {
+	Pull(ctx context.Context, reference string, destDir string) error
+	PullConfig(ctx context.Context, reference string) ([]byte, error)
+	Exists(ctx context.Context, reference string) (bool, error)
+}
 
 // Engine orchestrates component deployments.
 type Engine struct {
@@ -27,16 +35,23 @@ type Engine struct {
 	compLoader   component.Loader
 	envLoader    environment.Loader
 	dcLoader     datacenter.Loader
+	ociClient    OCIClient
+	cacheDir     string
 }
 
 // NewEngine creates a new deployment engine.
 func NewEngine(stateManager state.Manager, iacRegistry *iac.Registry) *Engine {
+	homeDir, _ := os.UserHomeDir()
+	cacheDir := filepath.Join(homeDir, ".arcctl", "cache", "datacenters")
+
 	return &Engine{
 		stateManager: stateManager,
 		iacRegistry:  iacRegistry,
 		compLoader:   component.NewLoader(),
 		envLoader:    environment.NewLoader(),
 		dcLoader:     datacenter.NewLoader(),
+		ociClient:    oci.NewClient(),
+		cacheDir:     cacheDir,
 	}
 }
 
@@ -216,8 +231,88 @@ func (e *Engine) loadDatacenterConfig(ref string) (datacenter.Datacenter, error)
 		return e.dcLoader.Load(dcFile)
 	}
 
-	// TODO: Load from OCI reference
-	return nil, fmt.Errorf("OCI datacenter references not yet supported: %s", ref)
+	// Load from OCI reference
+	return e.loadDatacenterFromOCI(context.Background(), ref)
+}
+
+// loadDatacenterFromOCI pulls a datacenter artifact from an OCI registry and loads it.
+func (e *Engine) loadDatacenterFromOCI(ctx context.Context, ref string) (datacenter.Datacenter, error) {
+	// Create a cache key from the reference
+	cacheKey := strings.ReplaceAll(ref, "/", "_")
+	cacheKey = strings.ReplaceAll(cacheKey, ":", "_")
+	dcDir := filepath.Join(e.cacheDir, cacheKey)
+	digestFile := filepath.Join(dcDir, ".digest")
+
+	// Check if already cached
+	dcFile := findDatacenterFile(dcDir)
+	if dcFile != "" {
+		// Cache exists - check if we need to update
+		needsUpdate := false
+
+		// Parse the reference to check if it includes a digest
+		ociRef, _ := oci.ParseReference(ref)
+		if ociRef != nil && ociRef.Digest == "" {
+			// No pinned digest, check if remote has changed
+			cachedDigest, _ := os.ReadFile(digestFile)
+			exists, _ := e.ociClient.Exists(ctx, ref)
+			if exists {
+				remoteConfig, err := e.ociClient.PullConfig(ctx, ref)
+				if err == nil && len(remoteConfig) > 0 {
+					remoteDigest := fmt.Sprintf("%x", remoteConfig)
+					if string(cachedDigest) != "" && string(cachedDigest) != remoteDigest {
+						needsUpdate = true
+					}
+				}
+			}
+		}
+
+		if !needsUpdate {
+			return e.dcLoader.Load(dcFile)
+		}
+
+		// Remove stale cache
+		os.RemoveAll(dcDir)
+	}
+
+	// Pull from registry
+	if err := os.MkdirAll(dcDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create cache directory: %w", err)
+	}
+
+	if err := e.ociClient.Pull(ctx, ref, dcDir); err != nil {
+		os.RemoveAll(dcDir)
+		return nil, fmt.Errorf("failed to pull datacenter from registry: %w", err)
+	}
+
+	// Store digest for future cache validation
+	remoteConfig, err := e.ociClient.PullConfig(ctx, ref)
+	if err == nil && len(remoteConfig) > 0 {
+		remoteDigest := fmt.Sprintf("%x", remoteConfig)
+		_ = os.WriteFile(digestFile, []byte(remoteDigest), 0644)
+	}
+
+	// Find the datacenter file in pulled content
+	dcFile = findDatacenterFile(dcDir)
+	if dcFile == "" {
+		os.RemoveAll(dcDir)
+		return nil, fmt.Errorf("no datacenter.dc or datacenter.hcl found in pulled artifact: %s", ref)
+	}
+
+	return e.dcLoader.Load(dcFile)
+}
+
+// findDatacenterFile looks for a datacenter config file in the given directory.
+// Returns the path to the file if found, or empty string if not.
+func findDatacenterFile(dir string) string {
+	dcFile := filepath.Join(dir, "datacenter.dc")
+	if _, err := os.Stat(dcFile); err == nil {
+		return dcFile
+	}
+	hclFile := filepath.Join(dir, "datacenter.hcl")
+	if _, err := os.Stat(hclFile); err == nil {
+		return hclFile
+	}
+	return ""
 }
 
 // DestroyOptions configures a destroy operation.

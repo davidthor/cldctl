@@ -15,6 +15,7 @@ type EvalContext struct {
 	Services       map[string]ServiceOutputs
 	Routes         map[string]RouteOutputs
 	Functions      map[string]FunctionOutputs
+	Observability  *ObservabilityOutputs
 	Variables      map[string]interface{}
 	Dependencies   map[string]DependencyOutputs
 	Dependents     map[string]DependentOutputs
@@ -83,6 +84,13 @@ type RouteOutputs struct {
 type FunctionOutputs struct {
 	URL string
 	ID  string
+}
+
+// ObservabilityOutputs contains outputs from the observability hook.
+type ObservabilityOutputs struct {
+	Endpoint   string // OTel collector endpoint (e.g., http://otel-collector:4318)
+	Protocol   string // OTLP protocol (e.g., http/protobuf, grpc)
+	Attributes string // Merged resource attributes as comma-separated key=value pairs
 }
 
 // DependencyOutputs contains outputs from a dependency component.
@@ -213,6 +221,8 @@ func (e *Evaluator) evaluateReference(ref ReferenceSegment, ctx *EvalContext) (i
 		value, err = e.resolveDependency(ref.Path[1:], ctx.Dependencies)
 	case "dependents":
 		value, err = e.resolveDependents(ref.Path[1:], ctx.Dependents)
+	case "observability":
+		value, err = e.resolveObservability(ref.Path[1:], ctx.Observability)
 	default:
 		return nil, fmt.Errorf("unknown reference type: %s", ref.Path[0])
 	}
@@ -630,6 +640,28 @@ func (e *Evaluator) resolveWildcardDependents(path []string, dependents map[stri
 	}
 
 	return values, nil
+}
+
+func (e *Evaluator) resolveObservability(path []string, obs *ObservabilityOutputs) (interface{}, error) {
+	if obs == nil {
+		return nil, fmt.Errorf("observability not configured")
+	}
+
+	if len(path) < 1 {
+		return nil, fmt.Errorf("invalid observability reference: need property")
+	}
+
+	prop := path[0]
+	switch prop {
+	case "endpoint":
+		return obs.Endpoint, nil
+	case "protocol":
+		return obs.Protocol, nil
+	case "attributes":
+		return obs.Attributes, nil
+	default:
+		return nil, fmt.Errorf("unknown observability property: %s", prop)
+	}
 }
 
 func (e *Evaluator) resolveServiceProperty(svc ServiceOutputs, prop string) (interface{}, error) {

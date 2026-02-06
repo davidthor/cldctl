@@ -3,6 +3,9 @@ package engine
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -339,6 +342,233 @@ func TestDestroy_EnvironmentNotFound(t *testing.T) {
 	_, err := engine.Destroy(context.Background(), opts)
 	if err == nil {
 		t.Error("Expected error for nonexistent environment")
+	}
+}
+
+// mockOCIClient implements OCIClient for testing.
+type mockOCIClient struct {
+	pullFn       func(ctx context.Context, reference string, destDir string) error
+	pullConfigFn func(ctx context.Context, reference string) ([]byte, error)
+	existsFn     func(ctx context.Context, reference string) (bool, error)
+}
+
+func (m *mockOCIClient) Pull(ctx context.Context, reference string, destDir string) error {
+	if m.pullFn != nil {
+		return m.pullFn(ctx, reference, destDir)
+	}
+	return nil
+}
+
+func (m *mockOCIClient) PullConfig(ctx context.Context, reference string) ([]byte, error) {
+	if m.pullConfigFn != nil {
+		return m.pullConfigFn(ctx, reference)
+	}
+	return []byte("test-config"), nil
+}
+
+func (m *mockOCIClient) Exists(ctx context.Context, reference string) (bool, error) {
+	if m.existsFn != nil {
+		return m.existsFn(ctx, reference)
+	}
+	return true, nil
+}
+
+// minimalDatacenterHCL is a minimal valid datacenter configuration for testing.
+const minimalDatacenterHCL = `
+environment {
+  deployment {
+    module "container" {
+      plugin = "native"
+      build  = "./modules/test"
+      inputs = {
+        name = node.name
+      }
+    }
+
+    outputs = {
+      id = module.container.id
+    }
+  }
+}
+`
+
+func TestLoadDatacenterConfig_LocalPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	dcFile := filepath.Join(tmpDir, "datacenter.hcl")
+	if err := os.WriteFile(dcFile, []byte(minimalDatacenterHCL), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	sm := newMockStateManager()
+	eng := NewEngine(sm, iac.DefaultRegistry)
+
+	dc, err := eng.loadDatacenterConfig(dcFile)
+	if err != nil {
+		t.Fatalf("loadDatacenterConfig failed: %v", err)
+	}
+	if dc == nil {
+		t.Fatal("expected non-nil datacenter")
+	}
+}
+
+func TestLoadDatacenterConfig_LocalDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	dcFile := filepath.Join(tmpDir, "datacenter.dc")
+	if err := os.WriteFile(dcFile, []byte(minimalDatacenterHCL), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	sm := newMockStateManager()
+	eng := NewEngine(sm, iac.DefaultRegistry)
+
+	dc, err := eng.loadDatacenterConfig(tmpDir)
+	if err != nil {
+		t.Fatalf("loadDatacenterConfig failed: %v", err)
+	}
+	if dc == nil {
+		t.Fatal("expected non-nil datacenter")
+	}
+}
+
+func TestLoadDatacenterConfig_LocalDirectoryHCL(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Only write datacenter.hcl, not datacenter.dc
+	dcFile := filepath.Join(tmpDir, "datacenter.hcl")
+	if err := os.WriteFile(dcFile, []byte(minimalDatacenterHCL), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	sm := newMockStateManager()
+	eng := NewEngine(sm, iac.DefaultRegistry)
+
+	dc, err := eng.loadDatacenterConfig(tmpDir)
+	if err != nil {
+		t.Fatalf("loadDatacenterConfig failed: %v", err)
+	}
+	if dc == nil {
+		t.Fatal("expected non-nil datacenter")
+	}
+}
+
+func TestLoadDatacenterConfig_LocalPathNotFound(t *testing.T) {
+	sm := newMockStateManager()
+	eng := NewEngine(sm, iac.DefaultRegistry)
+
+	_, err := eng.loadDatacenterConfig("/nonexistent/path/datacenter.hcl")
+	if err == nil {
+		t.Fatal("expected error for nonexistent path")
+	}
+}
+
+func TestLoadDatacenterConfig_OCIReference(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	sm := newMockStateManager()
+	eng := NewEngine(sm, iac.DefaultRegistry)
+	eng.cacheDir = tmpDir
+
+	ociMock := &mockOCIClient{
+		pullFn: func(ctx context.Context, reference string, destDir string) error {
+			// Simulate pulling by writing a datacenter file
+			return os.WriteFile(filepath.Join(destDir, "datacenter.dc"), []byte(minimalDatacenterHCL), 0644)
+		},
+	}
+	eng.ociClient = ociMock
+
+	dc, err := eng.loadDatacenterConfig("ghcr.io/myorg/mydc:v1")
+	if err != nil {
+		t.Fatalf("loadDatacenterConfig OCI failed: %v", err)
+	}
+	if dc == nil {
+		t.Fatal("expected non-nil datacenter from OCI")
+	}
+}
+
+func TestLoadDatacenterConfig_OCIReferenceCached(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	sm := newMockStateManager()
+	eng := NewEngine(sm, iac.DefaultRegistry)
+	eng.cacheDir = tmpDir
+
+	pullCount := 0
+	ociMock := &mockOCIClient{
+		pullFn: func(ctx context.Context, reference string, destDir string) error {
+			pullCount++
+			return os.WriteFile(filepath.Join(destDir, "datacenter.dc"), []byte(minimalDatacenterHCL), 0644)
+		},
+		pullConfigFn: func(ctx context.Context, reference string) ([]byte, error) {
+			return []byte("same-digest"), nil
+		},
+		existsFn: func(ctx context.Context, reference string) (bool, error) {
+			return true, nil
+		},
+	}
+	eng.ociClient = ociMock
+
+	// First call - should pull
+	_, err := eng.loadDatacenterConfig("ghcr.io/myorg/mydc:v1")
+	if err != nil {
+		t.Fatalf("first load failed: %v", err)
+	}
+	if pullCount != 1 {
+		t.Fatalf("expected 1 pull, got %d", pullCount)
+	}
+
+	// Second call - should use cache (digest matches)
+	_, err = eng.loadDatacenterConfig("ghcr.io/myorg/mydc:v1")
+	if err != nil {
+		t.Fatalf("second load failed: %v", err)
+	}
+	if pullCount != 1 {
+		t.Fatalf("expected still 1 pull (cached), got %d", pullCount)
+	}
+}
+
+func TestLoadDatacenterConfig_OCIReferenceNoFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	sm := newMockStateManager()
+	eng := NewEngine(sm, iac.DefaultRegistry)
+	eng.cacheDir = tmpDir
+
+	ociMock := &mockOCIClient{
+		pullFn: func(ctx context.Context, reference string, destDir string) error {
+			// Pull succeeds but no datacenter file is created
+			return nil
+		},
+	}
+	eng.ociClient = ociMock
+
+	_, err := eng.loadDatacenterConfig("ghcr.io/myorg/mydc:v1")
+	if err == nil {
+		t.Fatal("expected error when no datacenter file in artifact")
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("no datacenter.dc or datacenter.hcl")) {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestLoadDatacenterConfig_OCIPullFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	sm := newMockStateManager()
+	eng := NewEngine(sm, iac.DefaultRegistry)
+	eng.cacheDir = tmpDir
+
+	ociMock := &mockOCIClient{
+		pullFn: func(ctx context.Context, reference string, destDir string) error {
+			return fmt.Errorf("network error: connection refused")
+		},
+	}
+	eng.ociClient = ociMock
+
+	_, err := eng.loadDatacenterConfig("ghcr.io/myorg/mydc:v1")
+	if err == nil {
+		t.Fatal("expected error on pull failure")
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("failed to pull datacenter")) {
+		t.Fatalf("unexpected error message: %v", err)
 	}
 }
 

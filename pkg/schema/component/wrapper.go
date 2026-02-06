@@ -101,6 +101,13 @@ func (c *componentWrapper) Cronjobs() []Cronjob {
 	return result
 }
 
+func (c *componentWrapper) Observability() Observability {
+	if c.ic.Observability == nil {
+		return nil
+	}
+	return &observabilityWrapper{obs: c.ic.Observability}
+}
+
 func (c *componentWrapper) Variables() []Variable {
 	result := make([]Variable, len(c.ic.Variables))
 	for i := range c.ic.Variables {
@@ -534,6 +541,17 @@ func (c *cronjobWrapper) Environment() map[string]string {
 	}
 	return result
 }
+
+// Observability wrapper
+type observabilityWrapper struct {
+	obs *internal.InternalObservability
+}
+
+func (o *observabilityWrapper) Inject() bool                  { return o.obs.Inject }
+func (o *observabilityWrapper) Logs() bool                    { return o.obs.Logs }
+func (o *observabilityWrapper) Traces() bool                  { return o.obs.Traces }
+func (o *observabilityWrapper) Metrics() bool                 { return o.obs.Metrics }
+func (o *observabilityWrapper) Attributes() map[string]string { return o.obs.Attributes }
 
 // Variable wrapper
 type variableWrapper struct {

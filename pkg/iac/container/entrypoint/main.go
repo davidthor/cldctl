@@ -157,12 +157,8 @@ func executePulumi(request *ModuleRequest) (*ModuleResponse, error) {
 	}
 
 	// Set config from inputs
-	for key, value := range request.Inputs {
-		valueStr := fmt.Sprintf("%v", value)
-		cmd := exec.Command("pulumi", "config", "set", key, valueStr)
-		cmd.Dir = "/app"
-		cmd.Env = os.Environ()
-		_ = cmd.Run() // Ignore errors for now
+	if err := setPulumiConfig("/app", request.Inputs, execCommand); err != nil {
+		return nil, err
 	}
 
 	var logs bytes.Buffer
@@ -254,6 +250,30 @@ func executePulumi(request *ModuleRequest) (*ModuleResponse, error) {
 	}
 
 	return response, nil
+}
+
+// commandRunner executes an external command and returns its combined output.
+// This is an abstraction to allow testing without real exec calls.
+type commandRunner func(dir string, name string, args ...string) ([]byte, error)
+
+// execCommand is the default command runner using os/exec.
+func execCommand(dir string, name string, args ...string) ([]byte, error) {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Env = os.Environ()
+	return cmd.CombinedOutput()
+}
+
+// setPulumiConfig sets Pulumi config values from inputs using the provided command runner.
+func setPulumiConfig(dir string, inputs map[string]interface{}, runner commandRunner) error {
+	for key, value := range inputs {
+		valueStr := fmt.Sprintf("%v", value)
+		out, err := runner(dir, "pulumi", "config", "set", key, valueStr)
+		if err != nil {
+			return fmt.Errorf("failed to set pulumi config %q: %s", key, string(out))
+		}
+	}
+	return nil
 }
 
 func getPulumiOutputs() (map[string]OutputValue, error) {

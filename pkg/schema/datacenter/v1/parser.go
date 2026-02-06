@@ -349,6 +349,7 @@ func (p *Parser) parseEnvironment(block *hcl.Block) (*EnvironmentBlockV1, hcl.Di
 			{Type: "cronjob"},
 			{Type: "secret"},
 			{Type: "dockerBuild"},
+			{Type: "observability"},
 		},
 	}
 
@@ -383,6 +384,7 @@ func (p *Parser) parseEnvironment(block *hcl.Block) (*EnvironmentBlockV1, hcl.Di
 		"cronjob":           &env.CronjobHooks,
 		"secret":            &env.SecretHooks,
 		"dockerBuild":       &env.DockerBuildHooks,
+		"observability":     &env.ObservabilityHooks,
 	}
 
 	for hookType, hooks := range hookTypes {

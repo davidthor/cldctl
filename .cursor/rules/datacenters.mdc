@@ -57,6 +57,7 @@ Each hook handles a component resource type:
 | `route` | External routing | `url`, `host`, `port` |
 | `dockerBuild` | Build images | `image` |
 | `cronjob` | Scheduled tasks | `id` |
+| `observability` | OpenTelemetry config | `endpoint`, `protocol`, `attributes` |
 
 ## Expression Context
 
@@ -126,6 +127,50 @@ deployment {
 ```
 
 The `node.inputs.runtime` object contains: `language`, `os`, `arch`, `packages`, `setup`.
+
+## Observability Hook Pattern
+
+The `observability` hook provides OpenTelemetry configuration to workloads. Datacenters can
+provide `attributes` alongside `endpoint` and `protocol`. The engine merges datacenter
+attributes with component attributes and auto-generated ones (`service.namespace`,
+`deployment.environment`) into a single `${{ observability.attributes }}` expression.
+
+```hcl
+# Simple: static endpoint with datacenter-level attributes
+observability {
+  outputs = {
+    endpoint = "http://localhost:4318"
+    protocol = "http/protobuf"
+    attributes = {
+      cloud.provider = "local"
+    }
+  }
+}
+
+# Production: provision a shared collector
+environment {
+  module "otel_collector" {
+    plugin = "native"
+    build  = "./modules/otel-collector"
+    inputs = {
+      name = "${environment.name}-otel"
+    }
+  }
+
+  observability {
+    outputs = {
+      endpoint = module.otel_collector.endpoint
+      protocol = module.otel_collector.protocol
+      attributes = {
+        cloud.provider = "aws"
+        cloud.region   = variable.region
+      }
+    }
+  }
+}
+```
+
+`node.inputs` for observability hooks: `inject` (bool), `logs` (bool), `traces` (bool), `metrics` (bool), `attributes` (map).
 
 ## IaC Plugins
 

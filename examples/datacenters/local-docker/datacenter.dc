@@ -388,4 +388,19 @@ environment {
       id = module.cronjob.id
     }
   }
+
+  # Observability - OpenTelemetry configuration
+  # When components declare observability, this hook provides the OTel collector
+  # endpoint and optional datacenter-level resource attributes.
+  # The engine merges datacenter attributes with component attributes and
+  # auto-generated attributes (service.namespace, deployment.environment).
+  observability {
+    outputs = {
+      endpoint = "http://localhost:4318"
+      protocol = "http/protobuf"
+      attributes = {
+        cloud.provider = "local"
+      }
+    }
+  }
 }

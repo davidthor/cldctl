@@ -18,8 +18,11 @@ import (
 	"github.com/architect-io/arcctl/pkg/graph"
 	"github.com/architect-io/arcctl/pkg/iac"
 	"github.com/architect-io/arcctl/pkg/schema/datacenter"
+	v1 "github.com/architect-io/arcctl/pkg/schema/datacenter/v1"
 	"github.com/architect-io/arcctl/pkg/state"
 	"github.com/architect-io/arcctl/pkg/state/types"
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 )
 
 // ExecutionResult contains the results of an execution.
@@ -210,6 +213,11 @@ func (e *Executor) Execute(ctx context.Context, plan *planner.Plan, g *graph.Gra
 		if nodeResult.Success && change.Node != nil && nodeResult.Outputs != nil {
 			change.Node.Outputs = nodeResult.Outputs
 			change.Node.State = graph.NodeStateCompleted
+
+			// For observability nodes, enrich outputs with merged attributes
+			if change.Node.Type == graph.NodeTypeObservability {
+				e.enrichObservabilityOutputs(change.Node)
+			}
 		} else if change.Node != nil {
 			change.Node.State = graph.NodeStateFailed
 		}
@@ -516,26 +524,55 @@ func (e *Executor) getHooksForType(nodeType graph.NodeType) []datacenter.Hook {
 		return hooks.EncryptionKey()
 	case graph.NodeTypeSMTP:
 		return hooks.SMTP()
+	case graph.NodeTypeObservability:
+		return hooks.Observability()
 	default:
 		return nil
 	}
 }
 
-// evaluateWhenCondition evaluates a simple 'when' condition string against node inputs.
-// This is a simplified evaluation - full HCL expression evaluation would require the v1 evaluator.
+// evaluateWhenCondition evaluates a 'when' condition string against node inputs.
+// It first attempts full HCL expression evaluation via the v1 Evaluator. If that
+// fails (e.g. due to an unparseable expression), it falls back to simplified
+// string-based matching for common patterns.
 func (e *Executor) evaluateWhenCondition(when string, inputs map[string]interface{}) bool {
 	if when == "" {
 		return true // No condition means always match
 	}
 
-	// Simple string matching for common patterns like:
-	// - element(split(":", node.inputs.type), 0) == "postgres"
-	// - node.inputs.image != null
-	// - node.inputs.context != null
+	// Try full HCL expression evaluation first
+	if result, err := e.evaluateWhenHCL(when, inputs); err == nil {
+		return result
+	}
 
-	// For now, do simple substring matching
-	// A full implementation would use the v1.Evaluator
+	// Fall back to simplified string matching for patterns that can't be parsed as HCL
+	return e.evaluateWhenStringFallback(when, inputs)
+}
 
+// evaluateWhenHCL parses the when string as an HCL expression and evaluates it
+// with the full v1 Evaluator context (node inputs, environment, variables, etc.).
+func (e *Executor) evaluateWhenHCL(when string, inputs map[string]interface{}) (bool, error) {
+	expr, diags := hclsyntax.ParseExpression([]byte(when), "when.hcl", hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() {
+		return false, fmt.Errorf("failed to parse when expression: %s", diags.Error())
+	}
+
+	eval := v1.NewEvaluator()
+
+	// Set node context with inputs
+	eval.SetNodeContext("", "", "", inputs)
+
+	// Set datacenter variables if available
+	if e.options.DatacenterVariables != nil {
+		eval.SetVariables(e.options.DatacenterVariables)
+	}
+
+	return eval.EvaluateWhen(expr)
+}
+
+// evaluateWhenStringFallback provides legacy string-based matching for when conditions
+// that cannot be parsed as HCL expressions.
+func (e *Executor) evaluateWhenStringFallback(when string, inputs map[string]interface{}) bool {
 	// Check for "==" comparisons
 	if contains(when, "==") {
 		parts := splitOnce(when, "==")
@@ -811,6 +848,8 @@ func (e *Executor) buildModuleInputs(module datacenter.Module, node *graph.Node,
 		if port > 0 {
 			env["PORT"] = fmt.Sprintf("%d", port)
 		}
+		// Auto-inject OTEL_* env vars if observability.inject is true
+		e.injectOTelEnvironmentIfEnabled(env, node)
 		inputs["environment"] = env
 		inputs["port"] = port
 
@@ -840,6 +879,8 @@ func (e *Executor) buildModuleInputs(module datacenter.Module, node *graph.Node,
 		if port > 0 {
 			env["PORT"] = fmt.Sprintf("%d", port)
 		}
+		// Auto-inject OTEL_* env vars if observability.inject is true
+		e.injectOTelEnvironmentIfEnabled(env, node)
 		inputs["environment"] = env
 		inputs["port"] = port
 
@@ -892,6 +933,157 @@ func getEnvironmentMap(value interface{}) map[string]string {
 	return result
 }
 
+// enrichObservabilityOutputs computes merged attributes after an observability node completes.
+// It combines: auto-generated attributes (service.namespace, deployment.environment)
+// + datacenter hook attributes (from outputs) + component attributes (from inputs).
+// Component attributes override datacenter attributes, which override auto-generated ones.
+// The result is stored as a comma-separated "key=value" string in the node's "attributes" output.
+func (e *Executor) enrichObservabilityOutputs(node *graph.Node) {
+	if node.Outputs == nil {
+		node.Outputs = make(map[string]interface{})
+	}
+
+	// Start with auto-generated attributes (lowest priority)
+	merged := make(map[string]string)
+	merged["service.namespace"] = node.Component
+	if e.graph != nil && e.graph.Environment != "" {
+		merged["deployment.environment"] = e.graph.Environment
+	}
+
+	// Layer on datacenter-provided attributes (from hook outputs)
+	if dcAttrsRaw, ok := node.Outputs["attributes"]; ok {
+		switch dcAttrs := dcAttrsRaw.(type) {
+		case map[string]interface{}:
+			for k, v := range dcAttrs {
+				merged[k] = fmt.Sprintf("%v", v)
+			}
+		case map[string]string:
+			for k, v := range dcAttrs {
+				merged[k] = v
+			}
+		case string:
+			// Handle pre-formatted "key=value,key=value" string from datacenter
+			for _, pair := range strings.Split(dcAttrs, ",") {
+				pair = strings.TrimSpace(pair)
+				if eqIdx := strings.Index(pair, "="); eqIdx > 0 {
+					merged[strings.TrimSpace(pair[:eqIdx])] = strings.TrimSpace(pair[eqIdx+1:])
+				}
+			}
+		}
+	}
+
+	// Layer on component-declared attributes (highest priority, from node inputs)
+	if compAttrs, ok := node.Inputs["attributes"].(map[string]string); ok {
+		for k, v := range compAttrs {
+			merged[k] = v
+		}
+	} else if compAttrs, ok := node.Inputs["attributes"].(map[string]interface{}); ok {
+		for k, v := range compAttrs {
+			merged[k] = fmt.Sprintf("%v", v)
+		}
+	}
+
+	// Format as comma-separated key=value string
+	var pairs []string
+	for k, v := range merged {
+		pairs = append(pairs, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	// Sort for deterministic output
+	sortStrings(pairs)
+	node.Outputs["attributes"] = strings.Join(pairs, ",")
+}
+
+// sortStrings sorts a slice of strings in place (simple insertion sort to avoid importing sort).
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j] < s[j-1]; j-- {
+			s[j], s[j-1] = s[j-1], s[j]
+		}
+	}
+}
+
+// injectOTelEnvironmentIfEnabled checks whether the component's observability config
+// has inject=true. If so, it looks up the completed observability node and merges
+// standard OTEL_* environment variables into the workload's env map.
+// Component-declared env vars always take precedence (no overwrite).
+func (e *Executor) injectOTelEnvironmentIfEnabled(env map[string]string, node *graph.Node) {
+	if e.graph == nil {
+		return
+	}
+
+	// Find the observability node for this component
+	obsNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeObservability, "observability")
+	obsNode := e.graph.GetNode(obsNodeID)
+	if obsNode == nil || obsNode.State != graph.NodeStateCompleted {
+		return
+	}
+
+	// Check the inject flag -- only auto-inject when the component opted in
+	inject, _ := obsNode.Inputs["inject"].(bool)
+	if !inject {
+		return
+	}
+
+	// Extract outputs from the observability hook
+	endpoint, _ := obsNode.Outputs["endpoint"].(string)
+	protocol, _ := obsNode.Outputs["protocol"].(string)
+
+	if endpoint == "" {
+		return // No endpoint means the hook didn't produce useful output
+	}
+
+	// Auto-generate service name from component and workload name
+	serviceName := fmt.Sprintf("%s-%s", node.Component, node.Name)
+
+	// Read signal configuration from the observability node inputs
+	logs := otelBoolInput(obsNode.Inputs, "logs", true)
+	traces := otelBoolInput(obsNode.Inputs, "traces", true)
+	metrics := otelBoolInput(obsNode.Inputs, "metrics", true)
+
+	// Use pre-merged attributes from enrichObservabilityOutputs (includes datacenter +
+	// component + auto-generated attributes like service.namespace, deployment.environment)
+	mergedAttrs, _ := obsNode.Outputs["attributes"].(string)
+
+	// Inject standard OTEL env vars (without overwriting component-declared vars)
+	otelSetIfMissing(env, "OTEL_EXPORTER_OTLP_ENDPOINT", endpoint)
+	if protocol != "" {
+		otelSetIfMissing(env, "OTEL_EXPORTER_OTLP_PROTOCOL", protocol)
+	}
+	otelSetIfMissing(env, "OTEL_SERVICE_NAME", serviceName)
+	otelSetIfMissing(env, "OTEL_LOGS_EXPORTER", otelExporterName(logs))
+	otelSetIfMissing(env, "OTEL_TRACES_EXPORTER", otelExporterName(traces))
+	otelSetIfMissing(env, "OTEL_METRICS_EXPORTER", otelExporterName(metrics))
+	if mergedAttrs != "" {
+		otelSetIfMissing(env, "OTEL_RESOURCE_ATTRIBUTES", mergedAttrs)
+	}
+}
+
+// otelSetIfMissing sets an environment variable only if it's not already set.
+func otelSetIfMissing(env map[string]string, key, value string) {
+	if _, exists := env[key]; !exists {
+		env[key] = value
+	}
+}
+
+// otelBoolInput reads a boolean input from node inputs with a default value.
+func otelBoolInput(inputs map[string]interface{}, key string, defaultVal bool) bool {
+	if v, ok := inputs[key]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return defaultVal
+}
+
+// otelExporterName converts a boolean signal flag to an OTel exporter name.
+func otelExporterName(enabled bool) string {
+	if enabled {
+		return "otlp"
+	}
+	return "none"
+}
+
 // extractVersionFromType extracts the version part from a "type:version" string.
 // For example, "postgres:^16" returns "^16", and "postgres" returns "".
 func extractVersionFromType(typeInput interface{}) string {
@@ -918,8 +1110,13 @@ func hashCode(s string) int {
 }
 
 // resolveComponentExpressions resolves ${{ }} component expressions in a node's inputs
-// by looking at completed dependency nodes' outputs. For example, ${{ builds.api.image }}
-// is resolved by finding the dockerBuild node named "api" and reading its "image" output.
+// by looking at completed dependency nodes' outputs. Handles expressions like:
+//   - ${{ builds.api.image }}      → dockerBuild node output
+//   - ${{ databases.main.url }}    → database node output
+//   - ${{ services.api.host }}     → service node output
+//   - ${{ observability.endpoint }} → observability node output
+//
+// Also recurses into nested maps (e.g., environment map) to resolve expressions there.
 func (e *Executor) resolveComponentExpressions(node *graph.Node) {
 	if e.graph == nil {
 		return
@@ -927,43 +1124,133 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node) {
 
 	exprPattern := regexp.MustCompile(`\$\{\{\s*([^}]+)\s*\}\}`)
 
-	for key, value := range node.Inputs {
-		strVal, ok := value.(string)
-		if !ok {
-			continue
-		}
-
+	resolveStr := func(strVal string) string {
 		if !strings.Contains(strVal, "${{") {
-			continue
+			return strVal
 		}
-
-		resolved := exprPattern.ReplaceAllStringFunc(strVal, func(match string) string {
-			// Extract the reference path from ${{ builds.api.image }}
+		return exprPattern.ReplaceAllStringFunc(strVal, func(match string) string {
 			inner := match[3 : len(match)-2]
 			inner = strings.TrimSpace(inner)
 			parts := strings.Split(inner, ".")
 
-			if len(parts) < 3 || parts[0] != "builds" {
-				return match // Not a builds expression, leave as-is
-			}
-
-			buildName := parts[1]
-			prop := parts[2]
-
-			// Find the corresponding build node in the graph
-			buildNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeDockerBuild, buildName)
-			buildNode, ok := e.graph.Nodes[buildNodeID]
-			if !ok || buildNode.Outputs == nil {
+			if len(parts) < 2 {
 				return match
 			}
 
-			if val, ok := buildNode.Outputs[prop]; ok {
-				return fmt.Sprintf("%v", val)
+			resourceType := parts[0]
+			switch resourceType {
+			case "builds":
+				if len(parts) < 3 {
+					return match
+				}
+				buildNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeDockerBuild, parts[1])
+				buildNode, ok := e.graph.Nodes[buildNodeID]
+				if !ok || buildNode.Outputs == nil {
+					return match
+				}
+				if val, ok := buildNode.Outputs[parts[2]]; ok {
+					return fmt.Sprintf("%v", val)
+				}
+
+			case "databases":
+				if len(parts) < 3 {
+					return match
+				}
+				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeDatabase, parts[1])
+				depNode, ok := e.graph.Nodes[nodeID]
+				if !ok || depNode.Outputs == nil {
+					return match
+				}
+				if val, ok := depNode.Outputs[parts[2]]; ok {
+					return fmt.Sprintf("%v", val)
+				}
+
+			case "services":
+				if len(parts) < 3 {
+					return match
+				}
+				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeService, parts[1])
+				depNode, ok := e.graph.Nodes[nodeID]
+				if !ok || depNode.Outputs == nil {
+					return match
+				}
+				if val, ok := depNode.Outputs[parts[2]]; ok {
+					return fmt.Sprintf("%v", val)
+				}
+
+			case "buckets":
+				if len(parts) < 3 {
+					return match
+				}
+				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeBucket, parts[1])
+				depNode, ok := e.graph.Nodes[nodeID]
+				if !ok || depNode.Outputs == nil {
+					return match
+				}
+				if val, ok := depNode.Outputs[parts[2]]; ok {
+					return fmt.Sprintf("%v", val)
+				}
+
+			case "routes":
+				if len(parts) < 3 {
+					return match
+				}
+				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeRoute, parts[1])
+				depNode, ok := e.graph.Nodes[nodeID]
+				if !ok || depNode.Outputs == nil {
+					return match
+				}
+				if val, ok := depNode.Outputs[parts[2]]; ok {
+					return fmt.Sprintf("%v", val)
+				}
+
+			case "observability":
+				// observability is a singleton per component
+				obsNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeObservability, "observability")
+				obsNode, ok := e.graph.Nodes[obsNodeID]
+				if !ok || obsNode.Outputs == nil {
+					return "" // Resolve to empty string if no observability hook
+				}
+				prop := parts[1]
+				if val, ok := obsNode.Outputs[prop]; ok {
+					return fmt.Sprintf("%v", val)
+				}
+				return "" // Unknown property resolves to empty
+
+			case "variables":
+				if len(parts) < 2 {
+					return match
+				}
+				if val, ok := node.Inputs["variables_"+parts[1]]; ok {
+					return fmt.Sprintf("%v", val)
+				}
 			}
+
 			return match
 		})
+	}
 
-		node.Inputs[key] = resolved
+	for key, value := range node.Inputs {
+		switch v := value.(type) {
+		case string:
+			node.Inputs[key] = resolveStr(v)
+		case map[string]string:
+			resolved := make(map[string]string, len(v))
+			for k, val := range v {
+				resolved[k] = resolveStr(val)
+			}
+			node.Inputs[key] = resolved
+		case map[string]interface{}:
+			resolved := make(map[string]interface{}, len(v))
+			for k, val := range v {
+				if s, ok := val.(string); ok {
+					resolved[k] = resolveStr(s)
+				} else {
+					resolved[k] = val
+				}
+			}
+			node.Inputs[key] = resolved
+		}
 	}
 }
 
@@ -1592,6 +1879,11 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 						completed[c.Node.ID] = true
 						c.Node.Outputs = nodeResult.Outputs
 						c.Node.State = graph.NodeStateCompleted
+
+						// For observability nodes, enrich outputs with merged attributes
+						if c.Node.Type == graph.NodeTypeObservability {
+							e.enrichObservabilityOutputs(c.Node)
+						}
 					} else {
 						failed[c.Node.ID] = true
 						result.Success = false

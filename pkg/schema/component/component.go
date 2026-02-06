@@ -25,6 +25,9 @@ type Component interface {
 	Routes() []Route
 	Cronjobs() []Cronjob
 
+	// Observability
+	Observability() Observability
+
 	// Configuration
 	Variables() []Variable
 	Dependencies() []Dependency
@@ -256,6 +259,16 @@ type RouteFilter interface {
 type Timeouts interface {
 	Request() string
 	BackendRequest() string
+}
+
+// Observability represents the observability configuration for a component.
+// Returns nil if observability is not configured or explicitly disabled.
+type Observability interface {
+	Inject() bool                // Auto-inject OTEL_* env vars into workloads
+	Logs() bool                  // Whether to export logs
+	Traces() bool                // Whether to export traces
+	Metrics() bool               // Whether to export metrics
+	Attributes() map[string]string // Custom OTel resource attributes
 }
 
 // Cronjob represents a scheduled task.

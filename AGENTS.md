@@ -191,6 +191,99 @@ deployments:
     replicas: 5
 ```
 
+### Observability (OpenTelemetry)
+
+Components can declare observability preferences using the optional `observability` block.
+When a datacenter provides an `observability` hook, the hook's outputs become available
+via expressions so component authors can wire them into workload environment variables.
+
+There are two modes: **expression-only** (default) and **auto-inject**.
+
+```yaml
+# Boolean shorthand - enable with all defaults (expression-only)
+observability: true
+
+# Full object form - customize signals, attributes, and injection mode
+observability:
+  inject: false     # default: false (expression-only mode)
+  logs: true        # default: true
+  traces: true      # default: true
+  metrics: false    # default: true
+  attributes:       # custom OTel resource attributes
+    team: payments
+    tier: critical
+
+# Auto-inject mode - engine injects OTEL_* env vars into all workloads
+observability:
+  inject: true
+
+# Disable entirely
+observability: false
+
+# Omit = enabled with defaults when datacenter supports it
+```
+
+#### Expression-Only Mode (default, `inject: false`)
+
+Component authors explicitly reference observability outputs in their environment.
+This gives full control over which OTEL env vars are set and what values they use:
+
+```yaml
+observability:
+  attributes:
+    team: backend
+
+deployments:
+  api:
+    image: ${{ builds.api.image }}
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ observability.endpoint }}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ observability.protocol }}
+      OTEL_RESOURCE_ATTRIBUTES: ${{ observability.attributes }}
+      OTEL_SERVICE_NAME: my-api
+```
+
+The `${{ observability.attributes }}` expression returns a comma-separated `key=value`
+string that merges three sources (later values override earlier ones):
+1. **Auto-generated**: `service.namespace=<component>`, `deployment.environment=<env>`
+2. **Datacenter hook** `attributes` output (e.g., `cloud.provider=aws,cloud.region=us-east-1`)
+3. **Component** `attributes` (from the `observability` block)
+
+#### Auto-Inject Mode (`inject: true`)
+
+When `inject: true`, the engine automatically injects standard OTEL_* environment
+variables into all workloads (deployments, functions, cronjobs). This is convenient
+for teams that want convention-based configuration with minimal boilerplate:
+
+```yaml
+observability:
+  inject: true
+  attributes:
+    team: backend
+
+deployments:
+  api:
+    image: ${{ builds.api.image }}
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+      # No need to set OTEL_* vars -- they're injected automatically
+```
+
+Auto-injected variables (never overwrites component-declared values):
+
+| Variable | Value |
+|----------|-------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | From datacenter hook output |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | From datacenter hook output |
+| `OTEL_SERVICE_NAME` | `<component>-<workload>` |
+| `OTEL_LOGS_EXPORTER` | `otlp` or `none` based on `logs` flag |
+| `OTEL_TRACES_EXPORTER` | `otlp` or `none` based on `traces` flag |
+| `OTEL_METRICS_EXPORTER` | `otlp` or `none` based on `metrics` flag |
+| `OTEL_RESOURCE_ATTRIBUTES` | Merged attributes (auto-generated + datacenter + component) |
+
+Component-declared env vars always take precedence -- the engine never overwrites
+a value the component author explicitly set.
+
 ### Available Expression References
 - `builds.<name>.image` (built Docker image)
 - `databases.<name>.url|host|port|username|password|database`
@@ -198,6 +291,7 @@ deployments:
 - `encryptionKeys.<name>.privateKey|publicKey|privateKeyBase64|publicKeyBase64|key|keyBase64`
 - `smtp.<name>.host|port|username|password`
 - `services.<name>.url|host|port`
+- `observability.endpoint|protocol|attributes` (OTel config; attributes merges datacenter + component + auto-generated)
 - `variables.<name>`
 - `dependencies.<name>.<output>`
 - `dependents.*.<output>` (for dependent components)
@@ -242,12 +336,15 @@ environment {
 | `function` | `id`, `endpoint` |
 | `service` | `host`, `port`, `url` |
 | `route` | `url`, `host`, `port` |
+| `observability` | `endpoint`, `protocol`, `attributes` |
 
 ### Hook Expression Context
 - `variable.<name>` - Datacenter variables
 - `environment.name` - Current environment name
 - `node.name|component|inputs.<field>` - Current resource info
 - `module.<name>.<output>` - Module outputs
+
+For `observability` hooks, `node.inputs` includes: `inject`, `logs`, `traces`, `metrics`, `attributes`
 
 ## Go Code Conventions
 

@@ -541,3 +541,123 @@ func TestResolveValue_NestedMap(t *testing.T) {
 		t.Errorf("expected level2='resolved-deep', got %v", level1["level2"])
 	}
 }
+
+func TestLookupPort_Found(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs: map[string]interface{}{},
+		Resources: map[string]*ResourceState{
+			"myservice": {
+				Outputs: map[string]interface{}{
+					"ports": map[string]interface{}{
+						"8080/tcp": 32001,
+					},
+				},
+			},
+		},
+	}
+
+	result, err := evaluateFunction(`lookup_port("myservice", "8080")`, ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != 32001 {
+		t.Errorf("expected 32001, got %v", result)
+	}
+}
+
+func TestLookupPort_PortWithProtocol(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs: map[string]interface{}{},
+		Resources: map[string]*ResourceState{
+			"myservice": {
+				Outputs: map[string]interface{}{
+					"ports": map[string]interface{}{
+						"8080/tcp": 32002,
+					},
+				},
+			},
+		},
+	}
+
+	result, err := evaluateFunction(`lookup_port("myservice", "8080/tcp")`, ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != 32002 {
+		t.Errorf("expected 32002, got %v", result)
+	}
+}
+
+func TestLookupPort_ResourceNotFound(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs:    map[string]interface{}{},
+		Resources: map[string]*ResourceState{},
+	}
+
+	// Should fall back to returning the port argument
+	result, err := evaluateFunction(`lookup_port("unknown", "8080")`, ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "8080" {
+		t.Errorf("expected fallback '8080', got %v", result)
+	}
+}
+
+func TestLookupPort_NoPortsOutput(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs: map[string]interface{}{},
+		Resources: map[string]*ResourceState{
+			"myservice": {
+				Outputs: map[string]interface{}{
+					"id": "container-123",
+				},
+			},
+		},
+	}
+
+	// Should fall back to returning the port argument
+	result, err := evaluateFunction(`lookup_port("myservice", "8080")`, ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "8080" {
+		t.Errorf("expected fallback '8080', got %v", result)
+	}
+}
+
+func TestLookupPort_PortNotMapped(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs: map[string]interface{}{},
+		Resources: map[string]*ResourceState{
+			"myservice": {
+				Outputs: map[string]interface{}{
+					"ports": map[string]interface{}{
+						"3000/tcp": 32000,
+					},
+				},
+			},
+		},
+	}
+
+	// Port 8080 isn't mapped, should fall back
+	result, err := evaluateFunction(`lookup_port("myservice", "8080")`, ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "8080" {
+		t.Errorf("expected fallback '8080', got %v", result)
+	}
+}
+
+func TestLookupPort_TooFewArgs(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs:    map[string]interface{}{},
+		Resources: map[string]*ResourceState{},
+	}
+
+	_, err := evaluateFunction(`lookup_port("myservice")`, ctx)
+	if err == nil {
+		t.Fatal("expected error for too few arguments")
+	}
+}

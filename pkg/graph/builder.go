@@ -241,6 +241,23 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		_ = b.graph.AddNode(node)
 	}
 
+	// Add observability node if component has observability configured.
+	// All workload nodes (deployments, functions, cronjobs) will depend on this node
+	// so that OTel configuration is resolved before workloads start.
+	var obsNodeID string
+	if comp.Observability() != nil {
+		obsNode := NewNode(NodeTypeObservability, componentName, "observability")
+		obsNode.SetInput("inject", comp.Observability().Inject())
+		obsNode.SetInput("logs", comp.Observability().Logs())
+		obsNode.SetInput("traces", comp.Observability().Traces())
+		obsNode.SetInput("metrics", comp.Observability().Metrics())
+		if attrs := comp.Observability().Attributes(); len(attrs) > 0 {
+			obsNode.SetInput("attributes", attrs)
+		}
+		_ = b.graph.AddNode(obsNode)
+		obsNodeID = obsNode.ID
+	}
+
 	// Add cronjobs
 	for _, cron := range comp.Cronjobs() {
 		node := NewNode(NodeTypeCronjob, componentName, cron.Name())
@@ -285,6 +302,14 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		if deploy.Image() != "" {
 			b.addEnvDependencies(componentName, node, deploy.Image())
 		}
+		// Make workload depend on observability node so OTel config is resolved first
+		if obsNodeID != "" {
+			obsNode := b.graph.GetNode(obsNodeID)
+			if obsNode != nil {
+				node.AddDependency(obsNodeID)
+				obsNode.AddDependent(node.ID)
+			}
+		}
 	}
 
 	for _, fn := range comp.Functions() {
@@ -296,6 +321,14 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		for _, value := range fn.Environment() {
 			b.addEnvDependencies(componentName, node, value)
 		}
+		// Make workload depend on observability node so OTel config is resolved first
+		if obsNodeID != "" {
+			obsNode := b.graph.GetNode(obsNodeID)
+			if obsNode != nil {
+				node.AddDependency(obsNodeID)
+				obsNode.AddDependent(node.ID)
+			}
+		}
 	}
 
 	for _, cron := range comp.Cronjobs() {
@@ -306,6 +339,14 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		}
 		for _, value := range cron.Environment() {
 			b.addEnvDependencies(componentName, node, value)
+		}
+		// Make workload depend on observability node so OTel config is resolved first
+		if obsNodeID != "" {
+			obsNode := b.graph.GetNode(obsNodeID)
+			if obsNode != nil {
+				node.AddDependency(obsNodeID)
+				obsNode.AddDependent(node.ID)
+			}
 		}
 	}
 
@@ -386,6 +427,9 @@ func (b *Builder) resolveDepReference(componentName, ref string) string {
 		nodeType = NodeTypeFunction
 	case "builds":
 		nodeType = NodeTypeDockerBuild
+	case "observability":
+		// Observability is a singleton per component, always named "observability"
+		return fmt.Sprintf("%s/%s/%s", componentName, NodeTypeObservability, "observability")
 	default:
 		return ""
 	}

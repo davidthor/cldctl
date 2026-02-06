@@ -96,6 +96,11 @@ func (t *Transformer) Transform(v1 *SchemaV1) (*internal.InternalComponent, erro
 		ic.Cronjobs = append(ic.Cronjobs, icj)
 	}
 
+	// Transform observability
+	if v1.Observability != nil {
+		ic.Observability = t.transformObservability(v1.Observability)
+	}
+
 	// Transform variables
 	for name, v := range v1.Variables {
 		iv := t.transformVariable(name, v)
@@ -523,6 +528,27 @@ func (t *Transformer) transformRuntime(rt *RuntimeV1) *internal.InternalRuntime 
 		Packages: rt.Packages,
 		Setup:    rt.Setup,
 	}
+}
+
+func (t *Transformer) transformObservability(obs *ObservabilityV1) *internal.InternalObservability {
+	if !obs.Enabled {
+		return nil
+	}
+
+	return &internal.InternalObservability{
+		Inject:     defaultBoolPtr(obs.Inject, false),
+		Logs:       defaultBoolPtr(obs.Logs, true),
+		Traces:     defaultBoolPtr(obs.Traces, true),
+		Metrics:    defaultBoolPtr(obs.Metrics, true),
+		Attributes: obs.Attributes,
+	}
+}
+
+func defaultBoolPtr(val *bool, def bool) bool {
+	if val == nil {
+		return def
+	}
+	return *val
 }
 
 // parseTypeVersion parses "postgres:^15" into ("postgres", "^15")

@@ -258,16 +258,22 @@ func (pm *ProcessManager) StopAll(timeout time.Duration) {
 
 // waitForReady waits for the process to become ready.
 func (pm *ProcessManager) waitForReady(ctx context.Context, readiness *ReadinessCheck) error {
-	if readiness.Type != "http" {
-		// Only HTTP readiness checks are supported for now
-		return nil
+	switch readiness.Type {
+	case "http":
+		return pm.waitForReadyHTTP(ctx, readiness)
+	case "tcp":
+		return pm.waitForReadyTCP(ctx, readiness)
+	default:
+		return fmt.Errorf("unsupported readiness check type: %q (supported: http, tcp)", readiness.Type)
 	}
+}
 
+// waitForReadyHTTP waits for an HTTP endpoint to return a 2xx/3xx status.
+func (pm *ProcessManager) waitForReadyHTTP(ctx context.Context, readiness *ReadinessCheck) error {
 	deadline := time.Now().Add(readiness.Timeout)
 	ticker := time.NewTicker(readiness.Interval)
 	defer ticker.Stop()
 
-	// Create HTTP client with short timeout
 	client := &http.Client{
 		Timeout: 2 * time.Second,
 	}
@@ -277,17 +283,35 @@ func (pm *ProcessManager) waitForReady(ctx context.Context, readiness *Readiness
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			// Try to make HTTP request
 			resp, err := client.Get(readiness.Endpoint)
 			if err == nil {
 				resp.Body.Close()
-				// Only 2xx and 3xx status codes indicate ready
 				if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-					// Service is ready
 					return nil
 				}
 			}
-			// Continue waiting
+		}
+	}
+
+	return fmt.Errorf("process did not become ready within %v", readiness.Timeout)
+}
+
+// waitForReadyTCP waits for a TCP endpoint to accept connections.
+func (pm *ProcessManager) waitForReadyTCP(ctx context.Context, readiness *ReadinessCheck) error {
+	deadline := time.Now().Add(readiness.Timeout)
+	ticker := time.NewTicker(readiness.Interval)
+	defer ticker.Stop()
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			conn, err := net.DialTimeout("tcp", readiness.Endpoint, 2*time.Second)
+			if err == nil {
+				conn.Close()
+				return nil
+			}
 		}
 	}
 
