@@ -365,16 +365,3 @@ func RegisterJavaScript(r *Registry) {
 		)
 	}
 }
-
-// Utility for detecting TypeScript in JS frameworks
-func isTypeScriptProject(projectPath string) bool {
-	return FileExistsInProject(projectPath, "tsconfig.json")
-}
-
-// Helper to check if script contains a specific command
-func scriptContains(scripts map[string]string, scriptName, contains string) bool {
-	if script, ok := scripts[scriptName]; ok {
-		return strings.Contains(script, contains)
-	}
-	return false
-}

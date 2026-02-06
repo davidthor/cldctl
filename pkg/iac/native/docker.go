@@ -80,7 +80,7 @@ func NewDockerClient() (*DockerClient, error) {
 func (d *DockerClient) RunContainer(ctx context.Context, opts ContainerOptions) (string, error) {
 	// Check if image exists locally first
 	imageExists := false
-	_, _, err := d.client.ImageInspectWithRaw(ctx, opts.Image)
+	_, err := d.client.ImageInspect(ctx, opts.Image)
 	if err == nil {
 		imageExists = true
 	}
@@ -238,7 +238,7 @@ func (d *DockerClient) ContainerMatchesConfig(ctx context.Context, containerID s
 
 	// Check if image matches (compare by image ID for accuracy)
 	// The container stores the full image ID, we need to resolve the desired image
-	desiredImageInfo, _, err := d.client.ImageInspectWithRaw(ctx, opts.Image)
+	desiredImageInfo, err := d.client.ImageInspect(ctx, opts.Image)
 	if err != nil {
 		// Can't inspect desired image, assume mismatch
 		return false

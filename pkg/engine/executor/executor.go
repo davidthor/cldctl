@@ -1625,14 +1625,10 @@ func (e *Executor) executeDestroy(ctx context.Context, change *planner.ResourceC
 	}
 
 	// Get resource state to retrieve IaC state (try type-qualified key first, fall back to legacy name-only key)
-	rKey := resourceKey(change.Node)
-	resourceState := compState.Resources[rKey]
+	resourceState := compState.Resources[resourceKey(change.Node)]
 	if resourceState == nil {
 		// Backward compatibility: try legacy name-only key
 		resourceState = compState.Resources[change.Node.Name]
-		if resourceState != nil {
-			rKey = change.Node.Name
-		}
 	}
 
 	e.stateMu.Unlock()
@@ -1669,7 +1665,7 @@ func (e *Executor) executeDestroy(ctx context.Context, change *planner.ResourceC
 	e.stateMu.Lock()
 
 	// Remove resource from state (try type-qualified key first, fall back to legacy)
-	rKey = resourceKey(change.Node)
+	rKey := resourceKey(change.Node)
 	if _, ok := compState.Resources[rKey]; ok {
 		delete(compState.Resources, rKey)
 	} else {

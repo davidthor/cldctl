@@ -155,9 +155,13 @@ func TestEvaluateExpression_InvalidInputReference(t *testing.T) {
 		Resources: map[string]*ResourceState{},
 	}
 
-	_, err := evaluateExpression("${inputs.nonexistent}", ctx)
-	if err == nil {
-		t.Error("expected error for non-existent input")
+	// Missing inputs return nil (not error) to support optional values
+	result, err := evaluateExpression("${inputs.nonexistent}", ctx)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if result != nil {
+		t.Errorf("expected nil for non-existent input, got %v", result)
 	}
 }
 
@@ -295,9 +299,13 @@ func TestNavigatePath_KeyNotFound(t *testing.T) {
 		"key": "value",
 	}
 
-	_, err := navigatePath(data, []string{"nonexistent"})
-	if err == nil {
-		t.Error("expected error for non-existent key")
+	// Missing keys return nil (not error) to support optional values
+	result, err := navigatePath(data, []string{"nonexistent"})
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if result != nil {
+		t.Errorf("expected nil for non-existent key, got %v", result)
 	}
 }
 
@@ -403,12 +411,17 @@ func TestResolveProperties_Error(t *testing.T) {
 	}
 
 	props := map[string]interface{}{
-		"invalid": "${inputs.nonexistent}",
+		"optional": "${inputs.nonexistent}",
 	}
 
-	_, err := resolveProperties(props, ctx)
-	if err == nil {
-		t.Error("expected error for invalid property")
+	// Missing inputs resolve to nil and are skipped (not an error)
+	result, err := resolveProperties(props, ctx)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	// The nil-valued key should be omitted from the result
+	if _, exists := result["optional"]; exists {
+		t.Error("expected nil-valued key to be omitted from result")
 	}
 }
 

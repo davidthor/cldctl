@@ -216,9 +216,9 @@ Examples:
 			}()
 
 			// Create or get environment
-			env, err := mgr.GetEnvironment(ctx, envName)
+			_, err = mgr.GetEnvironment(ctx, envName)
 			if err != nil {
-				env = &types.EnvironmentState{
+				env := &types.EnvironmentState{
 					Name:       envName,
 					Datacenter: datacenter,
 					Status:     types.EnvironmentStatusPending,
