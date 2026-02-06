@@ -1,0 +1,356 @@
+# DigitalOcean App Platform datacenter
+# PaaS-based deployment using App Platform for compute,
+# managed databases for persistence, and Spaces for storage.
+# No VM/runtime support - App Platform is PaaS only.
+
+variable "do_token" {
+  description = "DigitalOcean API token"
+  type        = string
+  sensitive   = true
+}
+
+variable "region" {
+  description = "DigitalOcean region"
+  type        = string
+  default     = "nyc"
+}
+
+variable "domain" {
+  description = "Custom domain for applications"
+  type        = string
+  default     = ""
+}
+
+variable "registry" {
+  description = "Container registry URL"
+  type        = string
+  default     = "registry.digitalocean.com"
+}
+
+variable "smtp_host" {
+  description = "External SMTP relay host"
+  type        = string
+  default     = "smtp.sendgrid.net"
+}
+
+variable "smtp_port" {
+  description = "External SMTP relay port"
+  type        = number
+  default     = 587
+}
+
+variable "smtp_username" {
+  description = "External SMTP relay username"
+  type        = string
+  default     = "apikey"
+}
+
+variable "smtp_password" {
+  description = "External SMTP relay password"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+environment {
+  # Database hook - managed databases (postgres, mysql, redis)
+  database {
+    module "managed_database" {
+      build = "./modules/do-managed-database"
+      inputs = {
+        name    = "${environment.name}-${node.name}"
+        type    = element(split(":", node.inputs.type), 0)
+        version = try(element(split(":", node.inputs.type), 1), null)
+        region  = variable.region
+        size    = "db-s-1vcpu-1gb"
+        token   = variable.do_token
+      }
+    }
+
+    outputs = {
+      host     = module.managed_database.host
+      port     = module.managed_database.port
+      database = module.managed_database.database
+      username = module.managed_database.username
+      password = module.managed_database.password
+      url      = module.managed_database.connection_url
+    }
+  }
+
+  # Task hook - run one-time tasks via App Platform Jobs
+  task {
+    module "app_job" {
+      build = "./modules/do-app-job"
+      inputs = {
+        name        = "${environment.name}-${node.component}-${node.name}"
+        image       = node.inputs.image
+        command     = node.inputs.command
+        environment = node.inputs.environment
+        region      = variable.region
+        token       = variable.do_token
+      }
+    }
+
+    outputs = {
+      id     = module.app_job.job_id
+      status = module.app_job.status
+    }
+  }
+
+  # Bucket hook - DigitalOcean Spaces
+  bucket {
+    module "spaces_bucket" {
+      build = "./modules/do-spaces"
+      inputs = {
+        name       = "${environment.name}-${node.name}"
+        region     = variable.region
+        versioning = node.inputs.versioning
+        public     = node.inputs.public
+        token      = variable.do_token
+      }
+    }
+
+    outputs = {
+      endpoint        = "https://${variable.region}.digitaloceanspaces.com"
+      bucket          = module.spaces_bucket.bucket_name
+      region          = variable.region
+      accessKeyId     = module.spaces_bucket.access_key
+      secretAccessKey = module.spaces_bucket.secret_key
+    }
+  }
+
+  # Encryption key hook - asymmetric (RSA/ECDSA)
+  encryptionKey {
+    when = node.inputs.keyType == "rsa" || node.inputs.keyType == "ecdsa"
+
+    module "asymmetric_key" {
+      build = "./modules/do-app-secret"
+      inputs = {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        key_type = node.inputs.keyType
+        key_size = node.inputs.keySize
+        token    = variable.do_token
+      }
+    }
+
+    outputs = {
+      privateKey       = module.asymmetric_key.privateKey
+      publicKey        = module.asymmetric_key.publicKey
+      privateKeyBase64 = module.asymmetric_key.privateKeyBase64
+      publicKeyBase64  = module.asymmetric_key.publicKeyBase64
+    }
+  }
+
+  # Encryption key hook - symmetric
+  encryptionKey {
+    when = node.inputs.keyType == "symmetric"
+
+    module "symmetric_key" {
+      build = "./modules/do-app-secret"
+      inputs = {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        key_type = "symmetric"
+        key_size = node.inputs.keySize
+        token    = variable.do_token
+      }
+    }
+
+    outputs = {
+      key       = module.symmetric_key.key
+      keyBase64 = module.symmetric_key.keyBase64
+    }
+  }
+
+  # SMTP hook - external relay (no native DO SMTP service)
+  smtp {
+    module "smtp_config" {
+      build = "./modules/do-app-secret"
+      inputs = {
+        name  = "${environment.name}-${node.component}-${node.name}-smtp"
+        token = variable.do_token
+        data = {
+          host     = variable.smtp_host
+          port     = tostring(variable.smtp_port)
+          username = variable.smtp_username
+          password = variable.smtp_password
+        }
+      }
+    }
+
+    outputs = {
+      host     = variable.smtp_host
+      port     = variable.smtp_port
+      username = variable.smtp_username
+      password = variable.smtp_password
+    }
+  }
+
+  # Database user hook - additional users on managed databases
+  databaseUser {
+    module "db_user" {
+      build = "./modules/do-database-user"
+      inputs = {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        database = node.inputs.database
+        token    = variable.do_token
+      }
+    }
+
+    outputs = {
+      username = module.db_user.username
+      password = module.db_user.password
+      url      = module.db_user.url
+    }
+  }
+
+  # Secret hook - App Platform environment variables (encrypted)
+  secret {
+    module "app_secret" {
+      build = "./modules/do-app-secret"
+      inputs = {
+        name  = "${environment.name}-${node.component}-${node.name}"
+        token = variable.do_token
+        data = {
+          value = node.inputs.value
+        }
+      }
+    }
+
+    outputs = {
+      id = module.app_secret.secret_id
+    }
+  }
+
+  # Deployment hook - container-based only (App Platform is PaaS, no VM support)
+  deployment {
+    when = node.inputs.image != null
+
+    module "app_service" {
+      build = "./modules/do-app-service"
+      inputs = merge(node.inputs, {
+        name   = "${environment.name}-${node.component}-${node.name}"
+        region = variable.region
+        token  = variable.do_token
+      })
+    }
+
+    outputs = {
+      id = module.app_service.app_id
+    }
+  }
+
+  # Function hook - App Platform supports serverless functions
+  function {
+    module "app_function" {
+      build = "./modules/do-app-function"
+      inputs = merge(node.inputs, {
+        name   = "${environment.name}-${node.component}-${node.name}"
+        region = variable.region
+        token  = variable.do_token
+      })
+    }
+
+    outputs = {
+      id       = module.app_function.function_id
+      endpoint = module.app_function.url
+    }
+  }
+
+  # Service hook - App Platform internal routing
+  service {
+    module "app_internal_service" {
+      build = "./modules/do-app-internal-service"
+      inputs = merge(node.inputs, {
+        name  = "${environment.name}-${node.component}-${node.name}"
+        token = variable.do_token
+      })
+    }
+
+    outputs = {
+      host = module.app_internal_service.host
+      port = module.app_internal_service.port
+      url  = "http://${module.app_internal_service.host}:${module.app_internal_service.port}"
+    }
+  }
+
+  # Ingress hook - App Platform handles routing and TLS automatically
+  ingress {
+    module "app_domain" {
+      build = "./modules/do-app-domain"
+      inputs = merge(node.inputs, {
+        name   = "${environment.name}-${node.component}-${node.name}"
+        domain = variable.domain
+        token  = variable.do_token
+      })
+    }
+
+    outputs = {
+      url      = module.app_domain.url
+      hosts    = [module.app_domain.host]
+      protocol = "https"
+      host     = module.app_domain.host
+      port     = 443
+    }
+  }
+
+  # Cronjob hook - App Platform scheduled jobs
+  cronjob {
+    module "app_cron" {
+      build = "./modules/do-app-job"
+      inputs = merge(node.inputs, {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        schedule = node.inputs.schedule
+        region   = variable.region
+        token    = variable.do_token
+      })
+    }
+
+    outputs = {
+      id = module.app_cron.job_id
+    }
+  }
+
+  # Docker build hook - build and push to DO Container Registry
+  dockerBuild {
+    module "docker_build" {
+      build = "./modules/docker-build-push"
+      inputs = {
+        context    = node.inputs.context
+        dockerfile = node.inputs.dockerfile
+        target     = node.inputs.target
+        args       = node.inputs.args
+        registry   = variable.registry
+        token      = variable.do_token
+      }
+    }
+
+    outputs = {
+      image = module.docker_build.image
+    }
+  }
+
+  # Observability hook - DigitalOcean App Platform built-in monitoring
+  observability {
+    module "app_monitoring" {
+      build = "./modules/do-app-monitoring"
+      inputs = {
+        name   = "${environment.name}-otel"
+        region = variable.region
+        token  = variable.do_token
+      }
+    }
+
+    outputs = {
+      endpoint       = module.app_monitoring.otlp_endpoint
+      protocol       = "http/protobuf"
+      query_type     = "loki"
+      query_endpoint = module.app_monitoring.loki_endpoint
+      dashboard_url  = module.app_monitoring.dashboard_url
+      attributes = {
+        "cloud.provider" = "digitalocean"
+        "cloud.platform" = "digitalocean_app_platform"
+        "cloud.region"   = variable.region
+      }
+    }
+  }
+}

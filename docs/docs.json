@@ -126,12 +126,43 @@
           {
             "group": "Official Templates",
             "pages": [
-              "guides/datacenters/local-docker",
-              "guides/datacenters/aws-ecs",
-              "guides/datacenters/digitalocean-k8s",
-              "guides/datacenters/serverless-neon",
-              "guides/datacenters/vercel-functions",
-              "guides/datacenters/shared-database",
+              {
+                "group": "Local",
+                "pages": [
+                  "guides/datacenters/local"
+                ]
+              },
+              {
+                "group": "Startup (Vercel)",
+                "pages": [
+                  "guides/datacenters/startup"
+                ]
+              },
+              {
+                "group": "DigitalOcean",
+                "pages": [
+                  "guides/datacenters/do-k8s",
+                  "guides/datacenters/do-app-platform",
+                  "guides/datacenters/do-vms"
+                ]
+              },
+              {
+                "group": "AWS",
+                "pages": [
+                  "guides/datacenters/aws-ecs",
+                  "guides/datacenters/aws-lambda",
+                  "guides/datacenters/aws-k8s",
+                  "guides/datacenters/aws-vms"
+                ]
+              },
+              {
+                "group": "GCP",
+                "pages": [
+                  "guides/datacenters/gcp-cloud-run",
+                  "guides/datacenters/gcp-k8s",
+                  "guides/datacenters/gcp-vms"
+                ]
+              },
               "guides/datacenters/contributing"
             ]
           }

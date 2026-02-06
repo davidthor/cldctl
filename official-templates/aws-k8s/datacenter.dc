@@ -1,5 +1,6 @@
-# AWS ECS Fargate datacenter
-# Deploys to ECS Fargate with RDS, ElastiCache, S3, SES, KMS, and OTel observability
+# AWS EKS (Kubernetes) datacenter
+# Deploys to Amazon EKS with RDS, ElastiCache, S3, SES, and OTel observability.
+# Uses Knative/KEDA for serverless functions and EC2 for VM-based deployments.
 
 variable "aws_region" {
   description = "AWS region"
@@ -13,7 +14,7 @@ variable "vpc_id" {
 }
 
 variable "cluster_name" {
-  description = "ECS cluster name"
+  description = "EKS cluster name"
   type        = string
 }
 
@@ -52,34 +53,48 @@ variable "ses_smtp_password" {
   default     = ""
 }
 
-# ECS Cluster (shared across environments)
-module "ecs_cluster" {
-  build = "./modules/ecs-cluster"
+variable "ssh_key_pair" {
+  description = "EC2 key pair name for SSH access to VM deployments"
+  type        = string
+  default     = ""
+}
+
+# EKS Cluster (shared across environments)
+module "eks" {
+  build = "./modules/eks-cluster"
   inputs = {
     name   = variable.cluster_name
     region = variable.aws_region
     vpc_id = variable.vpc_id
+    node_groups = {
+      default = {
+        instance_types = ["t3.medium"]
+        min_size       = 2
+        max_size       = 10
+        desired_size   = 2
+      }
+    }
   }
 }
 
-# Application Load Balancer (shared)
-module "alb" {
-  build = "./modules/alb"
+# AWS ALB Ingress Controller (shared)
+module "alb_controller" {
+  build = "./modules/eks-alb-controller"
   inputs = {
-    name            = "${variable.cluster_name}-alb"
-    vpc_id          = variable.vpc_id
-    certificate_arn = variable.certificate_arn
+    cluster_name = variable.cluster_name
+    region       = variable.aws_region
+    vpc_id       = variable.vpc_id
+    kubeconfig   = module.eks.kubeconfig
   }
 }
 
 environment {
-  # Target group per environment
-  module "target_group" {
-    build = "./modules/alb-target-group"
+  # Kubernetes namespace per environment
+  module "namespace" {
+    build = "./modules/k8s-namespace"
     inputs = {
-      name    = environment.name
-      vpc_id  = variable.vpc_id
-      alb_arn = module.alb.arn
+      name       = environment.name
+      kubeconfig = module.eks.kubeconfig
     }
   }
 
@@ -87,19 +102,8 @@ environment {
   module "log_group" {
     build = "./modules/cloudwatch-logs"
     inputs = {
-      name           = "/ecs/${variable.cluster_name}/${environment.name}"
+      name           = "/eks/${variable.cluster_name}/${environment.name}"
       retention_days = 30
-    }
-  }
-
-  # DNS records
-  module "dns_records" {
-    build = "./modules/route53-records"
-    inputs = {
-      hosted_zone_id = variable.hosted_zone_id
-      domain         = "${environment.name}.${variable.domain}"
-      alb_dns_name   = module.alb.dns_name
-      alb_zone_id    = module.alb.zone_id
     }
   }
 
@@ -112,7 +116,18 @@ environment {
     }
   }
 
-  # Resource hooks
+  # DNS records per environment
+  module "dns_records" {
+    build = "./modules/route53-records"
+    inputs = {
+      hosted_zone_id = variable.hosted_zone_id
+      domain         = "${environment.name}.${variable.domain}"
+      target         = module.alb_controller.alb_dns_name
+      target_type    = "alb"
+    }
+  }
+
+  # Database hook - RDS
   database {
     module "rds_database" {
       build = "./modules/rds-database"
@@ -136,33 +151,29 @@ environment {
     }
   }
 
-  # Task hook - run one-time containers (e.g., database migrations)
-  # Uses ECS Tasks (Fargate) for one-time execution
+  # Task hook - Kubernetes Jobs
   task {
-    module "run_task" {
-      build = "./modules/ecs-task"
+    module "k8s_job" {
+      build = "./modules/k8s-job"
       inputs = {
-        name              = "${node.component}--${node.name}"
-        cluster           = variable.cluster_name
-        vpc_id            = variable.vpc_id
-        security_group_id = module.security_group.id
-        log_group         = module.log_group.name
-        image             = node.inputs.image
-        command           = node.inputs.command
-        environment       = node.inputs.environment
-        # Use Fargate SPOT for cost-effective one-time tasks
-        capacity_provider = "FARGATE_SPOT"
-        cpu               = "256"
-        memory            = "512"
+        name        = "${node.component}--${node.name}"
+        namespace   = environment.name
+        kubeconfig  = module.eks.kubeconfig
+        image       = node.inputs.image
+        command     = node.inputs.command
+        environment = node.inputs.environment
+        backoff_limit                = 3
+        ttl_seconds_after_finished   = 300
       }
     }
 
     outputs = {
-      id     = module.run_task.task_arn
-      status = module.run_task.status
+      id     = module.k8s_job.job_id
+      status = module.k8s_job.status
     }
   }
 
+  # Bucket hook - S3
   bucket {
     module "s3_bucket" {
       build = "./modules/s3-bucket"
@@ -184,7 +195,6 @@ environment {
   }
 
   # Encryption key hook - asymmetric (RSA/ECDSA)
-  # Generates key pair and stores in AWS Secrets Manager
   encryptionKey {
     when = node.inputs.keyType == "rsa" || node.inputs.keyType == "ecdsa"
 
@@ -206,8 +216,7 @@ environment {
     }
   }
 
-  # Encryption key hook - symmetric
-  # Uses AWS KMS for key management
+  # Encryption key hook - symmetric (KMS)
   encryptionKey {
     when = node.inputs.keyType == "symmetric"
 
@@ -247,18 +256,16 @@ environment {
   deployment {
     when = node.inputs.image != null
 
-    module "ecs_service" {
-      build = "./modules/ecs-service"
+    module "k8s_deployment" {
+      build = "./modules/k8s-deployment"
       inputs = merge(node.inputs, {
-        cluster           = variable.cluster_name
-        vpc_id            = variable.vpc_id
-        security_group_id = module.security_group.id
-        log_group         = module.log_group.name
+        namespace  = environment.name
+        kubeconfig = module.eks.kubeconfig
       })
     }
 
     outputs = {
-      id = module.ecs_service.service_id
+      id = module.k8s_deployment.deployment_id
     }
   }
 
@@ -271,9 +278,11 @@ environment {
       plugin = "opentofu"
       build  = "./modules/ec2-vm"
       inputs = merge(node.inputs, {
-        name           = "${environment.name}-${node.component}-${node.name}"
-        subnet_id      = module.security_group.subnet_id
-        security_group = module.security_group.id
+        name              = "${environment.name}-${node.component}-${node.name}"
+        region            = variable.aws_region
+        vpc_id            = variable.vpc_id
+        security_group_id = module.security_group.id
+        key_pair          = variable.ssh_key_pair
       })
     }
 
@@ -282,48 +291,48 @@ environment {
     }
   }
 
+  # Function hook - Knative serving on EKS
   function {
-    module "lambda" {
-      build = "./modules/lambda-function"
+    module "knative_service" {
+      build = "./modules/knative-service"
       inputs = merge(node.inputs, {
-        name              = "${environment.name}-${node.name}"
-        vpc_id            = variable.vpc_id
-        security_group_id = module.security_group.id
+        namespace  = environment.name
+        kubeconfig = module.eks.kubeconfig
       })
     }
 
     outputs = {
-      id       = module.lambda.function_arn
-      endpoint = module.lambda.function_url
+      id       = module.knative_service.service_id
+      endpoint = module.knative_service.url
     }
   }
 
+  # Service hook - Kubernetes Service
   service {
-    module "service_discovery" {
-      build = "./modules/service-discovery"
-      inputs = {
-        name        = node.name
-        namespace   = environment.name
-        target      = node.inputs.target
-        target_type = node.inputs.target_type
-        port        = node.inputs.port
-      }
+    module "k8s_service" {
+      build = "./modules/k8s-service"
+      inputs = merge(node.inputs, {
+        namespace  = environment.name
+        kubeconfig = module.eks.kubeconfig
+      })
     }
 
     outputs = {
-      host = module.service_discovery.dns_name
-      port = module.service_discovery.port
-      url  = "http://${module.service_discovery.dns_name}:${module.service_discovery.port}"
+      host = module.k8s_service.cluster_ip
+      port = module.k8s_service.port
+      url  = "http://${module.k8s_service.cluster_ip}:${module.k8s_service.port}"
     }
   }
 
+  # Ingress hook - ALB Ingress via AWS Load Balancer Controller
   ingress {
-    module "alb_listener_rule" {
-      build = "./modules/alb-listener-rule"
+    module "alb_ingress" {
+      build = "./modules/k8s-alb-ingress"
       inputs = merge(node.inputs, {
-        alb_arn          = module.alb.arn
-        target_group_arn = module.target_group.arn
-        domain           = "${environment.name}.${variable.domain}"
+        namespace       = environment.name
+        kubeconfig      = module.eks.kubeconfig
+        domain          = "${environment.name}.${variable.domain}"
+        certificate_arn = variable.certificate_arn
       })
     }
 
@@ -336,20 +345,22 @@ environment {
     }
   }
 
+  # Cronjob hook - Kubernetes CronJob
   cronjob {
-    module "eventbridge_task" {
-      build = "./modules/eventbridge-scheduled-task"
+    module "k8s_cronjob" {
+      build = "./modules/k8s-cronjob"
       inputs = merge(node.inputs, {
-        name    = "${environment.name}-${node.name}"
-        cluster = variable.cluster_name
+        namespace  = environment.name
+        kubeconfig = module.eks.kubeconfig
       })
     }
 
     outputs = {
-      id = module.eventbridge_task.rule_arn
+      id = module.k8s_cronjob.cronjob_id
     }
   }
 
+  # Database user hook
   databaseUser {
     module "rds_user" {
       build = "./modules/rds-user"
@@ -366,6 +377,7 @@ environment {
     }
   }
 
+  # Secret hook - Secrets Manager
   secret {
     module "secrets_manager" {
       build = "./modules/secrets-manager"
@@ -380,6 +392,7 @@ environment {
     }
   }
 
+  # Docker build hook - ECR
   dockerBuild {
     module "ecr_build" {
       build = "./modules/ecr-build"
@@ -397,19 +410,18 @@ environment {
     }
   }
 
-  # Observability hook - OTel collector sidecar on ECS with CloudWatch backend
-  # Deploys an OpenTelemetry Collector as an ECS service that receives OTLP
-  # telemetry and exports to CloudWatch Logs, CloudWatch Metrics, and X-Ray.
+  # Observability hook - OTel collector DaemonSet on EKS
+  # Deploys an OpenTelemetry Collector as a DaemonSet that receives OTLP
+  # telemetry and exports to CloudWatch Logs, Metrics, and X-Ray.
   observability {
     module "otel_collector" {
-      build = "./modules/ecs-otel-collector"
+      build = "./modules/eks-otel-collector"
       inputs = {
-        name              = "${environment.name}-otel-collector"
-        cluster           = variable.cluster_name
-        region            = variable.aws_region
-        vpc_id            = variable.vpc_id
-        security_group_id = module.security_group.id
-        log_group         = module.log_group.name
+        name       = "${environment.name}-otel-collector"
+        namespace  = environment.name
+        kubeconfig = module.eks.kubeconfig
+        region     = variable.aws_region
+        log_group  = module.log_group.name
       }
     }
 
@@ -422,7 +434,7 @@ environment {
       attributes = {
         "cloud.provider" = "aws"
         "cloud.region"   = variable.aws_region
-        "cloud.platform" = "aws_ecs"
+        "cloud.platform" = "aws_eks"
       }
     }
   }

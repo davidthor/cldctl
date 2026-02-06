@@ -1,5 +1,6 @@
-# AWS ECS Fargate datacenter
-# Deploys to ECS Fargate with RDS, ElastiCache, S3, SES, KMS, and OTel observability
+# AWS Lambda datacenter
+# Serverless-first AWS template using Lambda, API Gateway, RDS, ElastiCache, S3, and SES.
+# No VM/runtime support - all compute runs on Lambda.
 
 variable "aws_region" {
   description = "AWS region"
@@ -9,11 +10,6 @@ variable "aws_region" {
 
 variable "vpc_id" {
   description = "VPC ID for deployment"
-  type        = string
-}
-
-variable "cluster_name" {
-  description = "ECS cluster name"
   type        = string
 }
 
@@ -52,34 +48,33 @@ variable "ses_smtp_password" {
   default     = ""
 }
 
-# ECS Cluster (shared across environments)
-module "ecs_cluster" {
-  build = "./modules/ecs-cluster"
+# API Gateway (shared across environments)
+module "api_gateway" {
+  build = "./modules/api-gateway"
   inputs = {
-    name   = variable.cluster_name
-    region = variable.aws_region
-    vpc_id = variable.vpc_id
+    name            = "arcctl-gateway"
+    region          = variable.aws_region
+    certificate_arn = variable.certificate_arn
   }
 }
 
-# Application Load Balancer (shared)
-module "alb" {
-  build = "./modules/alb"
+# CloudFront distribution (shared)
+module "cdn" {
+  build = "./modules/cloudfront"
   inputs = {
-    name            = "${variable.cluster_name}-alb"
-    vpc_id          = variable.vpc_id
+    api_gateway_url = module.api_gateway.invoke_url
+    domain          = variable.domain
     certificate_arn = variable.certificate_arn
   }
 }
 
 environment {
-  # Target group per environment
-  module "target_group" {
-    build = "./modules/alb-target-group"
+  # API Gateway stage per environment
+  module "api_stage" {
+    build = "./modules/api-gateway-stage"
     inputs = {
-      name    = environment.name
-      vpc_id  = variable.vpc_id
-      alb_arn = module.alb.arn
+      api_id = module.api_gateway.id
+      name   = environment.name
     }
   }
 
@@ -87,32 +82,32 @@ environment {
   module "log_group" {
     build = "./modules/cloudwatch-logs"
     inputs = {
-      name           = "/ecs/${variable.cluster_name}/${environment.name}"
+      name           = "/lambda/${environment.name}"
       retention_days = 30
     }
   }
 
-  # DNS records
+  # Security group for Lambda VPC access
+  module "security_group" {
+    build = "./modules/security-group"
+    inputs = {
+      name   = "${environment.name}-lambda-sg"
+      vpc_id = variable.vpc_id
+    }
+  }
+
+  # DNS records per environment
   module "dns_records" {
     build = "./modules/route53-records"
     inputs = {
       hosted_zone_id = variable.hosted_zone_id
       domain         = "${environment.name}.${variable.domain}"
-      alb_dns_name   = module.alb.dns_name
-      alb_zone_id    = module.alb.zone_id
+      target         = module.cdn.domain_name
+      target_type    = "cloudfront"
     }
   }
 
-  # Security group for environment
-  module "security_group" {
-    build = "./modules/security-group"
-    inputs = {
-      name   = "${environment.name}-sg"
-      vpc_id = variable.vpc_id
-    }
-  }
-
-  # Resource hooks
+  # Database hook - RDS
   database {
     module "rds_database" {
       build = "./modules/rds-database"
@@ -136,33 +131,31 @@ environment {
     }
   }
 
-  # Task hook - run one-time containers (e.g., database migrations)
-  # Uses ECS Tasks (Fargate) for one-time execution
+  # Task hook - Lambda invocation for one-time tasks
   task {
-    module "run_task" {
-      build = "./modules/ecs-task"
+    module "task_lambda" {
+      build = "./modules/lambda-task"
       inputs = {
         name              = "${node.component}--${node.name}"
-        cluster           = variable.cluster_name
+        region            = variable.aws_region
         vpc_id            = variable.vpc_id
         security_group_id = module.security_group.id
         log_group         = module.log_group.name
         image             = node.inputs.image
         command           = node.inputs.command
         environment       = node.inputs.environment
-        # Use Fargate SPOT for cost-effective one-time tasks
-        capacity_provider = "FARGATE_SPOT"
-        cpu               = "256"
-        memory            = "512"
+        timeout           = 900
+        memory            = 512
       }
     }
 
     outputs = {
-      id     = module.run_task.task_arn
-      status = module.run_task.status
+      id     = module.task_lambda.function_arn
+      status = module.task_lambda.status
     }
   }
 
+  # Bucket hook - S3
   bucket {
     module "s3_bucket" {
       build = "./modules/s3-bucket"
@@ -184,7 +177,6 @@ environment {
   }
 
   # Encryption key hook - asymmetric (RSA/ECDSA)
-  # Generates key pair and stores in AWS Secrets Manager
   encryptionKey {
     when = node.inputs.keyType == "rsa" || node.inputs.keyType == "ecdsa"
 
@@ -206,8 +198,7 @@ environment {
     }
   }
 
-  # Encryption key hook - symmetric
-  # Uses AWS KMS for key management
+  # Encryption key hook - symmetric (KMS)
   encryptionKey {
     when = node.inputs.keyType == "symmetric"
 
@@ -243,14 +234,40 @@ environment {
     }
   }
 
-  # Deployment hook - container-based (image present)
+  # Deployment hook - container images on Lambda
+  # Lambda supports container images up to 10 GB. Deployments run as
+  # long-lived Lambda functions fronted by API Gateway.
   deployment {
     when = node.inputs.image != null
 
-    module "ecs_service" {
-      build = "./modules/ecs-service"
+    module "lambda_deployment" {
+      build = "./modules/lambda-container"
       inputs = merge(node.inputs, {
-        cluster           = variable.cluster_name
+        name              = "${environment.name}-${node.component}-${node.name}"
+        region            = variable.aws_region
+        vpc_id            = variable.vpc_id
+        security_group_id = module.security_group.id
+        log_group         = module.log_group.name
+        api_id            = module.api_gateway.id
+        stage             = environment.name
+      })
+    }
+
+    outputs = {
+      id = module.lambda_deployment.function_arn
+    }
+  }
+
+  # NOTE: VM/runtime deployments are NOT supported in this serverless template.
+  # Use aws-ecs or aws-vms for workloads requiring runtime-based deployments.
+
+  # Function hook - Lambda
+  function {
+    module "lambda_function" {
+      build = "./modules/lambda-function"
+      inputs = merge(node.inputs, {
+        name              = "${environment.name}-${node.component}-${node.name}"
+        region            = variable.aws_region
         vpc_id            = variable.vpc_id
         security_group_id = module.security_group.id
         log_group         = module.log_group.name
@@ -258,52 +275,19 @@ environment {
     }
 
     outputs = {
-      id = module.ecs_service.service_id
+      id       = module.lambda_function.function_arn
+      endpoint = module.lambda_function.function_url
     }
   }
 
-  # Deployment hook - VM-based (runtime present, no image)
-  # Provisions EC2 instances for workloads using the runtime property
-  deployment {
-    when = node.inputs.runtime != null && node.inputs.image == null
-
-    module "ec2_vm" {
-      plugin = "opentofu"
-      build  = "./modules/ec2-vm"
-      inputs = merge(node.inputs, {
-        name           = "${environment.name}-${node.component}-${node.name}"
-        subnet_id      = module.security_group.subnet_id
-        security_group = module.security_group.id
-      })
-    }
-
-    outputs = {
-      id = module.ec2_vm.instance_id
-    }
-  }
-
-  function {
-    module "lambda" {
-      build = "./modules/lambda-function"
-      inputs = merge(node.inputs, {
-        name              = "${environment.name}-${node.name}"
-        vpc_id            = variable.vpc_id
-        security_group_id = module.security_group.id
-      })
-    }
-
-    outputs = {
-      id       = module.lambda.function_arn
-      endpoint = module.lambda.function_url
-    }
-  }
-
+  # Service hook - API Gateway internal integration
   service {
-    module "service_discovery" {
-      build = "./modules/service-discovery"
+    module "api_integration" {
+      build = "./modules/api-gateway-integration"
       inputs = {
+        api_id      = module.api_gateway.id
+        stage       = environment.name
         name        = node.name
-        namespace   = environment.name
         target      = node.inputs.target
         target_type = node.inputs.target_type
         port        = node.inputs.port
@@ -311,19 +295,22 @@ environment {
     }
 
     outputs = {
-      host = module.service_discovery.dns_name
-      port = module.service_discovery.port
-      url  = "http://${module.service_discovery.dns_name}:${module.service_discovery.port}"
+      host = module.api_integration.endpoint_host
+      port = module.api_integration.endpoint_port
+      url  = module.api_integration.endpoint_url
     }
   }
 
+  # Ingress hook - API Gateway route + CloudFront
   ingress {
-    module "alb_listener_rule" {
-      build = "./modules/alb-listener-rule"
+    module "api_route" {
+      build = "./modules/api-gateway-route"
       inputs = merge(node.inputs, {
-        alb_arn          = module.alb.arn
-        target_group_arn = module.target_group.arn
+        api_id           = module.api_gateway.id
+        stage            = environment.name
         domain           = "${environment.name}.${variable.domain}"
+        certificate_arn  = variable.certificate_arn
+        hosted_zone_id   = variable.hosted_zone_id
       })
     }
 
@@ -336,20 +323,25 @@ environment {
     }
   }
 
+  # Cronjob hook - EventBridge scheduled Lambda
   cronjob {
-    module "eventbridge_task" {
-      build = "./modules/eventbridge-scheduled-task"
+    module "eventbridge_lambda" {
+      build = "./modules/eventbridge-scheduled-lambda"
       inputs = merge(node.inputs, {
-        name    = "${environment.name}-${node.name}"
-        cluster = variable.cluster_name
+        name              = "${environment.name}-${node.component}-${node.name}"
+        region            = variable.aws_region
+        vpc_id            = variable.vpc_id
+        security_group_id = module.security_group.id
+        log_group         = module.log_group.name
       })
     }
 
     outputs = {
-      id = module.eventbridge_task.rule_arn
+      id = module.eventbridge_lambda.rule_arn
     }
   }
 
+  # Database user hook
   databaseUser {
     module "rds_user" {
       build = "./modules/rds-user"
@@ -366,6 +358,7 @@ environment {
     }
   }
 
+  # Secret hook - Secrets Manager
   secret {
     module "secrets_manager" {
       build = "./modules/secrets-manager"
@@ -380,6 +373,7 @@ environment {
     }
   }
 
+  # Docker build hook - ECR
   dockerBuild {
     module "ecr_build" {
       build = "./modules/ecr-build"
@@ -397,24 +391,20 @@ environment {
     }
   }
 
-  # Observability hook - OTel collector sidecar on ECS with CloudWatch backend
-  # Deploys an OpenTelemetry Collector as an ECS service that receives OTLP
-  # telemetry and exports to CloudWatch Logs, CloudWatch Metrics, and X-Ray.
+  # Observability hook - CloudWatch Lambda Insights
+  # Uses Lambda Insights extension for metrics and CloudWatch for logs.
   observability {
-    module "otel_collector" {
-      build = "./modules/ecs-otel-collector"
+    module "lambda_insights" {
+      build = "./modules/cloudwatch-lambda-insights"
       inputs = {
-        name              = "${environment.name}-otel-collector"
-        cluster           = variable.cluster_name
-        region            = variable.aws_region
-        vpc_id            = variable.vpc_id
-        security_group_id = module.security_group.id
-        log_group         = module.log_group.name
+        name      = "${environment.name}-observability"
+        region    = variable.aws_region
+        log_group = module.log_group.name
       }
     }
 
     outputs = {
-      endpoint       = module.otel_collector.otlp_endpoint
+      endpoint       = module.lambda_insights.otlp_endpoint
       protocol       = "http/protobuf"
       query_type     = "cloudwatch"
       query_endpoint = "https://logs.${variable.aws_region}.amazonaws.com"
@@ -422,7 +412,7 @@ environment {
       attributes = {
         "cloud.provider" = "aws"
         "cloud.region"   = variable.aws_region
-        "cloud.platform" = "aws_ecs"
+        "cloud.platform" = "aws_lambda"
       }
     }
   }

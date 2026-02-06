@@ -1,28 +1,31 @@
 ---
-title: "AWS ECS Fargate"
-description: "Deploy to AWS ECS Fargate with RDS, S3, SES, KMS, and OTel observability"
+title: "AWS Lambda (Serverless)"
+description: "Serverless-first AWS deployment with Lambda, API Gateway, and CloudFront"
 ---
 
-# AWS ECS Fargate Datacenter
+# AWS Lambda Datacenter
 
-This guide shows how to build a datacenter that deploys components to AWS ECS Fargate with managed services for databases, storage, email, encryption, and observability.
+This guide shows how to build a serverless-first datacenter on AWS. All compute runs on Lambda with API Gateway for routing, RDS for databases, S3 for storage, and SES for email.
 
 <Info>
-This is an officially maintained datacenter template. Source: [`official-templates/aws-ecs/`](https://github.com/architect-io/arcctl/tree/main/official-templates/aws-ecs)
+This is an officially maintained datacenter template. Source: [`official-templates/aws-lambda/`](https://github.com/architect-io/arcctl/tree/main/official-templates/aws-lambda)
 </Info>
 
 ## Overview
 
 This datacenter provides:
-- **Compute**: ECS Fargate (serverless containers)
+- **Compute**: AWS Lambda for functions and container-based deployments
+- **Routing**: API Gateway + CloudFront
 - **Databases**: RDS for PostgreSQL/MySQL, ElastiCache for Redis
 - **Storage**: S3 buckets
 - **Encryption**: KMS (symmetric), Secrets Manager (asymmetric key pairs)
 - **Email**: AWS SES (SMTP)
-- **Networking**: VPC, ALB, Route53
-- **Functions**: AWS Lambda
-- **Scheduling**: EventBridge scheduled tasks
-- **Observability**: OTel Collector on ECS exporting to CloudWatch + X-Ray
+- **Scheduling**: EventBridge for cronjobs
+- **Observability**: CloudWatch Lambda Insights
+
+<Warning>
+This template does **not** support VM/runtime-based deployments. Use [AWS ECS](/guides/datacenters/aws-ecs) or [AWS VMs](/guides/datacenters/aws-vms) for workloads that require a runtime environment.
+</Warning>
 
 ## Configuration Variables
 
@@ -38,14 +41,10 @@ variable "vpc_id" {
   type        = string
 }
 
-variable "cluster_name" {
-  description = "ECS cluster name"
-  type        = string
-}
-
 variable "domain" {
   description = "Base domain for environments"
   type        = string
+  default     = "app.example.com"
 }
 
 variable "hosted_zone_id" {
@@ -83,22 +82,22 @@ variable "ses_smtp_password" {
 Resources created once and shared across environments:
 
 ```hcl
-# ECS Cluster
-module "ecs_cluster" {
-  build = "./modules/ecs-cluster"
+# API Gateway (shared across environments)
+module "api_gateway" {
+  build = "./modules/api-gateway"
   inputs = {
-    name   = variable.cluster_name
-    region = variable.aws_region
-    vpc_id = variable.vpc_id
+    name            = "arcctl-gateway"
+    region          = variable.aws_region
+    certificate_arn = variable.certificate_arn
   }
 }
 
-# Application Load Balancer
-module "alb" {
-  build = "./modules/alb"
+# CloudFront distribution
+module "cdn" {
+  build = "./modules/cloudfront"
   inputs = {
-    name            = "${variable.cluster_name}-alb"
-    vpc_id          = variable.vpc_id
+    api_gateway_url = module.api_gateway.invoke_url
+    domain          = variable.domain
     certificate_arn = variable.certificate_arn
   }
 }
@@ -108,20 +107,19 @@ module "alb" {
 
 ```hcl
 environment {
-  # Per-environment resources
-  module "target_group" {
-    build = "./modules/alb-target-group"
+  # API Gateway stage per environment
+  module "api_stage" {
+    build = "./modules/api-gateway-stage"
     inputs = {
-      name    = environment.name
-      vpc_id  = variable.vpc_id
-      alb_arn = module.alb.arn
+      api_id = module.api_gateway.id
+      name   = environment.name
     }
   }
 
   module "log_group" {
     build = "./modules/cloudwatch-logs"
     inputs = {
-      name           = "/ecs/${variable.cluster_name}/${environment.name}"
+      name           = "/lambda/${environment.name}"
       retention_days = 30
     }
   }
@@ -129,7 +127,7 @@ environment {
   module "security_group" {
     build = "./modules/security-group"
     inputs = {
-      name   = "${environment.name}-sg"
+      name   = "${environment.name}-lambda-sg"
       vpc_id = variable.vpc_id
     }
   }
@@ -165,32 +163,31 @@ database {
 }
 ```
 
-### Task Hook (ECS Fargate)
+### Task Hook (Lambda)
 
-One-time container execution using ECS tasks on Fargate Spot:
+One-time tasks run as Lambda invocations with up to 15-minute timeout:
 
 ```hcl
 task {
-  module "run_task" {
-    build = "./modules/ecs-task"
+  module "task_lambda" {
+    build = "./modules/lambda-task"
     inputs = {
       name              = "${node.component}--${node.name}"
-      cluster           = variable.cluster_name
+      region            = variable.aws_region
       vpc_id            = variable.vpc_id
       security_group_id = module.security_group.id
       log_group         = module.log_group.name
       image             = node.inputs.image
       command           = node.inputs.command
       environment       = node.inputs.environment
-      capacity_provider = "FARGATE_SPOT"
-      cpu               = "256"
-      memory            = "512"
+      timeout           = 900
+      memory            = 512
     }
   }
 
   outputs = {
-    id     = module.run_task.task_arn
-    status = module.run_task.status
+    id     = module.task_lambda.function_arn
+    status = module.task_lambda.status
   }
 }
 ```
@@ -221,10 +218,8 @@ bucket {
 
 ### Encryption Key Hook (KMS + Secrets Manager)
 
-Asymmetric keys (RSA/ECDSA) are generated and stored in AWS Secrets Manager. Symmetric keys use AWS KMS:
-
 ```hcl
-# Asymmetric keys
+# Asymmetric keys (RSA/ECDSA) - stored in Secrets Manager
 encryptionKey {
   when = node.inputs.keyType == "rsa" || node.inputs.keyType == "ecdsa"
 
@@ -246,7 +241,7 @@ encryptionKey {
   }
 }
 
-# Symmetric keys
+# Symmetric keys - AWS KMS
 encryptionKey {
   when = node.inputs.keyType == "symmetric"
 
@@ -267,8 +262,6 @@ encryptionKey {
 
 ### SMTP Hook (SES)
 
-Uses AWS SES for transactional email:
-
 ```hcl
 smtp {
   module "ses_smtp" {
@@ -288,50 +281,29 @@ smtp {
 }
 ```
 
-### Deployment Hook (ECS Service)
+### Deployment Hook (Lambda Container)
 
-Container-based deployments run on ECS Fargate:
+Container-based deployments run as Lambda functions using container images (up to 10 GB):
 
 ```hcl
 deployment {
   when = node.inputs.image != null
 
-  module "ecs_service" {
-    build = "./modules/ecs-service"
+  module "lambda_deployment" {
+    build = "./modules/lambda-container"
     inputs = merge(node.inputs, {
-      cluster           = variable.cluster_name
+      name              = "${environment.name}-${node.component}-${node.name}"
+      region            = variable.aws_region
       vpc_id            = variable.vpc_id
       security_group_id = module.security_group.id
       log_group         = module.log_group.name
+      api_id            = module.api_gateway.id
+      stage             = environment.name
     })
   }
 
   outputs = {
-    id = module.ecs_service.service_id
-  }
-}
-```
-
-### Deployment Hook (EC2 VM)
-
-VM-based deployments use EC2 instances for workloads with the `runtime` property:
-
-```hcl
-deployment {
-  when = node.inputs.runtime != null && node.inputs.image == null
-
-  module "ec2_vm" {
-    plugin = "opentofu"
-    build  = "./modules/ec2-vm"
-    inputs = merge(node.inputs, {
-      name           = "${environment.name}-${node.component}-${node.name}"
-      subnet_id      = module.security_group.subnet_id
-      security_group = module.security_group.id
-    })
-  }
-
-  outputs = {
-    id = module.ec2_vm.instance_id
+    id = module.lambda_deployment.function_arn
   }
 }
 ```
@@ -340,55 +312,36 @@ deployment {
 
 ```hcl
 function {
-  module "lambda" {
+  module "lambda_function" {
     build = "./modules/lambda-function"
     inputs = merge(node.inputs, {
-      name              = "${environment.name}-${node.name}"
+      name              = "${environment.name}-${node.component}-${node.name}"
+      region            = variable.aws_region
       vpc_id            = variable.vpc_id
       security_group_id = module.security_group.id
+      log_group         = module.log_group.name
     })
   }
 
   outputs = {
-    id       = module.lambda.function_arn
-    endpoint = module.lambda.function_url
+    id       = module.lambda_function.function_arn
+    endpoint = module.lambda_function.function_url
   }
 }
 ```
 
-### Service Hook (Cloud Map)
-
-```hcl
-service {
-  module "service_discovery" {
-    build = "./modules/service-discovery"
-    inputs = {
-      name        = node.name
-      namespace   = environment.name
-      target      = node.inputs.target
-      target_type = node.inputs.target_type
-      port        = node.inputs.port
-    }
-  }
-
-  outputs = {
-    host = module.service_discovery.dns_name
-    port = module.service_discovery.port
-    url  = "http://${module.service_discovery.dns_name}:${module.service_discovery.port}"
-  }
-}
-```
-
-### Ingress Hook (ALB)
+### Ingress Hook (API Gateway + CloudFront)
 
 ```hcl
 ingress {
-  module "alb_listener_rule" {
-    build = "./modules/alb-listener-rule"
+  module "api_route" {
+    build = "./modules/api-gateway-route"
     inputs = merge(node.inputs, {
-      alb_arn          = module.alb.arn
-      target_group_arn = module.target_group.arn
-      domain           = "${environment.name}.${variable.domain}"
+      api_id          = module.api_gateway.id
+      stage           = environment.name
+      domain          = "${environment.name}.${variable.domain}"
+      certificate_arn = variable.certificate_arn
+      hosted_zone_id  = variable.hosted_zone_id
     })
   }
 
@@ -406,16 +359,19 @@ ingress {
 
 ```hcl
 cronjob {
-  module "eventbridge_task" {
-    build = "./modules/eventbridge-scheduled-task"
+  module "eventbridge_lambda" {
+    build = "./modules/eventbridge-scheduled-lambda"
     inputs = merge(node.inputs, {
-      name    = "${environment.name}-${node.name}"
-      cluster = variable.cluster_name
+      name              = "${environment.name}-${node.component}-${node.name}"
+      region            = variable.aws_region
+      vpc_id            = variable.vpc_id
+      security_group_id = module.security_group.id
+      log_group         = module.log_group.name
     })
   }
 
   outputs = {
-    id = module.eventbridge_task.rule_arn
+    id = module.eventbridge_lambda.rule_arn
   }
 }
 ```
@@ -441,26 +397,21 @@ dockerBuild {
 }
 ```
 
-### Observability Hook (OTel Collector on ECS)
-
-Deploys an OpenTelemetry Collector as an ECS service that receives OTLP telemetry and exports to CloudWatch and X-Ray:
+### Observability Hook (CloudWatch Lambda Insights)
 
 ```hcl
 observability {
-  module "otel_collector" {
-    build = "./modules/ecs-otel-collector"
+  module "lambda_insights" {
+    build = "./modules/cloudwatch-lambda-insights"
     inputs = {
-      name              = "${environment.name}-otel-collector"
-      cluster           = variable.cluster_name
-      region            = variable.aws_region
-      vpc_id            = variable.vpc_id
-      security_group_id = module.security_group.id
-      log_group         = module.log_group.name
+      name      = "${environment.name}-observability"
+      region    = variable.aws_region
+      log_group = module.log_group.name
     }
   }
 
   outputs = {
-    endpoint       = module.otel_collector.otlp_endpoint
+    endpoint       = module.lambda_insights.otlp_endpoint
     protocol       = "http/protobuf"
     query_type     = "cloudwatch"
     query_endpoint = "https://logs.${variable.aws_region}.amazonaws.com"
@@ -468,23 +419,22 @@ observability {
     attributes = {
       "cloud.provider" = "aws"
       "cloud.region"   = variable.aws_region
-      "cloud.platform" = "aws_ecs"
+      "cloud.platform" = "aws_lambda"
     }
   }
 }
 ```
 
-## Deploying the Datacenter
+## Deploying
 
 ```bash
 # Build the datacenter
-arcctl dc build . -t ghcr.io/myorg/aws-ecs-dc:v1.0.0
-arcctl dc push ghcr.io/myorg/aws-ecs-dc:v1.0.0
+arcctl dc build . -t ghcr.io/myorg/aws-lambda-dc:v1.0.0
+arcctl dc push ghcr.io/myorg/aws-lambda-dc:v1.0.0
 
 # Deploy with variables
-arcctl dc deploy aws-production \
-  --config ghcr.io/myorg/aws-ecs-dc:v1.0.0 \
-  --var cluster_name=prod-cluster \
+arcctl dc deploy aws-serverless \
+  --config ghcr.io/myorg/aws-lambda-dc:v1.0.0 \
   --var vpc_id=vpc-12345 \
   --var domain=app.example.com \
   --var hosted_zone_id=Z123456 \
@@ -492,31 +442,32 @@ arcctl dc deploy aws-production \
   --var ses_identity_arn=arn:aws:ses:... \
   --var ses_smtp_username=$SES_USERNAME \
   --var ses_smtp_password=$SES_PASSWORD
-```
 
-## Creating Environments
-
-```bash
-# Create staging environment
-arcctl env create staging --datacenter aws-production
-
-# Deploy components
+# Create environment and deploy
+arcctl env create staging --datacenter aws-serverless
 arcctl deploy ghcr.io/myorg/my-app:v1.0.0 -e staging
 ```
 
+## Limitations
+
+- **No VM/runtime deployments** - This is a serverless-only template
+- **Lambda timeout** - Maximum 15 minutes per invocation
+- **Lambda container images** - Must be under 10 GB
+- **Cold starts** - Lambda functions may experience cold start latency
+- **Stateful workloads** - Use ECS or EC2 templates for long-running stateful services
+
 ## Cost Optimization
 
-- Use Fargate Spot for non-critical workloads
-- RDS t3.micro for development environments
-- CloudWatch log retention to control costs
-- S3 lifecycle policies for object storage
-- Use Lambda for infrequent workloads instead of ECS services
+- Pay only for what you use (Lambda charges per invocation and duration)
+- Use RDS Serverless v2 for variable database workloads
+- CloudFront caching reduces Lambda invocations
+- EventBridge is free for the first 14 million events/month
 
 ## Related Guides
 
 <CardGroup cols={2}>
-  <Card title="AWS Lambda" href="/guides/datacenters/aws-lambda">
-    Serverless-first AWS deployment with Lambda
+  <Card title="AWS ECS Fargate" href="/guides/datacenters/aws-ecs">
+    Container-based AWS deployment with ECS
   </Card>
   <Card title="AWS Kubernetes (EKS)" href="/guides/datacenters/aws-k8s">
     Kubernetes on AWS with EKS

@@ -34,6 +34,8 @@ func standardFunctions() map[string]function.Function {
 		"formatlist": stdlib.FormatListFunc,
 		"regex":      stdlib.RegexFunc,
 		"regexall":   stdlib.RegexAllFunc,
+		"startswith": startsWithFunc,
+		"endswith":   endsWithFunc,
 
 		// Collection functions
 		"length":   stdlib.LengthFunc,
@@ -206,6 +208,34 @@ var defaultFunc = function.New(&function.Spec{
 		}
 
 		return val, nil
+	},
+})
+
+// startsWithFunc returns true if the string starts with the given prefix.
+var startsWithFunc = function.New(&function.Spec{
+	Params: []function.Parameter{
+		{Name: "str", Type: cty.String},
+		{Name: "prefix", Type: cty.String},
+	},
+	Type: function.StaticReturnType(cty.Bool),
+	Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
+		str := args[0].AsString()
+		prefix := args[1].AsString()
+		return cty.BoolVal(strings.HasPrefix(str, prefix)), nil
+	},
+})
+
+// endsWithFunc returns true if the string ends with the given suffix.
+var endsWithFunc = function.New(&function.Spec{
+	Params: []function.Parameter{
+		{Name: "str", Type: cty.String},
+		{Name: "suffix", Type: cty.String},
+	},
+	Type: function.StaticReturnType(cty.Bool),
+	Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
+		str := args[0].AsString()
+		suffix := args[1].AsString()
+		return cty.BoolVal(strings.HasSuffix(str, suffix)), nil
 	},
 })
 

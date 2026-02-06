@@ -1,0 +1,483 @@
+---
+title: "GCP VMs (Compute Engine)"
+description: "Deploy to Compute Engine VMs with Cloud SQL, GCS, and Cloud Monitoring"
+---
+
+# GCP VM-based Datacenter
+
+This guide shows how to build a datacenter that deploys all workloads to Google Compute Engine VMs. Container-based deployments install Docker on the VM, runtime-based deployments install the language runtime directly, and functions run as long-running processes behind Cloud Load Balancing.
+
+<Info>
+This is an officially maintained datacenter template. Source: [`official-templates/gcp-vms/`](https://github.com/architect-io/arcctl/tree/main/official-templates/gcp-vms)
+</Info>
+
+## Overview
+
+This datacenter provides:
+- **Compute**: Compute Engine VMs for all deployments (via OpenTofu)
+- **Databases**: Cloud SQL (PostgreSQL, MySQL), Memorystore (Redis)
+- **Storage**: Google Cloud Storage (S3-compatible via HMAC keys)
+- **Functions**: Long-running processes on Compute Engine behind load balancer
+- **Networking**: Cloud Load Balancing, Cloud DNS
+- **SMTP**: Configurable external relay (SendGrid, Mailgun, etc.)
+- **Observability**: Cloud Monitoring Ops Agent on VMs
+
+## Configuration Variables
+
+```hcl
+variable "gcp_project" {
+  description = "GCP project ID"
+  type        = string
+}
+
+variable "gcp_region" {
+  description = "GCP region"
+  type        = string
+  default     = "us-central1"
+}
+
+variable "domain" {
+  description = "Base domain for environments"
+  type        = string
+  default     = "app.example.com"
+}
+
+variable "registry" {
+  description = "Artifact Registry repository URL"
+  type        = string
+}
+
+variable "machine_type" {
+  description = "Default Compute Engine machine type"
+  type        = string
+  default     = "e2-medium"
+}
+
+variable "ssh_key" {
+  description = "SSH public key for VM access"
+  type        = string
+}
+
+variable "smtp_host" {
+  description = "External SMTP relay host"
+  type        = string
+  default     = "smtp.sendgrid.net"
+}
+
+variable "smtp_port" {
+  description = "External SMTP relay port"
+  type        = number
+  default     = 587
+}
+
+variable "smtp_username" {
+  description = "External SMTP relay username"
+  type        = string
+  default     = "apikey"
+}
+
+variable "smtp_password" {
+  description = "External SMTP relay password"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+```
+
+## Shared Infrastructure
+
+```hcl
+# VPC for private connectivity
+module "vpc" {
+  build = "./modules/gcp-vpc"
+  inputs = {
+    name    = "${variable.gcp_project}-vpc"
+    project = variable.gcp_project
+    region  = variable.gcp_region
+  }
+}
+
+# Cloud Load Balancing (shared across environments)
+module "load_balancer" {
+  build = "./modules/gcp-cloud-lb"
+  inputs = {
+    name    = "${variable.gcp_project}-lb"
+    project = variable.gcp_project
+    domain  = variable.domain
+  }
+}
+```
+
+## Environment Configuration
+
+```hcl
+environment {
+  # Cloud DNS records per environment
+  module "dns_records" {
+    build = "./modules/gcp-cloud-dns"
+    inputs = {
+      project   = variable.gcp_project
+      zone_name = variable.domain
+      subdomain = environment.name
+      target    = module.load_balancer.ip_address
+    }
+  }
+
+  # Firewall rules per environment
+  module "firewall" {
+    build = "./modules/gcp-firewall"
+    inputs = {
+      name    = "${environment.name}-fw"
+      project = variable.gcp_project
+      network = module.vpc.network_id
+      tags    = ["${environment.name}"]
+    }
+  }
+}
+```
+
+## Resource Hooks
+
+### Database Hook (Cloud SQL + Memorystore)
+
+PostgreSQL and MySQL use Cloud SQL; Redis uses Memorystore:
+
+```hcl
+database {
+  when = element(split(":", node.inputs.type), 0) == "postgres"
+
+  module "cloud_sql_pg" {
+    build = "./modules/gcp-cloud-sql"
+    inputs = {
+      name          = "${environment.name}-${node.component}-${node.name}"
+      project       = variable.gcp_project
+      region        = variable.gcp_region
+      engine        = "POSTGRES"
+      version       = coalesce(try(element(split(":", node.inputs.type), 1), null), "16")
+      tier          = "db-f1-micro"
+      network       = module.vpc.network_id
+      database_name = node.name
+    }
+  }
+
+  outputs = {
+    host     = module.cloud_sql_pg.private_ip
+    port     = module.cloud_sql_pg.port
+    database = module.cloud_sql_pg.database
+    username = module.cloud_sql_pg.username
+    password = module.cloud_sql_pg.password
+    url      = module.cloud_sql_pg.connection_url
+  }
+}
+```
+
+### Deployment Hook (Container on Compute Engine)
+
+Container-based deployments install Docker on the Compute Engine VM and run the image:
+
+```hcl
+deployment {
+  when = node.inputs.image != null
+
+  module "docker_vm" {
+    plugin = "opentofu"
+    build  = "./modules/gcp-compute-docker"
+    inputs = merge(node.inputs, {
+      name         = "${environment.name}-${node.component}-${node.name}"
+      project      = variable.gcp_project
+      zone         = "${variable.gcp_region}-a"
+      machine_type = variable.machine_type
+      network      = module.vpc.network_id
+      subnet       = module.vpc.subnet_id
+      ssh_key      = variable.ssh_key
+      tags         = ["${environment.name}"]
+    })
+  }
+
+  outputs = {
+    id = module.docker_vm.instance_id
+  }
+}
+```
+
+The Docker VM module uses a startup script to install Docker, authenticate with Artifact Registry, pull the container image, and run it as a systemd service.
+
+### Deployment Hook (Runtime on Compute Engine)
+
+Runtime-based deployments install the language runtime directly on the VM:
+
+```hcl
+deployment {
+  when = node.inputs.runtime != null && node.inputs.image == null
+
+  module "runtime_vm" {
+    plugin = "opentofu"
+    build  = "./modules/gcp-compute-runtime"
+    inputs = merge(node.inputs, {
+      name         = "${environment.name}-${node.component}-${node.name}"
+      project      = variable.gcp_project
+      zone         = "${variable.gcp_region}-a"
+      machine_type = variable.machine_type
+      network      = module.vpc.network_id
+      subnet       = module.vpc.subnet_id
+      ssh_key      = variable.ssh_key
+      tags         = ["${environment.name}"]
+    })
+  }
+
+  outputs = {
+    id = module.runtime_vm.instance_id
+  }
+}
+```
+
+The runtime VM module translates the portable `runtime` inputs into cloud-specific provisioning: selecting a machine image, installing the language runtime (e.g., Node.js 20, Python 3.12), system packages, running setup commands, and creating a systemd service.
+
+### Function Hook (Compute Engine)
+
+Since Compute Engine doesn't have native serverless support, functions are deployed as long-running processes on VMs behind the load balancer:
+
+```hcl
+function {
+  module "function_vm" {
+    plugin = "opentofu"
+    build  = "./modules/gcp-compute-function"
+    inputs = merge(node.inputs, {
+      name         = "${environment.name}-${node.component}-${node.name}"
+      project      = variable.gcp_project
+      zone         = "${variable.gcp_region}-a"
+      machine_type = variable.machine_type
+      network      = module.vpc.network_id
+      subnet       = module.vpc.subnet_id
+      ssh_key      = variable.ssh_key
+      tags         = ["${environment.name}"]
+    })
+  }
+
+  outputs = {
+    id       = module.function_vm.instance_id
+    endpoint = "http://${module.function_vm.internal_ip}:${module.function_vm.port}"
+  }
+}
+```
+
+### Bucket Hook (GCS)
+
+Google Cloud Storage with HMAC keys for S3-compatible access:
+
+```hcl
+bucket {
+  module "gcs_bucket" {
+    build = "./modules/gcp-gcs"
+    inputs = {
+      name       = "${variable.gcp_project}-${environment.name}-${node.name}"
+      project    = variable.gcp_project
+      region     = variable.gcp_region
+      versioning = node.inputs.versioning
+      public     = node.inputs.public
+    }
+  }
+
+  outputs = {
+    endpoint        = "https://storage.googleapis.com"
+    bucket          = module.gcs_bucket.bucket_name
+    region          = variable.gcp_region
+    accessKeyId     = module.gcs_bucket.hmac_access_key
+    secretAccessKey = module.gcs_bucket.hmac_secret_key
+  }
+}
+```
+
+### Service Hook (Internal DNS)
+
+```hcl
+service {
+  module "internal_dns" {
+    build = "./modules/gcp-internal-dns"
+    inputs = {
+      name        = node.name
+      project     = variable.gcp_project
+      network     = module.vpc.network_id
+      target      = node.inputs.target
+      target_type = node.inputs.target_type
+      port        = node.inputs.port
+    }
+  }
+
+  outputs = {
+    host = module.internal_dns.dns_name
+    port = module.internal_dns.port
+    url  = "http://${module.internal_dns.dns_name}:${module.internal_dns.port}"
+  }
+}
+```
+
+### Ingress Hook (Cloud Load Balancing)
+
+```hcl
+ingress {
+  module "lb_backend" {
+    build = "./modules/gcp-lb-backend"
+    inputs = merge(node.inputs, {
+      name          = "${environment.name}-${node.name}"
+      project       = variable.gcp_project
+      region        = variable.gcp_region
+      load_balancer = module.load_balancer.id
+      domain        = "${environment.name}.${variable.domain}"
+    })
+  }
+
+  outputs = {
+    url      = "https://${environment.name}.${variable.domain}"
+    hosts    = ["${environment.name}.${variable.domain}"]
+    protocol = "https"
+    host     = "${environment.name}.${variable.domain}"
+    port     = 443
+  }
+}
+```
+
+### Cronjob Hook (Compute Engine)
+
+```hcl
+cronjob {
+  module "cron_vm" {
+    plugin = "opentofu"
+    build  = "./modules/gcp-compute-cron"
+    inputs = merge(node.inputs, {
+      name    = "${environment.name}-${node.component}-${node.name}"
+      project = variable.gcp_project
+      zone    = "${variable.gcp_region}-a"
+      network = module.vpc.network_id
+      subnet  = module.vpc.subnet_id
+      ssh_key = variable.ssh_key
+      tags    = ["${environment.name}"]
+    })
+  }
+
+  outputs = {
+    id = module.cron_vm.instance_id
+  }
+}
+```
+
+### Docker Build Hook (Artifact Registry)
+
+```hcl
+dockerBuild {
+  module "artifact_build" {
+    build = "./modules/gcp-artifact-build"
+    inputs = {
+      context    = node.inputs.context
+      dockerfile = node.inputs.dockerfile
+      target     = node.inputs.target
+      args       = node.inputs.args
+      registry   = variable.registry
+      project    = variable.gcp_project
+    }
+  }
+
+  outputs = {
+    image = module.artifact_build.image_uri
+  }
+}
+```
+
+### Observability Hook (Cloud Monitoring Ops Agent)
+
+```hcl
+observability {
+  module "vm_otel" {
+    build = "./modules/gcp-vm-otel-agent"
+    inputs = {
+      name    = "${environment.name}-otel"
+      project = variable.gcp_project
+      region  = variable.gcp_region
+    }
+  }
+
+  outputs = {
+    endpoint       = module.vm_otel.otlp_endpoint
+    protocol       = "grpc"
+    query_type     = "gcp_monitoring"
+    query_endpoint = "https://monitoring.googleapis.com/v3/projects/${variable.gcp_project}"
+    dashboard_url  = "https://console.cloud.google.com/monitoring/dashboards?project=${variable.gcp_project}"
+    attributes = {
+      "cloud.provider" = "gcp"
+      "cloud.region"   = variable.gcp_region
+      "cloud.project"  = variable.gcp_project
+    }
+  }
+}
+```
+
+## Deploying
+
+```bash
+# Build the datacenter
+arcctl dc build . -t ghcr.io/myorg/gcp-vms-dc:v1.0.0
+arcctl dc push ghcr.io/myorg/gcp-vms-dc:v1.0.0
+
+# Deploy with variables
+arcctl dc deploy gcp-vms-production \
+  --config ghcr.io/myorg/gcp-vms-dc:v1.0.0 \
+  --var gcp_project=my-project \
+  --var registry=us-central1-docker.pkg.dev/my-project/arcctl \
+  --var ssh_key="$(cat ~/.ssh/id_rsa.pub)" \
+  --var domain=app.example.com \
+  --var smtp_password=$SMTP_PASSWORD
+
+# Create environment and deploy
+arcctl env create staging --datacenter gcp-vms-production
+arcctl deploy ghcr.io/myorg/my-app:v1.0.0 -e staging
+```
+
+## Cost Optimization
+
+- Use `e2-medium` or `e2-small` machine types for development environments
+- Use preemptible/spot VMs for non-critical workloads
+- Cloud SQL `db-f1-micro` for development databases
+- Use Compute Engine sustained use discounts (automatic)
+- Consider committed use discounts for production workloads
+- GCS has low storage costs with configurable lifecycle policies
+
+## How It Works
+
+### Container Deployments (image present)
+
+When a component provides a Docker image, the OpenTofu module:
+1. Provisions a Compute Engine VM with the specified machine type
+2. Installs Docker via a startup script
+3. Authenticates with Artifact Registry
+4. Pulls and runs the container image as a systemd service
+5. Configures Cloud Monitoring Ops Agent for observability
+
+### Runtime Deployments (runtime present, no image)
+
+When a component specifies a runtime (e.g., `node:20`), the OpenTofu module:
+1. Provisions a Compute Engine VM with the specified machine type
+2. Installs the language runtime and system packages via startup script
+3. Runs setup commands (e.g., `npm ci --production`)
+4. Starts the application as a systemd service
+5. Configures Cloud Monitoring Ops Agent for observability
+
+### Functions
+
+Functions run as always-on processes on Compute Engine VMs behind the Cloud Load Balancer, providing stable HTTP endpoints. Unlike serverless platforms, these VMs do not scale to zero.
+
+## Related Guides
+
+<CardGroup cols={2}>
+  <Card title="GCP Cloud Run" href="/guides/datacenters/gcp-cloud-run">
+    Fully serverless deployment with scale-to-zero
+  </Card>
+  <Card title="GCP Kubernetes" href="/guides/datacenters/gcp-k8s">
+    GKE-based deployment with Knative and Compute Engine VMs
+  </Card>
+  <Card title="AWS VMs" href="/guides/datacenters/aws-vms">
+    Alternative VM-based deployment on AWS
+  </Card>
+  <Card title="Managing Environments" href="/guides/managing-environments">
+    Day-to-day environment operations
+  </Card>
+</CardGroup>

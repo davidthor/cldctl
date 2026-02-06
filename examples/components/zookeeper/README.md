@@ -108,7 +108,7 @@ deployments:
 ```yaml
 # environment.yml
 name: zookeeper-standalone
-datacenter: local-docker
+datacenter: local
 
 components:
   zookeeper:

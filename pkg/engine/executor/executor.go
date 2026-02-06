@@ -787,7 +787,7 @@ func (e *Executor) buildModuleInputs(module datacenter.Module, node *graph.Node,
 	}
 
 	// Build inputs based on module type with standard mappings
-	// These are the common inputs expected by local-docker datacenter modules
+	// These are the common inputs expected by local datacenter modules
 	moduleName := module.Name()
 
 	switch moduleName {

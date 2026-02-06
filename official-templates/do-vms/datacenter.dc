@@ -1,0 +1,450 @@
+# DigitalOcean Droplet (VM) datacenter
+# Deploys everything to Droplets. Container-based workloads use Docker on
+# Droplets; runtime-based workloads install the language runtime directly.
+# Functions are deployed as long-running processes behind a Caddy reverse proxy.
+
+variable "do_token" {
+  description = "DigitalOcean API token"
+  type        = string
+  sensitive   = true
+}
+
+variable "region" {
+  description = "DigitalOcean region"
+  type        = string
+  default     = "nyc3"
+}
+
+variable "domain" {
+  description = "Base domain for environments"
+  type        = string
+  default     = "app.example.com"
+}
+
+variable "ssh_key_fingerprint" {
+  description = "SSH key fingerprint for Droplet access"
+  type        = string
+}
+
+variable "droplet_size" {
+  description = "Default Droplet size for workloads"
+  type        = string
+  default     = "s-1vcpu-1gb"
+}
+
+variable "registry" {
+  description = "Container registry URL"
+  type        = string
+  default     = "registry.digitalocean.com"
+}
+
+variable "smtp_host" {
+  description = "External SMTP relay host"
+  type        = string
+  default     = "smtp.sendgrid.net"
+}
+
+variable "smtp_port" {
+  description = "External SMTP relay port"
+  type        = number
+  default     = 587
+}
+
+variable "smtp_username" {
+  description = "External SMTP relay username"
+  type        = string
+  default     = "apikey"
+}
+
+variable "smtp_password" {
+  description = "External SMTP relay password"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+# Shared DigitalOcean Load Balancer for routing traffic across environments
+module "load_balancer" {
+  plugin = "opentofu"
+  build  = "./modules/do-load-balancer"
+  inputs = {
+    name     = "arcctl-lb"
+    region   = variable.region
+    do_token = variable.do_token
+  }
+}
+
+# Shared VPC for internal networking
+module "vpc" {
+  plugin = "opentofu"
+  build  = "./modules/do-vpc"
+  inputs = {
+    name     = "arcctl-vpc"
+    region   = variable.region
+    do_token = variable.do_token
+  }
+}
+
+environment {
+  # DNS records for environment subdomain
+  module "dns_records" {
+    plugin = "opentofu"
+    build  = "./modules/do-dns"
+    inputs = {
+      domain    = variable.domain
+      subdomain = environment.name
+      target    = module.load_balancer.ip
+      token     = variable.do_token
+    }
+  }
+
+  # Database hook - managed databases (postgres, mysql, redis)
+  database {
+    module "managed_database" {
+      plugin = "opentofu"
+      build  = "./modules/do-managed-database"
+      inputs = {
+        name       = "${environment.name}-${node.name}"
+        type       = element(split(":", node.inputs.type), 0)
+        version    = try(element(split(":", node.inputs.type), 1), null)
+        region     = variable.region
+        size       = "db-s-1vcpu-1gb"
+        token      = variable.do_token
+        vpc_uuid   = module.vpc.vpc_id
+      }
+    }
+
+    outputs = {
+      host     = module.managed_database.host
+      port     = module.managed_database.port
+      database = module.managed_database.database
+      username = module.managed_database.username
+      password = module.managed_database.password
+      url      = module.managed_database.connection_url
+    }
+  }
+
+  # Task hook - run one-time tasks on a temporary Droplet
+  task {
+    module "task_droplet" {
+      plugin = "opentofu"
+      build  = "./modules/do-task-droplet"
+      inputs = {
+        name                = "${environment.name}-${node.component}-${node.name}-task"
+        image               = node.inputs.image
+        command             = node.inputs.command
+        environment         = node.inputs.environment
+        region              = variable.region
+        size                = variable.droplet_size
+        do_token            = variable.do_token
+        ssh_key_fingerprint = variable.ssh_key_fingerprint
+        vpc_uuid            = module.vpc.vpc_id
+      }
+    }
+
+    outputs = {
+      id     = module.task_droplet.droplet_id
+      status = module.task_droplet.status
+    }
+  }
+
+  # Bucket hook - DigitalOcean Spaces
+  bucket {
+    module "spaces_bucket" {
+      plugin = "opentofu"
+      build  = "./modules/do-spaces"
+      inputs = {
+        name       = "${environment.name}-${node.name}"
+        region     = variable.region
+        versioning = node.inputs.versioning
+        public     = node.inputs.public
+        token      = variable.do_token
+      }
+    }
+
+    outputs = {
+      endpoint        = "https://${variable.region}.digitaloceanspaces.com"
+      bucket          = module.spaces_bucket.bucket_name
+      region          = variable.region
+      accessKeyId     = module.spaces_bucket.access_key
+      secretAccessKey = module.spaces_bucket.secret_key
+    }
+  }
+
+  # Encryption key hook - asymmetric (RSA/ECDSA)
+  encryptionKey {
+    when = node.inputs.keyType == "rsa" || node.inputs.keyType == "ecdsa"
+
+    module "asymmetric_key" {
+      build = "./modules/encryption-key"
+      inputs = {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        key_type = node.inputs.keyType
+        key_size = node.inputs.keySize
+      }
+    }
+
+    outputs = {
+      privateKey       = module.asymmetric_key.privateKey
+      publicKey        = module.asymmetric_key.publicKey
+      privateKeyBase64 = module.asymmetric_key.privateKeyBase64
+      publicKeyBase64  = module.asymmetric_key.publicKeyBase64
+    }
+  }
+
+  # Encryption key hook - symmetric
+  encryptionKey {
+    when = node.inputs.keyType == "symmetric"
+
+    module "symmetric_key" {
+      build = "./modules/encryption-key"
+      inputs = {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        key_type = "symmetric"
+        key_size = node.inputs.keySize
+      }
+    }
+
+    outputs = {
+      key       = module.symmetric_key.key
+      keyBase64 = module.symmetric_key.keyBase64
+    }
+  }
+
+  # SMTP hook - external relay (no native DO SMTP)
+  smtp {
+    module "smtp_config" {
+      build = "./modules/state-secret"
+      inputs = {
+        name = "${environment.name}-${node.component}-${node.name}-smtp"
+        data = {
+          host     = variable.smtp_host
+          port     = tostring(variable.smtp_port)
+          username = variable.smtp_username
+          password = variable.smtp_password
+        }
+      }
+    }
+
+    outputs = {
+      host     = variable.smtp_host
+      port     = variable.smtp_port
+      username = variable.smtp_username
+      password = variable.smtp_password
+    }
+  }
+
+  # Database user hook - additional users on managed databases
+  databaseUser {
+    module "db_user" {
+      plugin = "opentofu"
+      build  = "./modules/do-database-user"
+      inputs = {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        database = node.inputs.database
+        token    = variable.do_token
+      }
+    }
+
+    outputs = {
+      username = module.db_user.username
+      password = module.db_user.password
+      url      = module.db_user.url
+    }
+  }
+
+  # Secret hook - store secrets in state
+  secret {
+    module "secret" {
+      build = "./modules/state-secret"
+      inputs = {
+        name = "${environment.name}-${node.component}-${node.name}"
+        data = {
+          value = node.inputs.value
+        }
+      }
+    }
+
+    outputs = {
+      id = module.secret.secret_id
+    }
+  }
+
+  # Deployment hook - container-based (Docker on Droplet)
+  deployment {
+    when = node.inputs.image != null
+
+    module "docker_droplet" {
+      plugin = "opentofu"
+      build  = "./modules/do-docker-droplet"
+      inputs = merge(node.inputs, {
+        name                = "${environment.name}-${node.component}-${node.name}"
+        region              = variable.region
+        size                = variable.droplet_size
+        do_token            = variable.do_token
+        ssh_key_fingerprint = variable.ssh_key_fingerprint
+        vpc_uuid            = module.vpc.vpc_id
+      })
+    }
+
+    outputs = {
+      id = module.docker_droplet.droplet_id
+    }
+  }
+
+  # Deployment hook - VM/runtime-based (install language runtime on Droplet)
+  deployment {
+    when = node.inputs.runtime != null && node.inputs.image == null
+
+    module "runtime_droplet" {
+      plugin = "opentofu"
+      build  = "./modules/do-runtime-droplet"
+      inputs = merge(node.inputs, {
+        name                = "${environment.name}-${node.component}-${node.name}"
+        region              = variable.region
+        size                = variable.droplet_size
+        do_token            = variable.do_token
+        ssh_key_fingerprint = variable.ssh_key_fingerprint
+        vpc_uuid            = module.vpc.vpc_id
+      })
+    }
+
+    outputs = {
+      id = module.runtime_droplet.droplet_id
+    }
+  }
+
+  # Function hook - deploy as long-running process on Droplet behind Caddy
+  # VMs don't natively support serverless functions, so we run the function
+  # as a persistent process with a Caddy reverse proxy for HTTP routing.
+  function {
+    module "function_droplet" {
+      plugin = "opentofu"
+      build  = "./modules/do-function-droplet"
+      inputs = merge(node.inputs, {
+        name                = "${environment.name}-${node.component}-${node.name}"
+        region              = variable.region
+        size                = variable.droplet_size
+        do_token            = variable.do_token
+        ssh_key_fingerprint = variable.ssh_key_fingerprint
+        vpc_uuid            = module.vpc.vpc_id
+      })
+    }
+
+    outputs = {
+      id       = module.function_droplet.droplet_id
+      endpoint = "http://${module.function_droplet.ipv4_address}:8080"
+    }
+  }
+
+  # Service hook - internal networking between Droplets
+  service {
+    module "service_record" {
+      plugin = "opentofu"
+      build  = "./modules/do-service-record"
+      inputs = merge(node.inputs, {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        domain   = variable.domain
+        do_token = variable.do_token
+      })
+    }
+
+    outputs = {
+      host = module.service_record.host
+      port = module.service_record.port
+      url  = "http://${module.service_record.host}:${module.service_record.port}"
+    }
+  }
+
+  # Ingress hook - DigitalOcean Load Balancer + DNS
+  ingress {
+    module "lb_rule" {
+      plugin = "opentofu"
+      build  = "./modules/do-lb-rule"
+      inputs = merge(node.inputs, {
+        name            = "${environment.name}-${node.component}-${node.name}"
+        load_balancer_id = module.load_balancer.lb_id
+        domain          = variable.domain
+        subdomain       = "${node.name}.${environment.name}"
+        do_token        = variable.do_token
+      })
+    }
+
+    outputs = {
+      url      = "https://${node.name}.${environment.name}.${variable.domain}"
+      hosts    = ["${node.name}.${environment.name}.${variable.domain}"]
+      protocol = "https"
+      host     = "${node.name}.${environment.name}.${variable.domain}"
+      port     = 443
+    }
+  }
+
+  # Cronjob hook - cron on a dedicated Droplet
+  cronjob {
+    module "cron_droplet" {
+      plugin = "opentofu"
+      build  = "./modules/do-cron-droplet"
+      inputs = merge(node.inputs, {
+        name                = "${environment.name}-${node.component}-${node.name}"
+        schedule            = node.inputs.schedule
+        region              = variable.region
+        size                = variable.droplet_size
+        do_token            = variable.do_token
+        ssh_key_fingerprint = variable.ssh_key_fingerprint
+        vpc_uuid            = module.vpc.vpc_id
+      })
+    }
+
+    outputs = {
+      id = module.cron_droplet.droplet_id
+    }
+  }
+
+  # Docker build hook - build and push to registry
+  dockerBuild {
+    module "docker_build" {
+      build = "./modules/docker-build-push"
+      inputs = {
+        context    = node.inputs.context
+        dockerfile = node.inputs.dockerfile
+        target     = node.inputs.target
+        args       = node.inputs.args
+        registry   = variable.registry
+        token      = variable.do_token
+      }
+    }
+
+    outputs = {
+      image = module.docker_build.image
+    }
+  }
+
+  # Observability hook - OTel collector on a dedicated Droplet
+  observability {
+    module "otel_droplet" {
+      plugin = "opentofu"
+      build  = "./modules/do-otel-droplet"
+      inputs = {
+        name                = "${environment.name}-otel"
+        region              = variable.region
+        size                = variable.droplet_size
+        do_token            = variable.do_token
+        ssh_key_fingerprint = variable.ssh_key_fingerprint
+        vpc_uuid            = module.vpc.vpc_id
+      }
+    }
+
+    outputs = {
+      endpoint       = "http://${module.otel_droplet.ipv4_address}:4318"
+      protocol       = "http/protobuf"
+      query_type     = "loki"
+      query_endpoint = "http://${module.otel_droplet.ipv4_address}:3100"
+      dashboard_url  = "http://${module.otel_droplet.ipv4_address}:3000"
+      attributes = {
+        "cloud.provider" = "digitalocean"
+        "cloud.platform" = "digitalocean_droplet"
+        "cloud.region"   = variable.region
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+plugin: native
+type: state
+
+inputs:
+  name:
+    type: string
+    required: true
+  value:
+    type: string
+    required: false
+    sensitive: true
+
+outputs:
+  id:
+    value: "${inputs.name}"

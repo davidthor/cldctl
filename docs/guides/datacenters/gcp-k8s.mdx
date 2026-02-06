@@ -1,0 +1,445 @@
+---
+title: "GCP Kubernetes (GKE)"
+description: "Deploy to GKE with Knative, Cloud SQL, and Compute Engine VMs"
+---
+
+# GCP Kubernetes (GKE) Datacenter
+
+This guide shows how to build a datacenter that deploys components to Google Kubernetes Engine (GKE) with Knative for serverless functions, Cloud SQL for databases, and Compute Engine for VM-based workloads.
+
+<Info>
+This is an officially maintained datacenter template. Source: [`official-templates/gcp-k8s/`](https://github.com/architect-io/arcctl/tree/main/official-templates/gcp-k8s)
+</Info>
+
+## Overview
+
+This datacenter provides:
+- **Compute**: GKE for container deployments
+- **Functions**: Knative Serving on GKE (scale-to-zero)
+- **VMs**: Compute Engine for runtime-based deployments (via OpenTofu)
+- **Databases**: Cloud SQL (PostgreSQL, MySQL), Memorystore (Redis)
+- **Storage**: Google Cloud Storage (S3-compatible via HMAC keys)
+- **Networking**: GKE Gateway API, Cloud DNS
+- **SMTP**: Configurable external relay (SendGrid, Mailgun, etc.)
+- **Observability**: Cloud Monitoring + OTel collector on GKE
+
+## Configuration Variables
+
+```hcl
+variable "gcp_project" {
+  description = "GCP project ID"
+  type        = string
+}
+
+variable "gcp_region" {
+  description = "GCP region"
+  type        = string
+  default     = "us-central1"
+}
+
+variable "cluster_name" {
+  description = "GKE cluster name"
+  type        = string
+}
+
+variable "domain" {
+  description = "Base domain for environments"
+  type        = string
+  default     = "app.example.com"
+}
+
+variable "registry" {
+  description = "Artifact Registry repository URL"
+  type        = string
+}
+
+variable "ssh_key" {
+  description = "SSH public key for Compute Engine VM access"
+  type        = string
+  default     = ""
+}
+
+variable "smtp_host" {
+  description = "External SMTP relay host"
+  type        = string
+  default     = "smtp.sendgrid.net"
+}
+
+variable "smtp_port" {
+  description = "External SMTP relay port"
+  type        = number
+  default     = 587
+}
+
+variable "smtp_username" {
+  description = "External SMTP relay username"
+  type        = string
+  default     = "apikey"
+}
+
+variable "smtp_password" {
+  description = "External SMTP relay password"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+```
+
+## Shared Infrastructure
+
+```hcl
+# VPC for Cloud SQL / Memorystore private connectivity
+module "vpc" {
+  build = "./modules/gcp-vpc"
+  inputs = {
+    name    = "${variable.cluster_name}-vpc"
+    project = variable.gcp_project
+    region  = variable.gcp_region
+  }
+}
+
+# GKE cluster with autoscaling
+module "gke" {
+  build = "./modules/gcp-gke-cluster"
+  inputs = {
+    name    = variable.cluster_name
+    project = variable.gcp_project
+    region  = variable.gcp_region
+    network = module.vpc.network_id
+    subnet  = module.vpc.subnet_id
+    node_pool = {
+      machine_type = "e2-standard-4"
+      min_nodes    = 1
+      max_nodes    = 10
+      auto_scale   = true
+    }
+  }
+}
+```
+
+## Environment Configuration
+
+```hcl
+environment {
+  # Kubernetes namespace per environment
+  module "namespace" {
+    build = "./modules/k8s-namespace"
+    inputs = {
+      name       = environment.name
+      kubeconfig = module.gke.kubeconfig
+    }
+  }
+
+  # Gateway for HTTP routes (only when ingress resources exist)
+  module "gateway" {
+    when  = contains(environment.nodes.*.type, "ingress")
+    build = "./modules/k8s-gateway"
+    inputs = {
+      name          = "${environment.name}-gateway"
+      namespace     = environment.name
+      gateway_class = "gke-l7-global-external-managed"
+      kubeconfig    = module.gke.kubeconfig
+      tls = {
+        enabled = true
+        issuer  = "letsencrypt-prod"
+      }
+    }
+  }
+
+  # Cloud DNS records per environment
+  module "dns_records" {
+    build = "./modules/gcp-cloud-dns"
+    inputs = {
+      project   = variable.gcp_project
+      zone_name = variable.domain
+      subdomain = environment.name
+      target    = module.gke.ingress_ip
+    }
+  }
+}
+```
+
+## Resource Hooks
+
+### Database Hook (Cloud SQL + Memorystore)
+
+PostgreSQL and MySQL use Cloud SQL; Redis uses Memorystore:
+
+```hcl
+database {
+  when = element(split(":", node.inputs.type), 0) == "postgres"
+
+  module "cloud_sql_pg" {
+    build = "./modules/gcp-cloud-sql"
+    inputs = {
+      name          = "${environment.name}-${node.component}-${node.name}"
+      project       = variable.gcp_project
+      region        = variable.gcp_region
+      engine        = "POSTGRES"
+      version       = coalesce(try(element(split(":", node.inputs.type), 1), null), "16")
+      tier          = "db-f1-micro"
+      network       = module.vpc.network_id
+      database_name = node.name
+    }
+  }
+
+  outputs = {
+    host     = module.cloud_sql_pg.private_ip
+    port     = module.cloud_sql_pg.port
+    database = module.cloud_sql_pg.database
+    username = module.cloud_sql_pg.username
+    password = module.cloud_sql_pg.password
+    url      = module.cloud_sql_pg.connection_url
+  }
+}
+```
+
+### Deployment Hook (Kubernetes)
+
+Container-based deployments run as GKE Deployments:
+
+```hcl
+deployment {
+  when = node.inputs.image != null
+
+  module "k8s_deployment" {
+    build = "./modules/k8s-deployment"
+    inputs = merge(node.inputs, {
+      namespace  = environment.name
+      kubeconfig = module.gke.kubeconfig
+    })
+  }
+
+  outputs = {
+    id = module.k8s_deployment.deployment_id
+  }
+}
+```
+
+### Deployment Hook (Compute Engine VM)
+
+VM-based deployments use Compute Engine for workloads with the `runtime` property:
+
+```hcl
+deployment {
+  when = node.inputs.runtime != null && node.inputs.image == null
+
+  module "gce_vm" {
+    plugin = "opentofu"
+    build  = "./modules/gcp-compute-engine"
+    inputs = merge(node.inputs, {
+      name    = "${environment.name}-${node.component}-${node.name}"
+      project = variable.gcp_project
+      zone    = "${variable.gcp_region}-a"
+      network = module.vpc.network_id
+      subnet  = module.vpc.subnet_id
+      ssh_key = variable.ssh_key
+    })
+  }
+
+  outputs = {
+    id = module.gce_vm.instance_id
+  }
+}
+```
+
+The Compute Engine module translates the portable `runtime` inputs into cloud-specific provisioning: selecting a machine image, installing the language runtime, system packages, running setup commands, and creating a systemd service.
+
+### Function Hook (Knative)
+
+Functions run on Knative Serving with scale-to-zero:
+
+```hcl
+function {
+  module "knative_service" {
+    build = "./modules/knative-service"
+    inputs = merge(node.inputs, {
+      namespace  = environment.name
+      kubeconfig = module.gke.kubeconfig
+    })
+  }
+
+  outputs = {
+    id       = module.knative_service.service_id
+    endpoint = module.knative_service.url
+  }
+}
+```
+
+### Bucket Hook (GCS)
+
+Google Cloud Storage with HMAC keys for S3-compatible access:
+
+```hcl
+bucket {
+  module "gcs_bucket" {
+    build = "./modules/gcp-gcs"
+    inputs = {
+      name       = "${variable.gcp_project}-${environment.name}-${node.name}"
+      project    = variable.gcp_project
+      region     = variable.gcp_region
+      versioning = node.inputs.versioning
+      public     = node.inputs.public
+    }
+  }
+
+  outputs = {
+    endpoint        = "https://storage.googleapis.com"
+    bucket          = module.gcs_bucket.bucket_name
+    region          = variable.gcp_region
+    accessKeyId     = module.gcs_bucket.hmac_access_key
+    secretAccessKey = module.gcs_bucket.hmac_secret_key
+  }
+}
+```
+
+### Service Hook (Kubernetes)
+
+```hcl
+service {
+  module "k8s_service" {
+    build = "./modules/k8s-service"
+    inputs = merge(node.inputs, {
+      namespace  = environment.name
+      kubeconfig = module.gke.kubeconfig
+    })
+  }
+
+  outputs = {
+    host = module.k8s_service.cluster_ip
+    port = module.k8s_service.port
+    url  = "http://${module.k8s_service.cluster_ip}:${module.k8s_service.port}"
+  }
+}
+```
+
+### Ingress Hook (GKE Gateway API)
+
+```hcl
+ingress {
+  module "httproute" {
+    build = "./modules/k8s-httproute"
+    inputs = merge(node.inputs, {
+      namespace    = environment.name
+      gateway_name = "${environment.name}-gateway"
+      kubeconfig   = module.gke.kubeconfig
+    })
+  }
+
+  outputs = {
+    url      = "https://${node.name}.${environment.name}.${variable.domain}"
+    hosts    = ["${node.name}.${environment.name}.${variable.domain}"]
+    protocol = "https"
+    host     = "${node.name}.${environment.name}.${variable.domain}"
+    port     = 443
+  }
+}
+```
+
+### Docker Build Hook (Artifact Registry)
+
+```hcl
+dockerBuild {
+  module "artifact_build" {
+    build = "./modules/gcp-artifact-build"
+    inputs = {
+      context    = node.inputs.context
+      dockerfile = node.inputs.dockerfile
+      target     = node.inputs.target
+      args       = node.inputs.args
+      registry   = variable.registry
+      project    = variable.gcp_project
+    }
+  }
+
+  outputs = {
+    image = module.artifact_build.image_uri
+  }
+}
+```
+
+### Observability Hook (Cloud Monitoring + OTel)
+
+```hcl
+observability {
+  module "gke_otel" {
+    build = "./modules/gcp-gke-otel"
+    inputs = {
+      name       = "${environment.name}-otel"
+      namespace  = environment.name
+      project    = variable.gcp_project
+      region     = variable.gcp_region
+      kubeconfig = module.gke.kubeconfig
+    }
+  }
+
+  outputs = {
+    endpoint       = module.gke_otel.otlp_endpoint
+    protocol       = "grpc"
+    query_type     = "gcp_monitoring"
+    query_endpoint = "https://monitoring.googleapis.com/v3/projects/${variable.gcp_project}"
+    dashboard_url  = "https://console.cloud.google.com/monitoring/dashboards?project=${variable.gcp_project}"
+    attributes = {
+      "cloud.provider" = "gcp"
+      "cloud.region"   = variable.gcp_region
+      "cloud.project"  = variable.gcp_project
+    }
+  }
+}
+```
+
+## Deploying
+
+```bash
+# Build the datacenter
+arcctl dc build . -t ghcr.io/myorg/gcp-k8s-dc:v1.0.0
+arcctl dc push ghcr.io/myorg/gcp-k8s-dc:v1.0.0
+
+# Deploy with variables
+arcctl dc deploy gcp-k8s-production \
+  --config ghcr.io/myorg/gcp-k8s-dc:v1.0.0 \
+  --var gcp_project=my-project \
+  --var cluster_name=prod-cluster \
+  --var registry=us-central1-docker.pkg.dev/my-project/arcctl \
+  --var domain=app.example.com \
+  --var smtp_password=$SMTP_PASSWORD
+
+# Create environment and deploy
+arcctl env create staging --datacenter gcp-k8s-production
+arcctl deploy ghcr.io/myorg/my-app:v1.0.0 -e staging
+```
+
+## Cost Optimization
+
+- Use GKE Autopilot for pay-per-pod pricing
+- Use `e2-` machine types for cost-effective node pools
+- Knative scale-to-zero eliminates idle function costs
+- Cloud SQL `db-f1-micro` for development environments
+- Memorystore Basic tier for non-critical workloads
+- Use preemptible/spot VMs for Compute Engine runtime deployments
+
+## Knative Setup
+
+For serverless functions, install Knative Serving on your GKE cluster:
+
+```bash
+kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.14.0/serving-crds.yaml
+kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.14.0/serving-core.yaml
+```
+
+## Related Guides
+
+<CardGroup cols={2}>
+  <Card title="GCP Cloud Run" href="/guides/datacenters/gcp-cloud-run">
+    Fully serverless deployment with Cloud Run
+  </Card>
+  <Card title="GCP VMs" href="/guides/datacenters/gcp-vms">
+    VM-based deployment using Compute Engine for all workloads
+  </Card>
+  <Card title="DigitalOcean Kubernetes" href="/guides/datacenters/do-k8s">
+    Alternative Kubernetes deployment on DigitalOcean
+  </Card>
+  <Card title="Managing Environments" href="/guides/managing-environments">
+    Day-to-day environment operations
+  </Card>
+</CardGroup>

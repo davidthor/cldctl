@@ -171,6 +171,35 @@ module "deployment" {
 }
 ```
 
+### startswith
+
+Check if a string starts with a prefix:
+
+```hcl
+# Match preview environments by naming convention
+deployment {
+  when = startswith(environment.name, "preview-")
+  module "preview_deploy" {
+    inputs = {
+      tier = "preview"
+    }
+  }
+}
+```
+
+### endswith
+
+Check if a string ends with a suffix:
+
+```hcl
+# Check domain suffix
+module "tls" {
+  inputs = {
+    use_staging_ca = endswith(variable.domain, ".local")
+  }
+}
+```
+
 ### lookup
 
 Look up a value in a map with a default:
@@ -291,6 +320,33 @@ deployment {
       cpu    = environment.name == "production" ? "500m" : "100m"
       memory = environment.name == "production" ? "512Mi" : "128Mi"
     })
+  }
+}
+```
+
+### Tier-Based Environment Branching
+
+Use `environment.name` to implement different behavior per environment tier:
+
+```hcl
+# Neon database branching: production uses main, staging branches from
+# main, everything else (preview environments) branches from staging.
+database {
+  when = element(split(":", node.inputs.type), 0) == "postgres"
+
+  module "neon_db" {
+    build = "./modules/neon-database"
+    inputs = {
+      name = "${node.component}-${node.name}"
+      parent_branch = (
+        environment.name == "production"
+        ? null
+        : environment.name == "staging"
+          ? "main"
+          : "staging"
+      )
+      branch_name = environment.name
+    }
   }
 }
 ```

@@ -79,7 +79,7 @@ Aliases: `comp` for `component`, `dc` for `datacenter`, `env` for `environment`,
 | `pkg/errors/` | Structured error types |
 | `testdata/` | Test fixtures |
 | `examples/` | Example component configurations |
-| `official-templates/` | Official datacenter templates |
+| `official-templates/` | Official datacenter templates (local, startup, do-k8s, do-app-platform, do-vms, aws-ecs, aws-lambda, aws-k8s, aws-vms, gcp-cloud-run, gcp-k8s, gcp-vms) |
 
 ## Component Authoring (architect.yml)
 
@@ -465,7 +465,7 @@ func TestParse(t *testing.T) {
 | `docs/guides/datacenters/` | Step-by-step datacenter authoring guides (local Docker, AWS ECS, etc.) |
 | `docs/concepts/` | High-level conceptual documentation |
 | `examples/` | Example component configurations |
-| `official-templates/` | Official datacenter templates (local Docker, AWS ECS, etc.) |
+| `official-templates/` | Official datacenter templates (12 templates across Local, Startup/Vercel, DigitalOcean, AWS, GCP) |
 
 ### Keeping Documentation In Sync (IMPORTANT)
 

@@ -1,0 +1,526 @@
+---
+title: "Startup (Vercel + Neon + Upstash)"
+description: "Managed serverless datacenter for startups using Vercel, Neon, Upstash, and Resend"
+---
+
+# Startup Datacenter
+
+This guide shows how to build a datacenter for startups and small teams using fully managed services. It's designed for teams that want to ship fast without managing infrastructure, with built-in support for production, staging, and preview environments.
+
+<Info>
+This is an officially maintained datacenter template. Source: [`official-templates/startup/`](https://github.com/architect-io/arcctl/tree/main/official-templates/startup)
+</Info>
+
+## Overview
+
+This datacenter provides:
+- **Compute**: Vercel Serverless Functions (for both functions and deployments)
+- **Databases**: Neon (PostgreSQL), Upstash (Redis)
+- **Storage**: Vercel Blob
+- **Email**: Resend (SMTP)
+- **Routing**: Vercel automatic routing with per-environment aliases
+- **Cron**: Vercel Cron Jobs
+
+All services are serverless with pay-per-use pricing, making this ideal for startups with variable traffic.
+
+## Environment Tiers
+
+A single datacenter hosts all your environments. The tier is determined by `environment.name`:
+
+| Environment Name | Tier | Neon Branch | Vercel Target | DNS Alias |
+|------------------|------|-------------|---------------|-----------|
+| `production` | Production | main (no branch) | `production` | `app.example.com` |
+| `staging` | Staging | branch from main | `preview` | `staging.app.example.com` |
+| anything else | Preview | branch from staging | `preview` | `<name>.app.example.com` |
+
+### Neon Branching Model
+
+Neon's copy-on-write branching enables database isolation without duplication:
+
+```
+main (production)
+  └── staging
+        ├── preview-42
+        ├── preview-108
+        └── preview-271
+```
+
+- **Production** uses the main Neon branch directly
+- **Staging** branches from main, so it always starts with production data
+- **Preview environments** branch from staging, so they start with staging data
+
+Databases with the same component/name share the same Neon database across environments -- each environment creates a branch, not a separate database. This keeps costs low and data consistent.
+
+### Vercel Project Sharing
+
+All environments deploy to a **single Vercel project**. Each environment uses Vercel's environment targets (`production` vs `preview`) and aliases for per-environment DNS routing.
+
+## Configuration Variables
+
+```hcl
+variable "vercel_token" {
+  description = "Vercel API token"
+  type        = string
+  sensitive   = true
+}
+
+variable "vercel_team_id" {
+  description = "Vercel team ID (optional for personal accounts)"
+  type        = string
+  default     = ""
+}
+
+variable "vercel_project_name" {
+  description = "Vercel project name (shared across all environments)"
+  type        = string
+}
+
+variable "neon_api_key" {
+  description = "Neon API key for managed PostgreSQL"
+  type        = string
+  sensitive   = true
+}
+
+variable "neon_project_id" {
+  description = "Neon project ID (shared across all environments)"
+  type        = string
+}
+
+variable "upstash_api_key" {
+  description = "Upstash API key for managed Redis"
+  type        = string
+  sensitive   = true
+}
+
+variable "upstash_email" {
+  description = "Upstash account email"
+  type        = string
+}
+
+variable "resend_api_key" {
+  description = "Resend API key for transactional email"
+  type        = string
+  sensitive   = true
+}
+
+variable "domain" {
+  description = "Base domain for routing (e.g., app.example.com)"
+  type        = string
+  default     = ""
+}
+
+variable "region" {
+  description = "Primary deployment region"
+  type        = string
+  default     = "iad1"
+}
+```
+
+## Shared Infrastructure
+
+The Vercel project is created once and shared across all environments:
+
+```hcl
+module "vercel_project" {
+  build = "./modules/vercel-project"
+  inputs = {
+    name    = variable.vercel_project_name
+    token   = variable.vercel_token
+    team_id = variable.vercel_team_id
+  }
+}
+```
+
+## Resource Hooks
+
+### Database Hook (PostgreSQL via Neon)
+
+Neon provides serverless PostgreSQL with branching. The tier-based branching logic determines how each environment's database relates to others:
+
+```hcl
+database {
+  when = element(split(":", node.inputs.type), 0) == "postgres"
+
+  module "neon_db" {
+    build = "./modules/neon-database"
+    inputs = {
+      name       = "${node.component}-${node.name}"
+      api_key    = variable.neon_api_key
+      project_id = variable.neon_project_id
+      # Tier-based branching
+      parent_branch = (
+        environment.name == "production"
+        ? null
+        : environment.name == "staging"
+          ? "main"
+          : "staging"
+      )
+      branch_name = environment.name
+    }
+  }
+
+  outputs = {
+    host     = module.neon_db.host
+    port     = module.neon_db.port
+    database = module.neon_db.database
+    username = module.neon_db.username
+    password = module.neon_db.password
+    url      = module.neon_db.url
+  }
+}
+```
+
+The `parent_branch` ternary expression implements the branching model:
+- `production` -- `null` (uses main branch directly)
+- `staging` -- `"main"` (branches from production)
+- anything else -- `"staging"` (branches from staging)
+
+### Database Hook (Redis via Upstash)
+
+Upstash provides serverless Redis with per-request pricing. Redis instances are created per environment (Upstash doesn't support branching).
+
+```hcl
+database {
+  when = element(split(":", node.inputs.type), 0) == "redis"
+
+  module "upstash_redis" {
+    build = "./modules/upstash-redis"
+    inputs = {
+      name    = "${environment.name}-${node.component}-${node.name}"
+      api_key = variable.upstash_api_key
+      email   = variable.upstash_email
+      region  = variable.region
+    }
+  }
+
+  outputs = {
+    host     = module.upstash_redis.host
+    port     = module.upstash_redis.port
+    database = "0"
+    username = module.upstash_redis.username
+    password = module.upstash_redis.password
+    url      = module.upstash_redis.url
+  }
+}
+```
+
+<Note>
+MySQL is not supported in this datacenter. Neon only supports PostgreSQL. If you need MySQL, use the DigitalOcean or AWS datacenter templates.
+</Note>
+
+### Database User Hook (Neon)
+
+Create additional database users with their own credentials for fine-grained access control.
+
+```hcl
+databaseUser {
+  module "neon_user" {
+    build = "./modules/neon-database-user"
+    inputs = {
+      name       = "${node.component}-${node.name}"
+      api_key    = variable.neon_api_key
+      project_id = variable.neon_project_id
+      branch     = environment.name
+      database   = node.inputs.database
+    }
+  }
+
+  outputs = {
+    username = module.neon_user.username
+    password = module.neon_user.password
+    url      = module.neon_user.url
+  }
+}
+```
+
+### Deployment Hook (Vercel Serverless)
+
+Container-based deployments are adapted to run as Vercel Serverless Functions. All deployments go to the shared Vercel project with tier-appropriate environment targets and aliases.
+
+```hcl
+deployment {
+  when = node.inputs.image != null
+
+  module "vercel_deployment" {
+    build = "./modules/vercel-serverless"
+    inputs = merge(node.inputs, {
+      name       = "${node.component}-${node.name}"
+      token      = variable.vercel_token
+      team_id    = variable.vercel_team_id
+      project_id = module.vercel_project.id
+      region     = variable.region
+      # Vercel environment target
+      vercel_env = environment.name == "production" ? "production" : "preview"
+      # Per-environment DNS alias
+      alias = (
+        environment.name == "production"
+        ? variable.domain
+        : "${environment.name}.${variable.domain}"
+      )
+    })
+  }
+
+  outputs = {
+    id = module.vercel_deployment.deployment_id
+  }
+}
+```
+
+<Note>
+This is a serverless-only datacenter -- there is no VM-based deployment support. The `runtime` property is not supported.
+</Note>
+
+### Function Hook (Vercel Serverless Functions)
+
+Functions are the native compute primitive for this datacenter. Next.js apps and other frameworks are deployed as Vercel Functions with automatic framework detection. Same shared-project and alias model as deployments.
+
+```hcl
+function {
+  module "vercel_function" {
+    build = "./modules/vercel-function"
+    inputs = merge(node.inputs, {
+      name       = "${node.component}-${node.name}"
+      token      = variable.vercel_token
+      team_id    = variable.vercel_team_id
+      project_id = module.vercel_project.id
+      region     = variable.region
+      vercel_env = environment.name == "production" ? "production" : "preview"
+      alias = (
+        environment.name == "production"
+        ? variable.domain
+        : "${environment.name}.${variable.domain}"
+      )
+    })
+  }
+
+  outputs = {
+    id       = module.vercel_function.function_id
+    endpoint = module.vercel_function.endpoint
+  }
+}
+```
+
+### Bucket Hook (Vercel Blob)
+
+```hcl
+bucket {
+  module "vercel_blob" {
+    build = "./modules/vercel-blob"
+    inputs = {
+      name    = "${environment.name}-${node.component}-${node.name}"
+      token   = variable.vercel_token
+      team_id = variable.vercel_team_id
+      public  = node.inputs.public
+    }
+  }
+
+  outputs = {
+    endpoint        = module.vercel_blob.endpoint
+    bucket          = module.vercel_blob.bucket
+    region          = variable.region
+    accessKeyId     = module.vercel_blob.access_key_id
+    secretAccessKey = module.vercel_blob.secret_access_key
+  }
+}
+```
+
+### SMTP Hook (Resend)
+
+```hcl
+smtp {
+  module "resend" {
+    build = "./modules/resend-smtp"
+    inputs = {
+      name    = "${environment.name}-${node.component}-${node.name}"
+      api_key = variable.resend_api_key
+    }
+  }
+
+  outputs = {
+    host     = module.resend.host
+    port     = module.resend.port
+    username = module.resend.username
+    password = module.resend.password
+  }
+}
+```
+
+### Secret Hook
+
+Secrets are stored as Vercel environment variables, scoped to the environment tier.
+
+```hcl
+secret {
+  module "secret" {
+    build = "./modules/vercel-secret"
+    inputs = {
+      name       = "${environment.name}-${node.component}-${node.name}"
+      value      = node.inputs.value
+      token      = variable.vercel_token
+      team_id    = variable.vercel_team_id
+      project_id = module.vercel_project.id
+      vercel_env = environment.name == "production" ? "production" : "preview"
+    }
+  }
+
+  outputs = {
+    id = module.secret.id
+  }
+}
+```
+
+### Ingress Hook (Vercel Routing)
+
+Vercel handles TLS termination and routing automatically. Each environment gets a unique alias based on its name.
+
+```hcl
+ingress {
+  module "vercel_ingress" {
+    build = "./modules/vercel-ingress"
+    inputs = {
+      name       = "${environment.name}-${node.component}-${node.name}"
+      token      = variable.vercel_token
+      team_id    = variable.vercel_team_id
+      project_id = module.vercel_project.id
+      rules      = node.inputs.rules
+      alias = (
+        environment.name == "production"
+        ? variable.domain
+        : "${environment.name}.${variable.domain}"
+      )
+    }
+  }
+
+  outputs = {
+    url      = module.vercel_ingress.url
+    hosts    = module.vercel_ingress.hosts
+    protocol = "https"
+    host     = module.vercel_ingress.host
+    port     = 443
+  }
+}
+```
+
+### Cronjob Hook (Vercel Cron)
+
+```hcl
+cronjob {
+  module "vercel_cron" {
+    build = "./modules/vercel-cron"
+    inputs = {
+      name        = "${environment.name}-${node.component}-${node.name}"
+      token       = variable.vercel_token
+      team_id     = variable.vercel_team_id
+      project_id  = module.vercel_project.id
+      schedule    = node.inputs.schedule
+      image       = node.inputs.image
+      command     = node.inputs.command
+      environment = node.inputs.environment
+      region      = variable.region
+    }
+  }
+
+  outputs = {
+    id = module.vercel_cron.cron_id
+  }
+}
+```
+
+### Docker Build Hook
+
+```hcl
+dockerBuild {
+  module "docker_build" {
+    build = "./modules/vercel-docker-build"
+    inputs = {
+      context    = node.inputs.context
+      dockerfile = node.inputs.dockerfile
+      target     = node.inputs.target
+      args       = node.inputs.args
+      token      = variable.vercel_token
+      team_id    = variable.vercel_team_id
+    }
+  }
+
+  outputs = {
+    image = module.docker_build.image
+  }
+}
+```
+
+## Deploying
+
+### Initial Setup
+
+```bash
+# Build and push the datacenter template
+arcctl dc build . -t ghcr.io/myorg/startup-dc:v1.0.0
+arcctl dc push ghcr.io/myorg/startup-dc:v1.0.0
+
+# Deploy a single datacenter for all environments
+arcctl dc deploy startup \
+  --config ghcr.io/myorg/startup-dc:v1.0.0 \
+  --var vercel_token=$VERCEL_TOKEN \
+  --var vercel_project_name=my-app \
+  --var neon_api_key=$NEON_API_KEY \
+  --var neon_project_id=$NEON_PROJECT_ID \
+  --var upstash_api_key=$UPSTASH_API_KEY \
+  --var upstash_email=$UPSTASH_EMAIL \
+  --var resend_api_key=$RESEND_API_KEY \
+  --var domain=app.example.com
+```
+
+### Creating Environments
+
+```bash
+# Production (uses Neon main branch, Vercel production target)
+arcctl env create production --datacenter startup
+arcctl deploy ghcr.io/myorg/my-app:v1.0.0 -e production
+
+# Staging (Neon branches from main, Vercel preview target)
+arcctl env create staging --datacenter startup
+arcctl deploy ghcr.io/myorg/my-app:v1.0.0 -e staging
+
+# Preview for PR #42 (Neon branches from staging, Vercel preview target)
+arcctl env create preview-42 --datacenter startup
+arcctl deploy ghcr.io/myorg/my-app:pr-42 -e preview-42
+```
+
+### Preview Cleanup
+
+```bash
+# When a PR is merged, tear down its preview environment
+arcctl destroy environment preview-42
+```
+
+The Neon branch and Vercel alias are removed. The shared Neon project and Vercel project remain intact.
+
+## Cost Optimization
+
+- **Neon**: Free tier includes 0.5 GB storage and 190 compute hours/month. Scale-to-zero when idle. Branches are copy-on-write and only consume storage for changed data.
+- **Upstash**: Free tier includes 10,000 commands/day. Pay-per-request beyond that.
+- **Vercel**: Hobby plan is free. Pro plan at $20/month per team member.
+- **Resend**: Free tier includes 3,000 emails/month.
+
+This stack can run in production for $0-50/month at startup scale, scaling smoothly as traffic grows.
+
+## Limitations
+
+- **No MySQL**: Neon only supports PostgreSQL. Use DigitalOcean or AWS datacenter if you need MySQL.
+- **No VM-based deployments**: The `runtime` property is not supported. All compute is serverless.
+- **Cold starts**: Serverless functions may experience cold starts. Use Vercel's edge functions for latency-sensitive endpoints.
+- **Execution limits**: Vercel Serverless Functions have a maximum execution time (varies by plan). Not suitable for long-running background jobs.
+
+## Related Guides
+
+<CardGroup cols={2}>
+  <Card title="Local Datacenter" href="/guides/datacenters/local">
+    Lightweight local development datacenter
+  </Card>
+  <Card title="CI/CD Integration" href="/guides/ci-cd/overview">
+    Automate preview environments in your CI pipeline
+  </Card>
+  <Card title="Managing Environments" href="/guides/managing-environments">
+    Day-to-day environment operations
+  </Card>
+</CardGroup>

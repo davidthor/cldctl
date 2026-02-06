@@ -1,0 +1,501 @@
+# Startup Datacenter
+# A managed-services datacenter for startups and small teams.
+# Uses Vercel for compute, Neon for PostgreSQL, Upstash for Redis,
+# Vercel Blob for storage, and Resend for email.
+#
+# Environment tiers (determined by environment name):
+#   "production" - Production tier: Neon main branch, Vercel production target
+#   "staging"    - Staging tier: Neon branch from main, Vercel preview target
+#   anything else - Preview tier: Neon branch from staging, Vercel preview target
+#
+# Neon branching model:
+#   main (production)
+#     └── staging
+#           ├── preview-42
+#           ├── preview-108
+#           └── preview-271
+#
+# Vercel deployment model:
+#   All environments deploy to the same Vercel project. Each environment
+#   uses Vercel aliases for DNS mapping (e.g., preview-42.app.example.com).
+
+variable "vercel_token" {
+  description = "Vercel API token"
+  type        = string
+  sensitive   = true
+}
+
+variable "vercel_team_id" {
+  description = "Vercel team ID (optional for personal accounts)"
+  type        = string
+  default     = ""
+}
+
+variable "vercel_project_name" {
+  description = "Vercel project name (shared across all environments)"
+  type        = string
+}
+
+variable "neon_api_key" {
+  description = "Neon API key for managed PostgreSQL"
+  type        = string
+  sensitive   = true
+}
+
+variable "neon_project_id" {
+  description = "Neon project ID (shared across all environments)"
+  type        = string
+}
+
+variable "upstash_api_key" {
+  description = "Upstash API key for managed Redis"
+  type        = string
+  sensitive   = true
+}
+
+variable "upstash_email" {
+  description = "Upstash account email"
+  type        = string
+}
+
+variable "resend_api_key" {
+  description = "Resend API key for transactional email"
+  type        = string
+  sensitive   = true
+}
+
+variable "domain" {
+  description = "Base domain for routing (e.g., app.example.com)"
+  type        = string
+  default     = ""
+}
+
+variable "region" {
+  description = "Primary deployment region"
+  type        = string
+  default     = "iad1"
+}
+
+# Shared Vercel project - created once, used by all environments.
+# Each environment deploys to this project using Vercel's environment
+# targets (production vs preview) and aliases for DNS mapping.
+module "vercel_project" {
+  build = "./modules/vercel-project"
+  inputs = {
+    name    = variable.vercel_project_name
+    token   = variable.vercel_token
+    team_id = variable.vercel_team_id
+  }
+}
+
+environment {
+  # ---------------------------------------------------------------------------
+  # Database hook - PostgreSQL via Neon
+  # ---------------------------------------------------------------------------
+  # Databases with the same component/name share the same Neon database across
+  # environments. Each environment creates a branch:
+  #   production -> uses main branch directly (no parent)
+  #   staging    -> branches from main
+  #   preview-*  -> branches from staging
+  database {
+    when = element(split(":", node.inputs.type), 0) == "postgres"
+
+    module "neon_db" {
+      build = "./modules/neon-database"
+      inputs = {
+        name       = "${node.component}-${node.name}"
+        api_key    = variable.neon_api_key
+        project_id = variable.neon_project_id
+        # Tier-based branching
+        parent_branch = (
+          environment.name == "production"
+          ? null
+          : environment.name == "staging"
+            ? "main"
+            : "staging"
+        )
+        branch_name = environment.name
+      }
+    }
+
+    outputs = {
+      host     = module.neon_db.host
+      port     = module.neon_db.port
+      database = module.neon_db.database
+      username = module.neon_db.username
+      password = module.neon_db.password
+      url      = module.neon_db.url
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # Database hook - Redis via Upstash
+  # ---------------------------------------------------------------------------
+  # Redis instances are created per environment (Upstash doesn't support branching).
+  database {
+    when = element(split(":", node.inputs.type), 0) == "redis"
+
+    module "upstash_redis" {
+      build = "./modules/upstash-redis"
+      inputs = {
+        name    = "${environment.name}-${node.component}-${node.name}"
+        api_key = variable.upstash_api_key
+        email   = variable.upstash_email
+        region  = variable.region
+      }
+    }
+
+    outputs = {
+      host     = module.upstash_redis.host
+      port     = module.upstash_redis.port
+      database = "0"
+      username = module.upstash_redis.username
+      password = module.upstash_redis.password
+      url      = module.upstash_redis.url
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # Database user hook - additional user for Neon databases
+  # ---------------------------------------------------------------------------
+  databaseUser {
+    module "neon_user" {
+      build = "./modules/neon-database-user"
+      inputs = {
+        name       = "${node.component}-${node.name}"
+        api_key    = variable.neon_api_key
+        project_id = variable.neon_project_id
+        branch     = environment.name
+        database   = node.inputs.database
+      }
+    }
+
+    outputs = {
+      username = module.neon_user.username
+      password = module.neon_user.password
+      url      = module.neon_user.url
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # Task hook - run one-time tasks as local processes
+  # ---------------------------------------------------------------------------
+  # Vercel has no native one-off task execution. Tasks (e.g., database
+  # migrations) run as local processes on the machine executing arcctl.
+  # This works because Neon/Upstash endpoints are publicly accessible --
+  # no VPC or private networking is required.
+  task {
+    module "task" {
+      plugin = "native"
+      build  = "./modules/local-task"
+      inputs = {
+        name        = "${environment.name}-${node.component}-${node.name}"
+        image       = node.inputs.image
+        command     = node.inputs.command
+        environment = node.inputs.environment
+      }
+    }
+
+    outputs = {
+      id     = module.task.id
+      status = module.task.status
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # Bucket hook - Vercel Blob storage
+  # ---------------------------------------------------------------------------
+  bucket {
+    module "vercel_blob" {
+      build = "./modules/vercel-blob"
+      inputs = {
+        name    = "${environment.name}-${node.component}-${node.name}"
+        token   = variable.vercel_token
+        team_id = variable.vercel_team_id
+        public  = node.inputs.public
+      }
+    }
+
+    outputs = {
+      endpoint        = module.vercel_blob.endpoint
+      bucket          = module.vercel_blob.bucket
+      region          = variable.region
+      accessKeyId     = module.vercel_blob.access_key_id
+      secretAccessKey = module.vercel_blob.secret_access_key
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # Encryption key hook - asymmetric (RSA/ECDSA)
+  # ---------------------------------------------------------------------------
+  encryptionKey {
+    when = node.inputs.keyType == "rsa" || node.inputs.keyType == "ecdsa"
+
+    module "asymmetric_key" {
+      build = "./modules/encryption-key"
+      inputs = {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        key_type = node.inputs.keyType
+        key_size = node.inputs.keySize
+      }
+    }
+
+    outputs = {
+      privateKey       = module.asymmetric_key.privateKey
+      publicKey        = module.asymmetric_key.publicKey
+      privateKeyBase64 = module.asymmetric_key.privateKeyBase64
+      publicKeyBase64  = module.asymmetric_key.publicKeyBase64
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # Encryption key hook - symmetric
+  # ---------------------------------------------------------------------------
+  encryptionKey {
+    when = node.inputs.keyType == "symmetric"
+
+    module "symmetric_key" {
+      build = "./modules/encryption-key"
+      inputs = {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        key_type = "symmetric"
+        key_size = node.inputs.keySize
+      }
+    }
+
+    outputs = {
+      key       = module.symmetric_key.key
+      keyBase64 = module.symmetric_key.keyBase64
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # SMTP hook - Resend for transactional email
+  # ---------------------------------------------------------------------------
+  smtp {
+    module "resend" {
+      build = "./modules/resend-smtp"
+      inputs = {
+        name    = "${environment.name}-${node.component}-${node.name}"
+        api_key = variable.resend_api_key
+      }
+    }
+
+    outputs = {
+      host     = module.resend.host
+      port     = module.resend.port
+      username = module.resend.username
+      password = module.resend.password
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # Secret hook - store secrets as Vercel environment variables
+  # ---------------------------------------------------------------------------
+  # Secrets are scoped to the Vercel environment target for the tier.
+  secret {
+    module "secret" {
+      build = "./modules/vercel-secret"
+      inputs = {
+        name       = "${environment.name}-${node.component}-${node.name}"
+        value      = node.inputs.value
+        token      = variable.vercel_token
+        team_id    = variable.vercel_team_id
+        project_id = module.vercel_project.id
+        vercel_env = environment.name == "production" ? "production" : "preview"
+      }
+    }
+
+    outputs = {
+      id = module.secret.id
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # Deployment hook - Vercel Serverless Functions (container-based)
+  # ---------------------------------------------------------------------------
+  # Deploys to the shared Vercel project using environment targets.
+  # Vercel aliases map DNS to each environment's deployment.
+  deployment {
+    when = node.inputs.image != null
+
+    module "vercel_deployment" {
+      build = "./modules/vercel-serverless"
+      inputs = merge(node.inputs, {
+        name       = "${node.component}-${node.name}"
+        token      = variable.vercel_token
+        team_id    = variable.vercel_team_id
+        project_id = module.vercel_project.id
+        region     = variable.region
+        # Vercel environment target
+        vercel_env = environment.name == "production" ? "production" : "preview"
+        # Alias for DNS mapping
+        alias = (
+          environment.name == "production"
+          ? variable.domain
+          : "${environment.name}.${variable.domain}"
+        )
+      })
+    }
+
+    outputs = {
+      id = module.vercel_deployment.deployment_id
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # Function hook - Vercel Serverless Functions
+  # ---------------------------------------------------------------------------
+  # Same shared-project and alias model as deployments.
+  function {
+    module "vercel_function" {
+      build = "./modules/vercel-function"
+      inputs = merge(node.inputs, {
+        name       = "${node.component}-${node.name}"
+        token      = variable.vercel_token
+        team_id    = variable.vercel_team_id
+        project_id = module.vercel_project.id
+        region     = variable.region
+        # Vercel environment target
+        vercel_env = environment.name == "production" ? "production" : "preview"
+        # Alias for DNS mapping
+        alias = (
+          environment.name == "production"
+          ? variable.domain
+          : "${environment.name}.${variable.domain}"
+        )
+      })
+    }
+
+    outputs = {
+      id       = module.vercel_function.function_id
+      endpoint = module.vercel_function.endpoint
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # Service hook - Vercel internal service routing
+  # ---------------------------------------------------------------------------
+  service {
+    module "vercel_service" {
+      build = "./modules/vercel-service"
+      inputs = {
+        name        = "${environment.name}-${node.component}-${node.name}"
+        target      = node.inputs.target
+        target_type = node.inputs.target_type
+        port        = node.inputs.port
+        protocol    = node.inputs.protocol
+        token       = variable.vercel_token
+        team_id     = variable.vercel_team_id
+        project_id  = module.vercel_project.id
+      }
+    }
+
+    outputs = {
+      host = module.vercel_service.host
+      port = module.vercel_service.port
+      url  = module.vercel_service.url
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # Ingress hook - Vercel routing with per-environment aliases
+  # ---------------------------------------------------------------------------
+  ingress {
+    module "vercel_ingress" {
+      build = "./modules/vercel-ingress"
+      inputs = {
+        name       = "${environment.name}-${node.component}-${node.name}"
+        token      = variable.vercel_token
+        team_id    = variable.vercel_team_id
+        project_id = module.vercel_project.id
+        rules      = node.inputs.rules
+        alias = (
+          environment.name == "production"
+          ? variable.domain
+          : "${environment.name}.${variable.domain}"
+        )
+      }
+    }
+
+    outputs = {
+      url      = module.vercel_ingress.url
+      hosts    = module.vercel_ingress.hosts
+      protocol = "https"
+      host     = module.vercel_ingress.host
+      port     = 443
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # Route hook - alias for ingress (same Vercel routing)
+  # ---------------------------------------------------------------------------
+  route {
+    module "vercel_route" {
+      build = "./modules/vercel-ingress"
+      inputs = {
+        name       = "${environment.name}-${node.component}-${node.name}"
+        token      = variable.vercel_token
+        team_id    = variable.vercel_team_id
+        project_id = module.vercel_project.id
+        rules      = node.inputs.rules
+        alias = (
+          environment.name == "production"
+          ? variable.domain
+          : "${environment.name}.${variable.domain}"
+        )
+      }
+    }
+
+    outputs = {
+      url  = module.vercel_route.url
+      host = module.vercel_route.host
+      port = 443
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # Cronjob hook - Vercel Cron Jobs
+  # ---------------------------------------------------------------------------
+  cronjob {
+    module "vercel_cron" {
+      build = "./modules/vercel-cron"
+      inputs = {
+        name        = "${environment.name}-${node.component}-${node.name}"
+        token       = variable.vercel_token
+        team_id     = variable.vercel_team_id
+        project_id  = module.vercel_project.id
+        schedule    = node.inputs.schedule
+        image       = node.inputs.image
+        command     = node.inputs.command
+        environment = node.inputs.environment
+        region      = variable.region
+      }
+    }
+
+    outputs = {
+      id = module.vercel_cron.cron_id
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # Docker build hook - build and push to Vercel registry
+  # ---------------------------------------------------------------------------
+  dockerBuild {
+    module "docker_build" {
+      build = "./modules/vercel-docker-build"
+      inputs = {
+        context    = node.inputs.context
+        dockerfile = node.inputs.dockerfile
+        target     = node.inputs.target
+        args       = node.inputs.args
+        token      = variable.vercel_token
+        team_id    = variable.vercel_team_id
+      }
+    }
+
+    outputs = {
+      image = module.docker_build.image
+    }
+  }
+}

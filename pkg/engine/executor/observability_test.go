@@ -475,7 +475,7 @@ func assertNotContains(t *testing.T, haystack, needle string) {
 func loadTestDatacenter(t *testing.T) datacenter.Datacenter {
 	t.Helper()
 	loader := datacenter.NewLoader()
-	dc, err := loader.Load("../../../official-templates/local-docker/datacenter.dc")
+	dc, err := loader.Load("../../../official-templates/local/datacenter.dc")
 	if err != nil {
 		return nil
 	}

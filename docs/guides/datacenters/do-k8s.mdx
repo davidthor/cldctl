@@ -1,0 +1,595 @@
+---
+title: "DigitalOcean Kubernetes"
+description: "Deploy to DigitalOcean Kubernetes with managed databases and full observability"
+---
+
+# DigitalOcean Kubernetes Datacenter
+
+This guide shows how to build a datacenter that deploys components to DigitalOcean Kubernetes (DOKS) with managed databases, Spaces for storage, encryption keys, SMTP, and observability.
+
+<Info>
+This is an officially maintained datacenter template. Source: [`official-templates/do-k8s/`](https://github.com/architect-io/arcctl/tree/main/official-templates/do-k8s)
+</Info>
+
+## Overview
+
+This datacenter provides:
+- **Compute**: DigitalOcean Kubernetes (DOKS) + Droplets for VM workloads
+- **Databases**: Managed PostgreSQL, MySQL, Redis
+- **Storage**: DigitalOcean Spaces (S3-compatible)
+- **Functions**: Knative Serving (serverless on K8s)
+- **Networking**: NGINX Ingress, cert-manager, DigitalOcean DNS
+- **Secrets**: Kubernetes Secrets for encryption keys and sensitive data
+- **Email**: External SMTP relay (SendGrid, Mailgun, etc.)
+- **Observability**: Self-hosted OTel Collector + DigitalOcean Monitoring
+
+## Configuration Variables
+
+```hcl
+variable "do_token" {
+  description = "DigitalOcean API token"
+  type        = string
+  sensitive   = true
+}
+
+variable "region" {
+  description = "DigitalOcean region"
+  type        = string
+  default     = "nyc3"
+}
+
+variable "cluster_name" {
+  description = "Kubernetes cluster name"
+  type        = string
+}
+
+variable "domain" {
+  description = "Base domain for environments"
+  type        = string
+  default     = "app.example.com"
+}
+
+variable "registry" {
+  description = "Container registry URL"
+  type        = string
+  default     = "registry.digitalocean.com"
+}
+
+variable "ssh_key_fingerprint" {
+  description = "SSH key fingerprint for Droplet access (VM deployments)"
+  type        = string
+  default     = ""
+}
+
+variable "smtp_host" {
+  description = "External SMTP relay host"
+  type        = string
+  default     = "smtp.sendgrid.net"
+}
+
+variable "smtp_port" {
+  description = "External SMTP relay port"
+  type        = number
+  default     = 587
+}
+
+variable "smtp_username" {
+  description = "External SMTP relay username"
+  type        = string
+  default     = "apikey"
+}
+
+variable "smtp_password" {
+  description = "External SMTP relay password"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+```
+
+## Shared Infrastructure
+
+```hcl
+# DOKS Cluster with autoscaling
+module "k8s" {
+  build = "./modules/doks-cluster"
+  inputs = {
+    name   = variable.cluster_name
+    region = variable.region
+    token  = variable.do_token
+    node_pool = {
+      size       = "s-2vcpu-4gb"
+      min_nodes  = 2
+      max_nodes  = 10
+      auto_scale = true
+    }
+  }
+}
+```
+
+## Environment Configuration
+
+```hcl
+environment {
+  # Kubernetes namespace per environment
+  module "namespace" {
+    build = "./modules/k8s-namespace"
+    inputs = {
+      name       = environment.name
+      kubeconfig = module.k8s.kubeconfig
+    }
+  }
+
+  # Gateway for HTTP routes (only when routes exist)
+  module "gateway" {
+    when  = contains(environment.nodes.*.type, "ingress")
+    build = "./modules/k8s-gateway"
+    inputs = {
+      name          = "${environment.name}-gateway"
+      namespace     = environment.name
+      gateway_class = "nginx"
+      kubeconfig    = module.k8s.kubeconfig
+      tls = {
+        enabled = true
+        issuer  = "letsencrypt-prod"
+      }
+    }
+  }
+
+  # DNS records
+  module "dns_records" {
+    build = "./modules/do-dns"
+    inputs = {
+      domain    = variable.domain
+      subdomain = environment.name
+      target    = module.k8s.load_balancer_ip
+      token     = variable.do_token
+    }
+  }
+}
+```
+
+## Resource Hooks
+
+### Database Hook (Managed Database)
+
+Uses DigitalOcean Managed Databases for PostgreSQL, MySQL, and Redis:
+
+```hcl
+database {
+  module "managed_database" {
+    build = "./modules/do-managed-database"
+    inputs = {
+      name    = "${environment.name}-${node.name}"
+      type    = element(split(":", node.inputs.type), 0)
+      version = try(element(split(":", node.inputs.type), 1), null)
+      region  = variable.region
+      size    = "db-s-1vcpu-1gb"
+      token   = variable.do_token
+    }
+  }
+
+  outputs = {
+    host     = module.managed_database.host
+    port     = module.managed_database.port
+    database = module.managed_database.database
+    url      = module.managed_database.connection_url
+  }
+}
+```
+
+### Task Hook (Kubernetes Job)
+
+Runs one-time containers for database migrations and similar tasks:
+
+```hcl
+task {
+  module "task_job" {
+    build = "./modules/k8s-job"
+    inputs = {
+      name       = "${node.component}--${node.name}"
+      namespace  = environment.name
+      kubeconfig = module.k8s.kubeconfig
+      image      = node.inputs.image
+      command    = node.inputs.command
+      environment = node.inputs.environment
+      backoff_limit = 3
+      ttl_seconds_after_finished = 300
+    }
+  }
+
+  outputs = {
+    id     = module.task_job.job_id
+    status = module.task_job.status
+  }
+}
+```
+
+### Bucket Hook (Spaces)
+
+Uses DigitalOcean Spaces for S3-compatible object storage:
+
+```hcl
+bucket {
+  module "spaces_bucket" {
+    build = "./modules/do-spaces"
+    inputs = {
+      name       = "${environment.name}-${node.name}"
+      region     = variable.region
+      versioning = node.inputs.versioning
+      public     = node.inputs.public
+      token      = variable.do_token
+    }
+  }
+
+  outputs = {
+    endpoint        = "https://${variable.region}.digitaloceanspaces.com"
+    bucket          = module.spaces_bucket.bucket_name
+    region          = variable.region
+    accessKeyId     = module.spaces_bucket.access_key
+    secretAccessKey = module.spaces_bucket.secret_key
+  }
+}
+```
+
+### Encryption Key Hook (Kubernetes Secrets)
+
+Generates cryptographic keys and stores them as Kubernetes Secrets.
+
+**Asymmetric keys (RSA/ECDSA):**
+
+```hcl
+encryptionKey {
+  when = node.inputs.keyType == "rsa" || node.inputs.keyType == "ecdsa"
+
+  module "asymmetric_key" {
+    build = "./modules/k8s-encryption-key"
+    inputs = {
+      name       = "${environment.name}-${node.component}-${node.name}"
+      namespace  = environment.name
+      kubeconfig = module.k8s.kubeconfig
+      key_type   = node.inputs.keyType
+      key_size   = node.inputs.keySize
+    }
+  }
+
+  outputs = {
+    privateKey       = module.asymmetric_key.privateKey
+    publicKey        = module.asymmetric_key.publicKey
+    privateKeyBase64 = module.asymmetric_key.privateKeyBase64
+    publicKeyBase64  = module.asymmetric_key.publicKeyBase64
+  }
+}
+```
+
+**Symmetric keys:**
+
+```hcl
+encryptionKey {
+  when = node.inputs.keyType == "symmetric"
+
+  module "symmetric_key" {
+    build = "./modules/k8s-encryption-key"
+    inputs = {
+      name       = "${environment.name}-${node.component}-${node.name}"
+      namespace  = environment.name
+      kubeconfig = module.k8s.kubeconfig
+      key_type   = "symmetric"
+      key_size   = node.inputs.keySize
+    }
+  }
+
+  outputs = {
+    key       = module.symmetric_key.key
+    keyBase64 = module.symmetric_key.keyBase64
+  }
+}
+```
+
+### SMTP Hook (External Relay)
+
+DigitalOcean does not have a native SMTP service, so this hook uses a configurable external relay (e.g., SendGrid, Mailgun). Credentials are stored as Kubernetes Secrets:
+
+```hcl
+smtp {
+  module "smtp_relay" {
+    build = "./modules/k8s-secret"
+    inputs = {
+      name       = "${environment.name}-${node.component}-${node.name}-smtp"
+      namespace  = environment.name
+      kubeconfig = module.k8s.kubeconfig
+      data = {
+        host     = variable.smtp_host
+        port     = tostring(variable.smtp_port)
+        username = variable.smtp_username
+        password = variable.smtp_password
+      }
+    }
+  }
+
+  outputs = {
+    host     = variable.smtp_host
+    port     = variable.smtp_port
+    username = variable.smtp_username
+    password = variable.smtp_password
+  }
+}
+```
+
+### Database User Hook
+
+Creates additional users on managed databases:
+
+```hcl
+databaseUser {
+  module "db_user" {
+    build = "./modules/do-database-user"
+    inputs = {
+      name     = "${environment.name}-${node.component}-${node.name}"
+      database = node.inputs.database
+      token    = variable.do_token
+    }
+  }
+
+  outputs = {
+    username = module.db_user.username
+    password = module.db_user.password
+    url      = module.db_user.url
+  }
+}
+```
+
+### Secret Hook (Kubernetes Secrets)
+
+Stores sensitive values as Kubernetes Secrets:
+
+```hcl
+secret {
+  module "k8s_secret" {
+    build = "./modules/k8s-secret"
+    inputs = {
+      name       = "${environment.name}-${node.component}-${node.name}"
+      namespace  = environment.name
+      kubeconfig = module.k8s.kubeconfig
+      data = {
+        value = node.inputs.value
+      }
+    }
+  }
+
+  outputs = {
+    id = module.k8s_secret.secret_name
+  }
+}
+```
+
+### Deployment Hook (Kubernetes)
+
+Container-based deployments run on Kubernetes:
+
+```hcl
+deployment {
+  when = node.inputs.image != null
+
+  module "deployment" {
+    build = "./modules/k8s-deployment"
+    inputs = merge(node.inputs, {
+      namespace  = environment.name
+      kubeconfig = module.k8s.kubeconfig
+    })
+  }
+
+  outputs = {
+    id = module.deployment.deployment_id
+  }
+}
+```
+
+### Deployment Hook (Droplet VM)
+
+VM-based deployments use DigitalOcean Droplets for workloads with the `runtime` property:
+
+```hcl
+deployment {
+  when = node.inputs.runtime != null && node.inputs.image == null
+
+  module "droplet" {
+    plugin = "opentofu"
+    build  = "./modules/do-droplet"
+    inputs = merge(node.inputs, {
+      name                = "${environment.name}-${node.component}-${node.name}"
+      region              = variable.region
+      do_token            = variable.do_token
+      ssh_key_fingerprint = variable.ssh_key_fingerprint
+    })
+  }
+
+  outputs = {
+    id = module.droplet.droplet_id
+  }
+}
+```
+
+### Function Hook (Knative)
+
+DigitalOcean doesn't have native functions, so we use Knative Serving:
+
+```hcl
+function {
+  module "knative_service" {
+    build = "./modules/knative-service"
+    inputs = merge(node.inputs, {
+      namespace  = environment.name
+      kubeconfig = module.k8s.kubeconfig
+    })
+  }
+
+  outputs = {
+    id       = module.knative_service.service_id
+    endpoint = module.knative_service.url
+  }
+}
+```
+
+### Service Hook
+
+```hcl
+service {
+  module "service" {
+    build = "./modules/k8s-service"
+    inputs = merge(node.inputs, {
+      namespace  = environment.name
+      kubeconfig = module.k8s.kubeconfig
+    })
+  }
+
+  outputs = {
+    host = module.service.cluster_ip
+    port = module.service.port
+    url  = "http://${module.service.cluster_ip}:${module.service.port}"
+  }
+}
+```
+
+### Ingress Hook (HTTPRoute)
+
+```hcl
+ingress {
+  module "httproute" {
+    build = "./modules/k8s-httproute"
+    inputs = merge(node.inputs, {
+      namespace    = environment.name
+      gateway_name = "${environment.name}-gateway"
+      kubeconfig   = module.k8s.kubeconfig
+    })
+  }
+
+  outputs = {
+    url      = "https://${node.name}.${environment.name}.${variable.domain}"
+    hosts    = ["${node.name}.${environment.name}.${variable.domain}"]
+    protocol = "https"
+    host     = "${node.name}.${environment.name}.${variable.domain}"
+    port     = 443
+  }
+}
+```
+
+### CronJob Hook
+
+```hcl
+cronjob {
+  module "cronjob" {
+    build = "./modules/k8s-cronjob"
+    inputs = merge(node.inputs, {
+      namespace  = environment.name
+      kubeconfig = module.k8s.kubeconfig
+    })
+  }
+
+  outputs = {
+    id = module.cronjob.cronjob_id
+  }
+}
+```
+
+### Docker Build Hook
+
+```hcl
+dockerBuild {
+  module "docker_build" {
+    build = "./modules/docker-build-push"
+    inputs = {
+      context    = node.inputs.context
+      dockerfile = node.inputs.dockerfile
+      target     = node.inputs.target
+      args       = node.inputs.args
+      registry   = variable.registry
+      token      = variable.do_token
+    }
+  }
+
+  outputs = {
+    image = module.docker_build.image
+  }
+}
+```
+
+### Observability Hook
+
+Deploys a self-hosted OpenTelemetry Collector on the Kubernetes cluster that forwards telemetry to DigitalOcean Monitoring and a Grafana/Loki stack for querying:
+
+```hcl
+observability {
+  module "otel_collector" {
+    build = "./modules/k8s-otel-collector"
+    inputs = {
+      name       = "${environment.name}-otel"
+      namespace  = environment.name
+      kubeconfig = module.k8s.kubeconfig
+      do_token   = variable.do_token
+      region     = variable.region
+    }
+  }
+
+  outputs = {
+    endpoint       = module.otel_collector.otlp_endpoint
+    protocol       = "http/protobuf"
+    query_type     = "loki"
+    query_endpoint = module.otel_collector.loki_endpoint
+    dashboard_url  = module.otel_collector.grafana_url
+    attributes = {
+      "cloud.provider" = "digitalocean"
+      "cloud.region"   = variable.region
+    }
+  }
+}
+```
+
+## Deploying
+
+```bash
+# Build and push
+arcctl build datacenter ./do-k8s -t ghcr.io/myorg/do-k8s-dc:v1
+arcctl push datacenter ghcr.io/myorg/do-k8s-dc:v1
+
+# Deploy datacenter
+arcctl deploy datacenter do-production ghcr.io/myorg/do-k8s-dc:v1 \
+  --var cluster_name=prod-cluster \
+  --var domain=app.example.com \
+  --var do_token=$DO_TOKEN \
+  --var smtp_password=$SMTP_PASSWORD
+
+# Create environment and deploy
+arcctl create environment staging -d do-production
+arcctl deploy component ghcr.io/myorg/my-app:v1 -e staging
+```
+
+## Cost Optimization
+
+- Use autoscaling with min/max nodes
+- Managed databases start at $15/month
+- Spaces is cost-effective for storage
+- Use smaller Droplet sizes for dev environments
+
+## Knative Setup
+
+For serverless functions, install Knative on your cluster:
+
+```bash
+kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.12.0/serving-crds.yaml
+kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.12.0/serving-core.yaml
+```
+
+## Related Guides
+
+<CardGroup cols={2}>
+  <Card title="DO App Platform" href="/guides/datacenters/do-app-platform">
+    PaaS-based DigitalOcean deployment
+  </Card>
+  <Card title="DO Droplet VMs" href="/guides/datacenters/do-vms">
+    VM-based DigitalOcean deployment
+  </Card>
+  <Card title="Managing Environments" href="/guides/managing-environments">
+    Day-to-day environment operations
+  </Card>
+</CardGroup>

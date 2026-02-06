@@ -1,8 +1,8 @@
 # Integration Test Environment
-# Deploys the Clerk + NextJS + PostgreSQL test stack using local-docker datacenter
+# Deploys the Clerk + NextJS + PostgreSQL test stack using local datacenter
 #
 # Usage: arcctl update environment <name> -d <datacenter> environment.yml
-# Example: arcctl update environment clerk-test -d ./official-templates/local-docker environment.yml
+# Example: arcctl update environment clerk-test -d ./official-templates/local environment.yml
 #
 # Required environment variables:
 #   CLERK_PUBLISHABLE_KEY - Clerk publishable key (pk_test_... or pk_live_...)

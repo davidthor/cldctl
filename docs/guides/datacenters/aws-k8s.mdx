@@ -1,28 +1,29 @@
 ---
-title: "AWS ECS Fargate"
-description: "Deploy to AWS ECS Fargate with RDS, S3, SES, KMS, and OTel observability"
+title: "AWS Kubernetes (EKS)"
+description: "Deploy to Amazon EKS with RDS, S3, SES, and OTel observability"
 ---
 
-# AWS ECS Fargate Datacenter
+# AWS Kubernetes (EKS) Datacenter
 
-This guide shows how to build a datacenter that deploys components to AWS ECS Fargate with managed services for databases, storage, email, encryption, and observability.
+This guide shows how to build a datacenter that deploys components to Amazon EKS with managed AWS services for databases, storage, email, encryption, and observability.
 
 <Info>
-This is an officially maintained datacenter template. Source: [`official-templates/aws-ecs/`](https://github.com/architect-io/arcctl/tree/main/official-templates/aws-ecs)
+This is an officially maintained datacenter template. Source: [`official-templates/aws-k8s/`](https://github.com/architect-io/arcctl/tree/main/official-templates/aws-k8s)
 </Info>
 
 ## Overview
 
 This datacenter provides:
-- **Compute**: ECS Fargate (serverless containers)
+- **Compute**: Amazon EKS (Kubernetes) for container deployments
+- **Functions**: Knative Serving for serverless on Kubernetes
+- **VMs**: EC2 instances for runtime-based deployments
 - **Databases**: RDS for PostgreSQL/MySQL, ElastiCache for Redis
 - **Storage**: S3 buckets
 - **Encryption**: KMS (symmetric), Secrets Manager (asymmetric key pairs)
 - **Email**: AWS SES (SMTP)
-- **Networking**: VPC, ALB, Route53
-- **Functions**: AWS Lambda
-- **Scheduling**: EventBridge scheduled tasks
-- **Observability**: OTel Collector on ECS exporting to CloudWatch + X-Ray
+- **Routing**: AWS ALB Ingress Controller
+- **Scheduling**: Kubernetes CronJobs
+- **Observability**: OTel Collector DaemonSet exporting to CloudWatch + X-Ray
 
 ## Configuration Variables
 
@@ -39,13 +40,14 @@ variable "vpc_id" {
 }
 
 variable "cluster_name" {
-  description = "ECS cluster name"
+  description = "EKS cluster name"
   type        = string
 }
 
 variable "domain" {
   description = "Base domain for environments"
   type        = string
+  default     = "app.example.com"
 }
 
 variable "hosted_zone_id" {
@@ -59,21 +61,27 @@ variable "certificate_arn" {
 }
 
 variable "ses_identity_arn" {
-  description = "AWS SES verified identity ARN for sending email"
+  description = "AWS SES verified identity ARN"
   type        = string
   default     = ""
 }
 
 variable "ses_smtp_username" {
-  description = "AWS SES SMTP username (IAM access key)"
+  description = "AWS SES SMTP username"
   type        = string
   default     = ""
 }
 
 variable "ses_smtp_password" {
-  description = "AWS SES SMTP password (IAM secret key)"
+  description = "AWS SES SMTP password"
   type        = string
   sensitive   = true
+  default     = ""
+}
+
+variable "ssh_key_pair" {
+  description = "EC2 key pair name for VM deployments"
+  type        = string
   default     = ""
 }
 ```
@@ -83,23 +91,32 @@ variable "ses_smtp_password" {
 Resources created once and shared across environments:
 
 ```hcl
-# ECS Cluster
-module "ecs_cluster" {
-  build = "./modules/ecs-cluster"
+# EKS Cluster with managed node groups
+module "eks" {
+  build = "./modules/eks-cluster"
   inputs = {
     name   = variable.cluster_name
     region = variable.aws_region
     vpc_id = variable.vpc_id
+    node_groups = {
+      default = {
+        instance_types = ["t3.medium"]
+        min_size       = 2
+        max_size       = 10
+        desired_size   = 2
+      }
+    }
   }
 }
 
-# Application Load Balancer
-module "alb" {
-  build = "./modules/alb"
+# AWS ALB Ingress Controller
+module "alb_controller" {
+  build = "./modules/eks-alb-controller"
   inputs = {
-    name            = "${variable.cluster_name}-alb"
-    vpc_id          = variable.vpc_id
-    certificate_arn = variable.certificate_arn
+    cluster_name = variable.cluster_name
+    region       = variable.aws_region
+    vpc_id       = variable.vpc_id
+    kubeconfig   = module.eks.kubeconfig
   }
 }
 ```
@@ -108,20 +125,19 @@ module "alb" {
 
 ```hcl
 environment {
-  # Per-environment resources
-  module "target_group" {
-    build = "./modules/alb-target-group"
+  # Kubernetes namespace per environment
+  module "namespace" {
+    build = "./modules/k8s-namespace"
     inputs = {
-      name    = environment.name
-      vpc_id  = variable.vpc_id
-      alb_arn = module.alb.arn
+      name       = environment.name
+      kubeconfig = module.eks.kubeconfig
     }
   }
 
   module "log_group" {
     build = "./modules/cloudwatch-logs"
     inputs = {
-      name           = "/ecs/${variable.cluster_name}/${environment.name}"
+      name           = "/eks/${variable.cluster_name}/${environment.name}"
       retention_days = 30
     }
   }
@@ -165,32 +181,27 @@ database {
 }
 ```
 
-### Task Hook (ECS Fargate)
-
-One-time container execution using ECS tasks on Fargate Spot:
+### Task Hook (Kubernetes Job)
 
 ```hcl
 task {
-  module "run_task" {
-    build = "./modules/ecs-task"
+  module "k8s_job" {
+    build = "./modules/k8s-job"
     inputs = {
-      name              = "${node.component}--${node.name}"
-      cluster           = variable.cluster_name
-      vpc_id            = variable.vpc_id
-      security_group_id = module.security_group.id
-      log_group         = module.log_group.name
-      image             = node.inputs.image
-      command           = node.inputs.command
-      environment       = node.inputs.environment
-      capacity_provider = "FARGATE_SPOT"
-      cpu               = "256"
-      memory            = "512"
+      name        = "${node.component}--${node.name}"
+      namespace   = environment.name
+      kubeconfig  = module.eks.kubeconfig
+      image       = node.inputs.image
+      command     = node.inputs.command
+      environment = node.inputs.environment
+      backoff_limit              = 3
+      ttl_seconds_after_finished = 300
     }
   }
 
   outputs = {
-    id     = module.run_task.task_arn
-    status = module.run_task.status
+    id     = module.k8s_job.job_id
+    status = module.k8s_job.status
   }
 }
 ```
@@ -221,10 +232,8 @@ bucket {
 
 ### Encryption Key Hook (KMS + Secrets Manager)
 
-Asymmetric keys (RSA/ECDSA) are generated and stored in AWS Secrets Manager. Symmetric keys use AWS KMS:
-
 ```hcl
-# Asymmetric keys
+# Asymmetric keys (RSA/ECDSA)
 encryptionKey {
   when = node.inputs.keyType == "rsa" || node.inputs.keyType == "ecdsa"
 
@@ -267,8 +276,6 @@ encryptionKey {
 
 ### SMTP Hook (SES)
 
-Uses AWS SES for transactional email:
-
 ```hcl
 smtp {
   module "ses_smtp" {
@@ -288,26 +295,24 @@ smtp {
 }
 ```
 
-### Deployment Hook (ECS Service)
+### Deployment Hook (Kubernetes)
 
-Container-based deployments run on ECS Fargate:
+Container-based deployments run as Kubernetes Deployments:
 
 ```hcl
 deployment {
   when = node.inputs.image != null
 
-  module "ecs_service" {
-    build = "./modules/ecs-service"
+  module "k8s_deployment" {
+    build = "./modules/k8s-deployment"
     inputs = merge(node.inputs, {
-      cluster           = variable.cluster_name
-      vpc_id            = variable.vpc_id
-      security_group_id = module.security_group.id
-      log_group         = module.log_group.name
+      namespace  = environment.name
+      kubeconfig = module.eks.kubeconfig
     })
   }
 
   outputs = {
-    id = module.ecs_service.service_id
+    id = module.k8s_deployment.deployment_id
   }
 }
 ```
@@ -324,9 +329,11 @@ deployment {
     plugin = "opentofu"
     build  = "./modules/ec2-vm"
     inputs = merge(node.inputs, {
-      name           = "${environment.name}-${node.component}-${node.name}"
-      subnet_id      = module.security_group.subnet_id
-      security_group = module.security_group.id
+      name              = "${environment.name}-${node.component}-${node.name}"
+      region            = variable.aws_region
+      vpc_id            = variable.vpc_id
+      security_group_id = module.security_group.id
+      key_pair          = variable.ssh_key_pair
     })
   }
 
@@ -336,59 +343,60 @@ deployment {
 }
 ```
 
-### Function Hook (Lambda)
+### Function Hook (Knative)
+
+Serverless functions run on Knative Serving:
 
 ```hcl
 function {
-  module "lambda" {
-    build = "./modules/lambda-function"
+  module "knative_service" {
+    build = "./modules/knative-service"
     inputs = merge(node.inputs, {
-      name              = "${environment.name}-${node.name}"
-      vpc_id            = variable.vpc_id
-      security_group_id = module.security_group.id
+      namespace  = environment.name
+      kubeconfig = module.eks.kubeconfig
     })
   }
 
   outputs = {
-    id       = module.lambda.function_arn
-    endpoint = module.lambda.function_url
+    id       = module.knative_service.service_id
+    endpoint = module.knative_service.url
   }
 }
 ```
 
-### Service Hook (Cloud Map)
+### Service Hook (Kubernetes Service)
 
 ```hcl
 service {
-  module "service_discovery" {
-    build = "./modules/service-discovery"
-    inputs = {
-      name        = node.name
-      namespace   = environment.name
-      target      = node.inputs.target
-      target_type = node.inputs.target_type
-      port        = node.inputs.port
-    }
+  module "k8s_service" {
+    build = "./modules/k8s-service"
+    inputs = merge(node.inputs, {
+      namespace  = environment.name
+      kubeconfig = module.eks.kubeconfig
+    })
   }
 
   outputs = {
-    host = module.service_discovery.dns_name
-    port = module.service_discovery.port
-    url  = "http://${module.service_discovery.dns_name}:${module.service_discovery.port}"
+    host = module.k8s_service.cluster_ip
+    port = module.k8s_service.port
+    url  = "http://${module.k8s_service.cluster_ip}:${module.k8s_service.port}"
   }
 }
 ```
 
-### Ingress Hook (ALB)
+### Ingress Hook (ALB Ingress)
+
+Uses the AWS Load Balancer Controller for Kubernetes-native ALB ingress:
 
 ```hcl
 ingress {
-  module "alb_listener_rule" {
-    build = "./modules/alb-listener-rule"
+  module "alb_ingress" {
+    build = "./modules/k8s-alb-ingress"
     inputs = merge(node.inputs, {
-      alb_arn          = module.alb.arn
-      target_group_arn = module.target_group.arn
-      domain           = "${environment.name}.${variable.domain}"
+      namespace       = environment.name
+      kubeconfig      = module.eks.kubeconfig
+      domain          = "${environment.name}.${variable.domain}"
+      certificate_arn = variable.certificate_arn
     })
   }
 
@@ -402,20 +410,20 @@ ingress {
 }
 ```
 
-### Cronjob Hook (EventBridge)
+### Cronjob Hook (Kubernetes CronJob)
 
 ```hcl
 cronjob {
-  module "eventbridge_task" {
-    build = "./modules/eventbridge-scheduled-task"
+  module "k8s_cronjob" {
+    build = "./modules/k8s-cronjob"
     inputs = merge(node.inputs, {
-      name    = "${environment.name}-${node.name}"
-      cluster = variable.cluster_name
+      namespace  = environment.name
+      kubeconfig = module.eks.kubeconfig
     })
   }
 
   outputs = {
-    id = module.eventbridge_task.rule_arn
+    id = module.k8s_cronjob.cronjob_id
   }
 }
 ```
@@ -441,21 +449,20 @@ dockerBuild {
 }
 ```
 
-### Observability Hook (OTel Collector on ECS)
+### Observability Hook (OTel DaemonSet on EKS)
 
-Deploys an OpenTelemetry Collector as an ECS service that receives OTLP telemetry and exports to CloudWatch and X-Ray:
+Deploys an OpenTelemetry Collector as a DaemonSet that exports to CloudWatch and X-Ray:
 
 ```hcl
 observability {
   module "otel_collector" {
-    build = "./modules/ecs-otel-collector"
+    build = "./modules/eks-otel-collector"
     inputs = {
-      name              = "${environment.name}-otel-collector"
-      cluster           = variable.cluster_name
-      region            = variable.aws_region
-      vpc_id            = variable.vpc_id
-      security_group_id = module.security_group.id
-      log_group         = module.log_group.name
+      name       = "${environment.name}-otel-collector"
+      namespace  = environment.name
+      kubeconfig = module.eks.kubeconfig
+      region     = variable.aws_region
+      log_group  = module.log_group.name
     }
   }
 
@@ -468,23 +475,23 @@ observability {
     attributes = {
       "cloud.provider" = "aws"
       "cloud.region"   = variable.aws_region
-      "cloud.platform" = "aws_ecs"
+      "cloud.platform" = "aws_eks"
     }
   }
 }
 ```
 
-## Deploying the Datacenter
+## Deploying
 
 ```bash
 # Build the datacenter
-arcctl dc build . -t ghcr.io/myorg/aws-ecs-dc:v1.0.0
-arcctl dc push ghcr.io/myorg/aws-ecs-dc:v1.0.0
+arcctl dc build . -t ghcr.io/myorg/aws-k8s-dc:v1.0.0
+arcctl dc push ghcr.io/myorg/aws-k8s-dc:v1.0.0
 
 # Deploy with variables
-arcctl dc deploy aws-production \
-  --config ghcr.io/myorg/aws-ecs-dc:v1.0.0 \
-  --var cluster_name=prod-cluster \
+arcctl dc deploy aws-k8s-prod \
+  --config ghcr.io/myorg/aws-k8s-dc:v1.0.0 \
+  --var cluster_name=prod-eks \
   --var vpc_id=vpc-12345 \
   --var domain=app.example.com \
   --var hosted_zone_id=Z123456 \
@@ -492,34 +499,42 @@ arcctl dc deploy aws-production \
   --var ses_identity_arn=arn:aws:ses:... \
   --var ses_smtp_username=$SES_USERNAME \
   --var ses_smtp_password=$SES_PASSWORD
-```
 
-## Creating Environments
-
-```bash
-# Create staging environment
-arcctl env create staging --datacenter aws-production
-
-# Deploy components
+# Create environment and deploy
+arcctl env create staging --datacenter aws-k8s-prod
 arcctl deploy ghcr.io/myorg/my-app:v1.0.0 -e staging
 ```
 
+## Prerequisites
+
+Before deploying this datacenter, ensure you have:
+
+1. **EKS Cluster** with the [AWS Load Balancer Controller](https://docs.aws.amazon.com/eks/latest/userguide/aws-load-balancer-controller.html) installed
+2. **Knative Serving** installed for serverless functions:
+   ```bash
+   kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.12.0/serving-crds.yaml
+   kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.12.0/serving-core.yaml
+   ```
+3. **VPC** with private subnets for RDS and ElastiCache
+4. **ACM certificate** for your domain
+5. **Route53 hosted zone** for DNS management
+
 ## Cost Optimization
 
-- Use Fargate Spot for non-critical workloads
+- Use managed node groups with Spot instances for non-critical workloads
 - RDS t3.micro for development environments
-- CloudWatch log retention to control costs
-- S3 lifecycle policies for object storage
-- Use Lambda for infrequent workloads instead of ECS services
+- Knative scales to zero when idle
+- CloudWatch log retention controls storage costs
+- Use Cluster Autoscaler or Karpenter for efficient node scaling
 
 ## Related Guides
 
 <CardGroup cols={2}>
+  <Card title="AWS ECS Fargate" href="/guides/datacenters/aws-ecs">
+    Container-based AWS deployment with ECS
+  </Card>
   <Card title="AWS Lambda" href="/guides/datacenters/aws-lambda">
     Serverless-first AWS deployment with Lambda
-  </Card>
-  <Card title="AWS Kubernetes (EKS)" href="/guides/datacenters/aws-k8s">
-    Kubernetes on AWS with EKS
   </Card>
   <Card title="AWS VMs (EC2)" href="/guides/datacenters/aws-vms">
     VM-based AWS deployment with EC2

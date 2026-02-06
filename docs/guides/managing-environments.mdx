@@ -121,7 +121,7 @@ arcctl list datacenter
 NAME             SOURCE                                    ENVIRONMENTS
 aws-production   ghcr.io/myorg/aws-dc:v2.1.0              3
 do-staging       ghcr.io/myorg/do-k8s-dc:v1.0.0           1
-local-dev        ./local-docker                            2
+local-dev        ./local                                   2
 ```
 
 ### Get Datacenter Details
@@ -326,11 +326,11 @@ arcctl deploy component ghcr.io/myorg/app:v1.5.0 -e production --auto-approve
   <Card title="Platform Engineer Workflow" icon="gear" href="/guides/platform-engineer-workflow">
     Authoring datacenters and IaC modules
   </Card>
-  <Card title="Local Docker Datacenter" icon="docker" href="/guides/datacenters/local-docker">
+  <Card title="Local Datacenter" icon="docker" href="/guides/datacenters/local">
     Lightweight datacenter for local development
   </Card>
-  <Card title="Shared Database Datacenter" icon="database" href="/guides/datacenters/shared-database">
-    Cost-effective shared databases for previews
+  <Card title="AWS ECS Datacenter" icon="aws" href="/guides/datacenters/aws-ecs">
+    Production datacenter on AWS ECS Fargate
   </Card>
   <Card title="CLI Reference" icon="terminal" href="/cli/overview">
     Complete command reference

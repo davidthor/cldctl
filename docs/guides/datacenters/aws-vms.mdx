@@ -1,28 +1,28 @@
 ---
-title: "AWS ECS Fargate"
-description: "Deploy to AWS ECS Fargate with RDS, S3, SES, KMS, and OTel observability"
+title: "AWS VMs (EC2)"
+description: "VM-based AWS deployment with EC2 instances, RDS, S3, and SES"
 ---
 
-# AWS ECS Fargate Datacenter
+# AWS VMs (EC2) Datacenter
 
-This guide shows how to build a datacenter that deploys components to AWS ECS Fargate with managed services for databases, storage, email, encryption, and observability.
+This guide shows how to build a datacenter that deploys all workloads to EC2 instances. Container-based deployments install Docker on EC2, runtime-based deployments install the language runtime directly, and functions run as long-lived processes behind ALB.
 
 <Info>
-This is an officially maintained datacenter template. Source: [`official-templates/aws-ecs/`](https://github.com/architect-io/arcctl/tree/main/official-templates/aws-ecs)
+This is an officially maintained datacenter template. Source: [`official-templates/aws-vms/`](https://github.com/architect-io/arcctl/tree/main/official-templates/aws-vms)
 </Info>
 
 ## Overview
 
 This datacenter provides:
-- **Compute**: ECS Fargate (serverless containers)
+- **Compute**: EC2 instances for ALL deployments and functions
 - **Databases**: RDS for PostgreSQL/MySQL, ElastiCache for Redis
 - **Storage**: S3 buckets
 - **Encryption**: KMS (symmetric), Secrets Manager (asymmetric key pairs)
 - **Email**: AWS SES (SMTP)
-- **Networking**: VPC, ALB, Route53
-- **Functions**: AWS Lambda
-- **Scheduling**: EventBridge scheduled tasks
-- **Observability**: OTel Collector on ECS exporting to CloudWatch + X-Ray
+- **Routing**: ALB + Route53
+- **Observability**: CloudWatch agent on EC2
+
+All EC2 provisioning uses `plugin = "opentofu"` for infrastructure management.
 
 ## Configuration Variables
 
@@ -38,14 +38,10 @@ variable "vpc_id" {
   type        = string
 }
 
-variable "cluster_name" {
-  description = "ECS cluster name"
-  type        = string
-}
-
 variable "domain" {
   description = "Base domain for environments"
   type        = string
+  default     = "app.example.com"
 }
 
 variable "hosted_zone_id" {
@@ -58,20 +54,31 @@ variable "certificate_arn" {
   type        = string
 }
 
+variable "ssh_key_pair" {
+  description = "EC2 key pair name for SSH access"
+  type        = string
+}
+
+variable "default_instance_type" {
+  description = "Default EC2 instance type"
+  type        = string
+  default     = "t3.small"
+}
+
 variable "ses_identity_arn" {
-  description = "AWS SES verified identity ARN for sending email"
+  description = "AWS SES verified identity ARN"
   type        = string
   default     = ""
 }
 
 variable "ses_smtp_username" {
-  description = "AWS SES SMTP username (IAM access key)"
+  description = "AWS SES SMTP username"
   type        = string
   default     = ""
 }
 
 variable "ses_smtp_password" {
-  description = "AWS SES SMTP password (IAM secret key)"
+  description = "AWS SES SMTP password"
   type        = string
   sensitive   = true
   default     = ""
@@ -80,24 +87,12 @@ variable "ses_smtp_password" {
 
 ## Shared Infrastructure
 
-Resources created once and shared across environments:
-
 ```hcl
-# ECS Cluster
-module "ecs_cluster" {
-  build = "./modules/ecs-cluster"
-  inputs = {
-    name   = variable.cluster_name
-    region = variable.aws_region
-    vpc_id = variable.vpc_id
-  }
-}
-
-# Application Load Balancer
+# Application Load Balancer (shared across environments)
 module "alb" {
   build = "./modules/alb"
   inputs = {
-    name            = "${variable.cluster_name}-alb"
+    name            = "arcctl-alb"
     vpc_id          = variable.vpc_id
     certificate_arn = variable.certificate_arn
   }
@@ -108,7 +103,6 @@ module "alb" {
 
 ```hcl
 environment {
-  # Per-environment resources
   module "target_group" {
     build = "./modules/alb-target-group"
     inputs = {
@@ -118,19 +112,19 @@ environment {
     }
   }
 
-  module "log_group" {
-    build = "./modules/cloudwatch-logs"
-    inputs = {
-      name           = "/ecs/${variable.cluster_name}/${environment.name}"
-      retention_days = 30
-    }
-  }
-
   module "security_group" {
     build = "./modules/security-group"
     inputs = {
       name   = "${environment.name}-sg"
       vpc_id = variable.vpc_id
+    }
+  }
+
+  module "log_group" {
+    build = "./modules/cloudwatch-logs"
+    inputs = {
+      name           = "/ec2/${environment.name}"
+      retention_days = 30
     }
   }
 }
@@ -165,32 +159,31 @@ database {
 }
 ```
 
-### Task Hook (ECS Fargate)
+### Task Hook (EC2 via SSM)
 
-One-time container execution using ECS tasks on Fargate Spot:
+One-time tasks run on temporary EC2 instances:
 
 ```hcl
 task {
-  module "run_task" {
-    build = "./modules/ecs-task"
+  module "ec2_task" {
+    plugin = "opentofu"
+    build  = "./modules/ec2-task"
     inputs = {
       name              = "${node.component}--${node.name}"
-      cluster           = variable.cluster_name
+      region            = variable.aws_region
       vpc_id            = variable.vpc_id
       security_group_id = module.security_group.id
-      log_group         = module.log_group.name
+      key_pair          = variable.ssh_key_pair
+      instance_type     = variable.default_instance_type
       image             = node.inputs.image
       command           = node.inputs.command
       environment       = node.inputs.environment
-      capacity_provider = "FARGATE_SPOT"
-      cpu               = "256"
-      memory            = "512"
     }
   }
 
   outputs = {
-    id     = module.run_task.task_arn
-    status = module.run_task.status
+    id     = module.ec2_task.instance_id
+    status = module.ec2_task.status
   }
 }
 ```
@@ -221,10 +214,8 @@ bucket {
 
 ### Encryption Key Hook (KMS + Secrets Manager)
 
-Asymmetric keys (RSA/ECDSA) are generated and stored in AWS Secrets Manager. Symmetric keys use AWS KMS:
-
 ```hcl
-# Asymmetric keys
+# Asymmetric keys (RSA/ECDSA)
 encryptionKey {
   when = node.inputs.keyType == "rsa" || node.inputs.keyType == "ecdsa"
 
@@ -267,8 +258,6 @@ encryptionKey {
 
 ### SMTP Hook (SES)
 
-Uses AWS SES for transactional email:
-
 ```hcl
 smtp {
   module "ses_smtp" {
@@ -288,93 +277,102 @@ smtp {
 }
 ```
 
-### Deployment Hook (ECS Service)
+### Deployment Hook - Container (EC2 + Docker)
 
-Container-based deployments run on ECS Fargate:
+Container-based deployments provision an EC2 instance, install Docker, and run the container:
 
 ```hcl
 deployment {
   when = node.inputs.image != null
 
-  module "ecs_service" {
-    build = "./modules/ecs-service"
+  module "ec2_docker" {
+    plugin = "opentofu"
+    build  = "./modules/ec2-docker"
     inputs = merge(node.inputs, {
-      cluster           = variable.cluster_name
+      name              = "${environment.name}-${node.component}-${node.name}"
+      region            = variable.aws_region
       vpc_id            = variable.vpc_id
       security_group_id = module.security_group.id
+      key_pair          = variable.ssh_key_pair
+      instance_type     = variable.default_instance_type
+      target_group_arn  = module.target_group.arn
       log_group         = module.log_group.name
     })
   }
 
   outputs = {
-    id = module.ecs_service.service_id
+    id = module.ec2_docker.instance_id
   }
 }
 ```
 
-### Deployment Hook (EC2 VM)
+The `ec2-docker` module:
+1. Launches an EC2 instance with Amazon Linux 2
+2. Installs Docker via user data script
+3. Authenticates with ECR and pulls the container image
+4. Runs the container as a systemd service
+5. Registers the instance with the ALB target group
 
-VM-based deployments use EC2 instances for workloads with the `runtime` property:
+### Deployment Hook - Runtime (EC2 + Language)
+
+Runtime-based deployments install the language directly on EC2:
 
 ```hcl
 deployment {
   when = node.inputs.runtime != null && node.inputs.image == null
 
-  module "ec2_vm" {
+  module "ec2_runtime" {
     plugin = "opentofu"
-    build  = "./modules/ec2-vm"
+    build  = "./modules/ec2-runtime"
     inputs = merge(node.inputs, {
-      name           = "${environment.name}-${node.component}-${node.name}"
-      subnet_id      = module.security_group.subnet_id
-      security_group = module.security_group.id
+      name              = "${environment.name}-${node.component}-${node.name}"
+      region            = variable.aws_region
+      vpc_id            = variable.vpc_id
+      security_group_id = module.security_group.id
+      key_pair          = variable.ssh_key_pair
+      instance_type     = variable.default_instance_type
+      target_group_arn  = module.target_group.arn
+      log_group         = module.log_group.name
     })
   }
 
   outputs = {
-    id = module.ec2_vm.instance_id
+    id = module.ec2_runtime.instance_id
   }
 }
 ```
 
-### Function Hook (Lambda)
+The `ec2-runtime` module:
+1. Selects an AMI based on the OS/arch requirements
+2. Installs the specified language runtime (e.g., Node.js 20, Python 3.12)
+3. Installs system packages if specified
+4. Runs setup commands
+5. Creates a systemd service for the application
+
+### Function Hook (EC2 Process)
+
+Functions deploy as long-running HTTP server processes on EC2 behind ALB:
 
 ```hcl
 function {
-  module "lambda" {
-    build = "./modules/lambda-function"
+  module "ec2_function" {
+    plugin = "opentofu"
+    build  = "./modules/ec2-function"
     inputs = merge(node.inputs, {
-      name              = "${environment.name}-${node.name}"
+      name              = "${environment.name}-${node.component}-${node.name}"
+      region            = variable.aws_region
       vpc_id            = variable.vpc_id
       security_group_id = module.security_group.id
+      key_pair          = variable.ssh_key_pair
+      instance_type     = variable.default_instance_type
+      target_group_arn  = module.target_group.arn
+      log_group         = module.log_group.name
     })
   }
 
   outputs = {
-    id       = module.lambda.function_arn
-    endpoint = module.lambda.function_url
-  }
-}
-```
-
-### Service Hook (Cloud Map)
-
-```hcl
-service {
-  module "service_discovery" {
-    build = "./modules/service-discovery"
-    inputs = {
-      name        = node.name
-      namespace   = environment.name
-      target      = node.inputs.target
-      target_type = node.inputs.target_type
-      port        = node.inputs.port
-    }
-  }
-
-  outputs = {
-    host = module.service_discovery.dns_name
-    port = module.service_discovery.port
-    url  = "http://${module.service_discovery.dns_name}:${module.service_discovery.port}"
+    id       = module.ec2_function.instance_id
+    endpoint = "http://${module.ec2_function.private_ip}:${module.ec2_function.port}"
   }
 }
 ```
@@ -402,20 +400,25 @@ ingress {
 }
 ```
 
-### Cronjob Hook (EventBridge)
+### Cronjob Hook (EC2 Cron)
 
 ```hcl
 cronjob {
-  module "eventbridge_task" {
-    build = "./modules/eventbridge-scheduled-task"
+  module "ec2_cronjob" {
+    plugin = "opentofu"
+    build  = "./modules/ec2-cronjob"
     inputs = merge(node.inputs, {
-      name    = "${environment.name}-${node.name}"
-      cluster = variable.cluster_name
+      name              = "${environment.name}-${node.component}-${node.name}"
+      region            = variable.aws_region
+      vpc_id            = variable.vpc_id
+      security_group_id = module.security_group.id
+      key_pair          = variable.ssh_key_pair
+      instance_type     = "t3.micro"
     })
   }
 
   outputs = {
-    id = module.eventbridge_task.rule_arn
+    id = module.ec2_cronjob.instance_id
   }
 }
 ```
@@ -441,26 +444,23 @@ dockerBuild {
 }
 ```
 
-### Observability Hook (OTel Collector on ECS)
+### Observability Hook (CloudWatch Agent)
 
-Deploys an OpenTelemetry Collector as an ECS service that receives OTLP telemetry and exports to CloudWatch and X-Ray:
+Installs the CloudWatch agent on EC2 instances with an OTel collector sidecar:
 
 ```hcl
 observability {
-  module "otel_collector" {
-    build = "./modules/ecs-otel-collector"
+  module "cloudwatch_agent" {
+    build = "./modules/cloudwatch-agent"
     inputs = {
-      name              = "${environment.name}-otel-collector"
-      cluster           = variable.cluster_name
-      region            = variable.aws_region
-      vpc_id            = variable.vpc_id
-      security_group_id = module.security_group.id
-      log_group         = module.log_group.name
+      name      = "${environment.name}-observability"
+      region    = variable.aws_region
+      log_group = module.log_group.name
     }
   }
 
   outputs = {
-    endpoint       = module.otel_collector.otlp_endpoint
+    endpoint       = module.cloudwatch_agent.otlp_endpoint
     protocol       = "http/protobuf"
     query_type     = "cloudwatch"
     query_endpoint = "https://logs.${variable.aws_region}.amazonaws.com"
@@ -468,61 +468,83 @@ observability {
     attributes = {
       "cloud.provider" = "aws"
       "cloud.region"   = variable.aws_region
-      "cloud.platform" = "aws_ecs"
+      "cloud.platform" = "aws_ec2"
     }
   }
 }
 ```
 
-## Deploying the Datacenter
+## Deploying
 
 ```bash
 # Build the datacenter
-arcctl dc build . -t ghcr.io/myorg/aws-ecs-dc:v1.0.0
-arcctl dc push ghcr.io/myorg/aws-ecs-dc:v1.0.0
+arcctl dc build . -t ghcr.io/myorg/aws-vms-dc:v1.0.0
+arcctl dc push ghcr.io/myorg/aws-vms-dc:v1.0.0
 
 # Deploy with variables
-arcctl dc deploy aws-production \
-  --config ghcr.io/myorg/aws-ecs-dc:v1.0.0 \
-  --var cluster_name=prod-cluster \
+arcctl dc deploy aws-vms-prod \
+  --config ghcr.io/myorg/aws-vms-dc:v1.0.0 \
   --var vpc_id=vpc-12345 \
   --var domain=app.example.com \
   --var hosted_zone_id=Z123456 \
   --var certificate_arn=arn:aws:acm:... \
+  --var ssh_key_pair=my-key-pair \
   --var ses_identity_arn=arn:aws:ses:... \
   --var ses_smtp_username=$SES_USERNAME \
   --var ses_smtp_password=$SES_PASSWORD
-```
 
-## Creating Environments
-
-```bash
-# Create staging environment
-arcctl env create staging --datacenter aws-production
-
-# Deploy components
+# Create environment and deploy
+arcctl env create staging --datacenter aws-vms-prod
 arcctl deploy ghcr.io/myorg/my-app:v1.0.0 -e staging
 ```
 
+## How It Works
+
+### Container Deployments on EC2
+
+When a component has a Docker image (`node.inputs.image != null`):
+1. An EC2 instance is provisioned via OpenTofu
+2. Docker is installed via user data script
+3. The container image is pulled from ECR
+4. The container runs as a systemd service
+5. The instance registers with the ALB target group
+
+### Runtime Deployments on EC2
+
+When a component has a runtime (`node.inputs.runtime != null`):
+1. An EC2 instance is provisioned via OpenTofu
+2. The specified language runtime is installed (e.g., `node:20`, `python:3.12`)
+3. System packages from `runtime.packages` are installed
+4. Setup commands from `runtime.setup` are executed
+5. The application runs as a systemd service
+
+### Functions on EC2
+
+Functions deploy as persistent HTTP server processes:
+1. An EC2 instance is provisioned
+2. The function handler runs as a long-lived process
+3. The ALB routes traffic to the instance
+4. Unlike Lambda, there are no cold starts or timeout limits
+
 ## Cost Optimization
 
-- Use Fargate Spot for non-critical workloads
+- Use Reserved Instances or Savings Plans for predictable workloads
+- Use `t3.micro` for cronjobs and low-traffic services
+- Consolidate multiple small services onto larger instances
+- Use Auto Scaling Groups for variable traffic
 - RDS t3.micro for development environments
-- CloudWatch log retention to control costs
-- S3 lifecycle policies for object storage
-- Use Lambda for infrequent workloads instead of ECS services
 
 ## Related Guides
 
 <CardGroup cols={2}>
+  <Card title="AWS ECS Fargate" href="/guides/datacenters/aws-ecs">
+    Container-based AWS deployment with ECS
+  </Card>
   <Card title="AWS Lambda" href="/guides/datacenters/aws-lambda">
     Serverless-first AWS deployment with Lambda
   </Card>
   <Card title="AWS Kubernetes (EKS)" href="/guides/datacenters/aws-k8s">
     Kubernetes on AWS with EKS
-  </Card>
-  <Card title="AWS VMs (EC2)" href="/guides/datacenters/aws-vms">
-    VM-based AWS deployment with EC2
   </Card>
   <Card title="Managing Environments" href="/guides/managing-environments">
     Day-to-day environment operations

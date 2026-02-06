@@ -178,7 +178,7 @@ func deployEnvironment(t *testing.T, ctx context.Context, arcctlBinary, testDir,
 
 	// Get repository root for datacenter path
 	repoRoot := getRepoRoot(t)
-	datacenterPath := filepath.Join(repoRoot, "examples", "datacenters", "local-docker")
+	datacenterPath := filepath.Join(repoRoot, "official-templates", "local")
 
 	// Build command with environment file
 	// Name and datacenter are CLI flags, not part of the config file

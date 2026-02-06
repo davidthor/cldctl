@@ -403,6 +403,64 @@ environment {
     }
   }
 
+  # Ingress hook - for local dev, same as route (expose the port directly)
+  ingress {
+    module "ingress" {
+      plugin = "native"
+      build  = "./modules/local-route"
+      inputs = {
+        name        = "${environment.name}-${node.component}-${node.name}"
+        type        = node.inputs.type
+        rules       = node.inputs.rules
+        internal    = node.inputs.internal
+        host        = variable.host
+      }
+    }
+    
+    outputs = {
+      url      = module.ingress.url
+      hosts    = [variable.host]
+      protocol = "http"
+      host     = module.ingress.host
+      port     = module.ingress.port
+    }
+  }
+  
+  # Database user hook - grant additional database user access
+  databaseUser {
+    module "db_user" {
+      plugin = "native"
+      build  = "./modules/docker-postgres"
+      inputs = {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        database = node.inputs.database
+        network  = variable.network_name
+      }
+    }
+    
+    outputs = {
+      username = module.db_user.username
+      password = module.db_user.password
+      url      = module.db_user.url
+    }
+  }
+  
+  # Secret hook - store secrets locally in state
+  secret {
+    module "secret" {
+      plugin = "native"
+      build  = "./modules/local-secret"
+      inputs = {
+        name  = "${environment.name}-${node.component}-${node.name}"
+        value = node.inputs.value
+      }
+    }
+    
+    outputs = {
+      id = module.secret.id
+    }
+  }
+  
   # Observability - local OpenTelemetry backend (Grafana + Loki + Tempo + Prometheus)
   # Spins up a grafana/otel-lgtm container that receives logs, traces, and metrics
   # via the standard OTLP endpoints. View everything in Grafana at the printed URL.

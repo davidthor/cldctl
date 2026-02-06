@@ -1,5 +1,8 @@
-# AWS ECS Fargate datacenter
-# Deploys to ECS Fargate with RDS, ElastiCache, S3, SES, KMS, and OTel observability
+# AWS EC2 (VMs) datacenter
+# VM-based AWS template. ALL deployments run on EC2 instances.
+# Container-based deployments install Docker on EC2 and run containers.
+# Runtime-based deployments install the language runtime directly.
+# Functions deploy as long-running processes on EC2 behind ALB.
 
 variable "aws_region" {
   description = "AWS region"
@@ -9,11 +12,6 @@ variable "aws_region" {
 
 variable "vpc_id" {
   description = "VPC ID for deployment"
-  type        = string
-}
-
-variable "cluster_name" {
-  description = "ECS cluster name"
   type        = string
 }
 
@@ -31,6 +29,17 @@ variable "hosted_zone_id" {
 variable "certificate_arn" {
   description = "ACM certificate ARN for TLS"
   type        = string
+}
+
+variable "ssh_key_pair" {
+  description = "EC2 key pair name for SSH access"
+  type        = string
+}
+
+variable "default_instance_type" {
+  description = "Default EC2 instance type"
+  type        = string
+  default     = "t3.small"
 }
 
 variable "ses_identity_arn" {
@@ -52,54 +61,24 @@ variable "ses_smtp_password" {
   default     = ""
 }
 
-# ECS Cluster (shared across environments)
-module "ecs_cluster" {
-  build = "./modules/ecs-cluster"
-  inputs = {
-    name   = variable.cluster_name
-    region = variable.aws_region
-    vpc_id = variable.vpc_id
-  }
-}
-
-# Application Load Balancer (shared)
+# Application Load Balancer (shared across environments)
 module "alb" {
   build = "./modules/alb"
   inputs = {
-    name            = "${variable.cluster_name}-alb"
+    name            = "arcctl-alb"
     vpc_id          = variable.vpc_id
     certificate_arn = variable.certificate_arn
   }
 }
 
 environment {
-  # Target group per environment
+  # ALB target group per environment
   module "target_group" {
     build = "./modules/alb-target-group"
     inputs = {
       name    = environment.name
       vpc_id  = variable.vpc_id
       alb_arn = module.alb.arn
-    }
-  }
-
-  # CloudWatch log group
-  module "log_group" {
-    build = "./modules/cloudwatch-logs"
-    inputs = {
-      name           = "/ecs/${variable.cluster_name}/${environment.name}"
-      retention_days = 30
-    }
-  }
-
-  # DNS records
-  module "dns_records" {
-    build = "./modules/route53-records"
-    inputs = {
-      hosted_zone_id = variable.hosted_zone_id
-      domain         = "${environment.name}.${variable.domain}"
-      alb_dns_name   = module.alb.dns_name
-      alb_zone_id    = module.alb.zone_id
     }
   }
 
@@ -112,7 +91,27 @@ environment {
     }
   }
 
-  # Resource hooks
+  # CloudWatch log group
+  module "log_group" {
+    build = "./modules/cloudwatch-logs"
+    inputs = {
+      name           = "/ec2/${environment.name}"
+      retention_days = 30
+    }
+  }
+
+  # DNS records per environment
+  module "dns_records" {
+    build = "./modules/route53-records"
+    inputs = {
+      hosted_zone_id = variable.hosted_zone_id
+      domain         = "${environment.name}.${variable.domain}"
+      alb_dns_name   = module.alb.dns_name
+      alb_zone_id    = module.alb.zone_id
+    }
+  }
+
+  # Database hook - RDS
   database {
     module "rds_database" {
       build = "./modules/rds-database"
@@ -136,33 +135,31 @@ environment {
     }
   }
 
-  # Task hook - run one-time containers (e.g., database migrations)
-  # Uses ECS Tasks (Fargate) for one-time execution
+  # Task hook - one-time EC2 task via SSM Run Command
   task {
-    module "run_task" {
-      build = "./modules/ecs-task"
+    module "ec2_task" {
+      plugin = "opentofu"
+      build  = "./modules/ec2-task"
       inputs = {
         name              = "${node.component}--${node.name}"
-        cluster           = variable.cluster_name
+        region            = variable.aws_region
         vpc_id            = variable.vpc_id
         security_group_id = module.security_group.id
-        log_group         = module.log_group.name
+        key_pair          = variable.ssh_key_pair
+        instance_type     = variable.default_instance_type
         image             = node.inputs.image
         command           = node.inputs.command
         environment       = node.inputs.environment
-        # Use Fargate SPOT for cost-effective one-time tasks
-        capacity_provider = "FARGATE_SPOT"
-        cpu               = "256"
-        memory            = "512"
       }
     }
 
     outputs = {
-      id     = module.run_task.task_arn
-      status = module.run_task.status
+      id     = module.ec2_task.instance_id
+      status = module.ec2_task.status
     }
   }
 
+  # Bucket hook - S3
   bucket {
     module "s3_bucket" {
       build = "./modules/s3-bucket"
@@ -184,7 +181,6 @@ environment {
   }
 
   # Encryption key hook - asymmetric (RSA/ECDSA)
-  # Generates key pair and stores in AWS Secrets Manager
   encryptionKey {
     when = node.inputs.keyType == "rsa" || node.inputs.keyType == "ecdsa"
 
@@ -206,8 +202,7 @@ environment {
     }
   }
 
-  # Encryption key hook - symmetric
-  # Uses AWS KMS for key management
+  # Encryption key hook - symmetric (KMS)
   encryptionKey {
     when = node.inputs.keyType == "symmetric"
 
@@ -244,79 +239,101 @@ environment {
   }
 
   # Deployment hook - container-based (image present)
+  # Provisions an EC2 instance, installs Docker, and runs the container
   deployment {
     when = node.inputs.image != null
 
-    module "ecs_service" {
-      build = "./modules/ecs-service"
+    module "ec2_docker" {
+      plugin = "opentofu"
+      build  = "./modules/ec2-docker"
       inputs = merge(node.inputs, {
-        cluster           = variable.cluster_name
+        name              = "${environment.name}-${node.component}-${node.name}"
+        region            = variable.aws_region
         vpc_id            = variable.vpc_id
         security_group_id = module.security_group.id
+        key_pair          = variable.ssh_key_pair
+        instance_type     = variable.default_instance_type
+        target_group_arn  = module.target_group.arn
         log_group         = module.log_group.name
       })
     }
 
     outputs = {
-      id = module.ecs_service.service_id
+      id = module.ec2_docker.instance_id
     }
   }
 
   # Deployment hook - VM-based (runtime present, no image)
-  # Provisions EC2 instances for workloads using the runtime property
+  # Provisions an EC2 instance with the specified language runtime installed
   deployment {
     when = node.inputs.runtime != null && node.inputs.image == null
 
-    module "ec2_vm" {
+    module "ec2_runtime" {
       plugin = "opentofu"
-      build  = "./modules/ec2-vm"
+      build  = "./modules/ec2-runtime"
       inputs = merge(node.inputs, {
-        name           = "${environment.name}-${node.component}-${node.name}"
-        subnet_id      = module.security_group.subnet_id
-        security_group = module.security_group.id
-      })
-    }
-
-    outputs = {
-      id = module.ec2_vm.instance_id
-    }
-  }
-
-  function {
-    module "lambda" {
-      build = "./modules/lambda-function"
-      inputs = merge(node.inputs, {
-        name              = "${environment.name}-${node.name}"
+        name              = "${environment.name}-${node.component}-${node.name}"
+        region            = variable.aws_region
         vpc_id            = variable.vpc_id
         security_group_id = module.security_group.id
+        key_pair          = variable.ssh_key_pair
+        instance_type     = variable.default_instance_type
+        target_group_arn  = module.target_group.arn
+        log_group         = module.log_group.name
       })
     }
 
     outputs = {
-      id       = module.lambda.function_arn
-      endpoint = module.lambda.function_url
+      id = module.ec2_runtime.instance_id
     }
   }
 
+  # Function hook - deploy as long-running process on EC2 behind ALB
+  # Functions are deployed as EC2 instances running the function handler
+  # as a persistent HTTP server process, fronted by the ALB.
+  function {
+    module "ec2_function" {
+      plugin = "opentofu"
+      build  = "./modules/ec2-function"
+      inputs = merge(node.inputs, {
+        name              = "${environment.name}-${node.component}-${node.name}"
+        region            = variable.aws_region
+        vpc_id            = variable.vpc_id
+        security_group_id = module.security_group.id
+        key_pair          = variable.ssh_key_pair
+        instance_type     = variable.default_instance_type
+        target_group_arn  = module.target_group.arn
+        log_group         = module.log_group.name
+      })
+    }
+
+    outputs = {
+      id       = module.ec2_function.instance_id
+      endpoint = "http://${module.ec2_function.private_ip}:${module.ec2_function.port}"
+    }
+  }
+
+  # Service hook - ALB target group routing
   service {
-    module "service_discovery" {
-      build = "./modules/service-discovery"
+    module "alb_target" {
+      build = "./modules/alb-target-registration"
       inputs = {
-        name        = node.name
-        namespace   = environment.name
-        target      = node.inputs.target
-        target_type = node.inputs.target_type
-        port        = node.inputs.port
+        name             = node.name
+        target_group_arn = module.target_group.arn
+        target           = node.inputs.target
+        target_type      = node.inputs.target_type
+        port             = node.inputs.port
       }
     }
 
     outputs = {
-      host = module.service_discovery.dns_name
-      port = module.service_discovery.port
-      url  = "http://${module.service_discovery.dns_name}:${module.service_discovery.port}"
+      host = module.alb_target.dns_name
+      port = module.alb_target.port
+      url  = "http://${module.alb_target.dns_name}:${module.alb_target.port}"
     }
   }
 
+  # Ingress hook - ALB listener rules
   ingress {
     module "alb_listener_rule" {
       build = "./modules/alb-listener-rule"
@@ -336,20 +353,27 @@ environment {
     }
   }
 
+  # Cronjob hook - cron on a dedicated EC2 instance
   cronjob {
-    module "eventbridge_task" {
-      build = "./modules/eventbridge-scheduled-task"
+    module "ec2_cronjob" {
+      plugin = "opentofu"
+      build  = "./modules/ec2-cronjob"
       inputs = merge(node.inputs, {
-        name    = "${environment.name}-${node.name}"
-        cluster = variable.cluster_name
+        name              = "${environment.name}-${node.component}-${node.name}"
+        region            = variable.aws_region
+        vpc_id            = variable.vpc_id
+        security_group_id = module.security_group.id
+        key_pair          = variable.ssh_key_pair
+        instance_type     = "t3.micro"
       })
     }
 
     outputs = {
-      id = module.eventbridge_task.rule_arn
+      id = module.ec2_cronjob.instance_id
     }
   }
 
+  # Database user hook
   databaseUser {
     module "rds_user" {
       build = "./modules/rds-user"
@@ -366,6 +390,7 @@ environment {
     }
   }
 
+  # Secret hook - Secrets Manager
   secret {
     module "secrets_manager" {
       build = "./modules/secrets-manager"
@@ -380,6 +405,7 @@ environment {
     }
   }
 
+  # Docker build hook - ECR
   dockerBuild {
     module "ecr_build" {
       build = "./modules/ecr-build"
@@ -397,24 +423,21 @@ environment {
     }
   }
 
-  # Observability hook - OTel collector sidecar on ECS with CloudWatch backend
-  # Deploys an OpenTelemetry Collector as an ECS service that receives OTLP
-  # telemetry and exports to CloudWatch Logs, CloudWatch Metrics, and X-Ray.
+  # Observability hook - CloudWatch agent on EC2
+  # Installs the CloudWatch agent on each EC2 instance and runs an OTel
+  # collector sidecar process that receives OTLP telemetry.
   observability {
-    module "otel_collector" {
-      build = "./modules/ecs-otel-collector"
+    module "cloudwatch_agent" {
+      build = "./modules/cloudwatch-agent"
       inputs = {
-        name              = "${environment.name}-otel-collector"
-        cluster           = variable.cluster_name
-        region            = variable.aws_region
-        vpc_id            = variable.vpc_id
-        security_group_id = module.security_group.id
-        log_group         = module.log_group.name
+        name      = "${environment.name}-observability"
+        region    = variable.aws_region
+        log_group = module.log_group.name
       }
     }
 
     outputs = {
-      endpoint       = module.otel_collector.otlp_endpoint
+      endpoint       = module.cloudwatch_agent.otlp_endpoint
       protocol       = "http/protobuf"
       query_type     = "cloudwatch"
       query_endpoint = "https://logs.${variable.aws_region}.amazonaws.com"
@@ -422,7 +445,7 @@ environment {
       attributes = {
         "cloud.provider" = "aws"
         "cloud.region"   = variable.aws_region
-        "cloud.platform" = "aws_ecs"
+        "cloud.platform" = "aws_ec2"
       }
     }
   }

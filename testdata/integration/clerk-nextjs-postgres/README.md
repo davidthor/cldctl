@@ -11,7 +11,7 @@ The test deploys:
 
 ## Prerequisites
 
-1. **Docker** - Required for the local-docker datacenter
+1. **Docker** - Required for the local datacenter
 2. **Clerk account** - Get credentials from [Clerk Dashboard](https://dashboard.clerk.com)
 3. **Go 1.21+** - For running the tests
 4. **pnpm** - For Node.js dependency management
@@ -60,7 +60,7 @@ To deploy manually using arcctl (name and datacenter are CLI flags):
 ```bash
 # From repository root
 arcctl update environment clerk-test \
-  -d ./official-templates/local-docker \
+  -d ./official-templates/local \
   ./testdata/integration/clerk-nextjs-postgres/environment.yml
 ```
 
@@ -158,7 +158,7 @@ Returns user info and database query result.
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│                 local-docker datacenter                  │
+│                 local datacenter                  │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
 │  │  PostgreSQL  │  │  Next.js App │  │ Docker       │  │
 │  │  Container   │◄─┤  Container   │  │ Network      │  │

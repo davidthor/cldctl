@@ -1,0 +1,497 @@
+---
+title: "DigitalOcean App Platform"
+description: "Deploy to DigitalOcean App Platform — a fully managed PaaS"
+---
+
+# DigitalOcean App Platform Datacenter
+
+This guide shows how to build a datacenter that deploys components to DigitalOcean App Platform with managed databases, Spaces for storage, and built-in observability.
+
+<Info>
+This is an officially maintained datacenter template. Source: [`official-templates/do-app-platform/`](https://github.com/architect-io/arcctl/tree/main/official-templates/do-app-platform)
+</Info>
+
+## Overview
+
+This datacenter provides:
+- **Compute**: DigitalOcean App Platform (PaaS — deployments, functions, jobs)
+- **Databases**: Managed PostgreSQL, MySQL, Redis
+- **Storage**: DigitalOcean Spaces (S3-compatible)
+- **Functions**: App Platform native functions
+- **Networking**: App Platform handles routing and TLS automatically
+- **Email**: External SMTP relay (SendGrid, Mailgun, etc.)
+- **Observability**: App Platform built-in monitoring + OTel collector
+
+App Platform is a PaaS, so this template does **not** support VM/runtime-based deployments. For VM workloads, use the [DO Kubernetes](/guides/datacenters/do-k8s) or [DO VMs](/guides/datacenters/do-vms) template.
+
+## Configuration Variables
+
+```hcl
+variable "do_token" {
+  description = "DigitalOcean API token"
+  type        = string
+  sensitive   = true
+}
+
+variable "region" {
+  description = "DigitalOcean region"
+  type        = string
+  default     = "nyc"
+}
+
+variable "domain" {
+  description = "Custom domain for applications"
+  type        = string
+  default     = ""
+}
+
+variable "registry" {
+  description = "Container registry URL"
+  type        = string
+  default     = "registry.digitalocean.com"
+}
+
+variable "smtp_host" {
+  description = "External SMTP relay host"
+  type        = string
+  default     = "smtp.sendgrid.net"
+}
+
+variable "smtp_port" {
+  description = "External SMTP relay port"
+  type        = number
+  default     = 587
+}
+
+variable "smtp_username" {
+  description = "External SMTP relay username"
+  type        = string
+  default     = "apikey"
+}
+
+variable "smtp_password" {
+  description = "External SMTP relay password"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+```
+
+## Environment Configuration
+
+App Platform manages its own infrastructure, so there is no shared cluster to provision. Each environment gets its own set of App Platform resources.
+
+## Resource Hooks
+
+### Database Hook (Managed Database)
+
+Uses DigitalOcean Managed Databases for PostgreSQL, MySQL, and Redis:
+
+```hcl
+database {
+  module "managed_database" {
+    build = "./modules/do-managed-database"
+    inputs = {
+      name    = "${environment.name}-${node.name}"
+      type    = element(split(":", node.inputs.type), 0)
+      version = try(element(split(":", node.inputs.type), 1), null)
+      region  = variable.region
+      size    = "db-s-1vcpu-1gb"
+      token   = variable.do_token
+    }
+  }
+
+  outputs = {
+    host     = module.managed_database.host
+    port     = module.managed_database.port
+    database = module.managed_database.database
+    username = module.managed_database.username
+    password = module.managed_database.password
+    url      = module.managed_database.connection_url
+  }
+}
+```
+
+### Task Hook (App Platform Job)
+
+Runs one-time tasks via App Platform Jobs:
+
+```hcl
+task {
+  module "app_job" {
+    build = "./modules/do-app-job"
+    inputs = {
+      name        = "${environment.name}-${node.component}-${node.name}"
+      image       = node.inputs.image
+      command     = node.inputs.command
+      environment = node.inputs.environment
+      region      = variable.region
+      token       = variable.do_token
+    }
+  }
+
+  outputs = {
+    id     = module.app_job.job_id
+    status = module.app_job.status
+  }
+}
+```
+
+### Bucket Hook (Spaces)
+
+Uses DigitalOcean Spaces for S3-compatible object storage:
+
+```hcl
+bucket {
+  module "spaces_bucket" {
+    build = "./modules/do-spaces"
+    inputs = {
+      name       = "${environment.name}-${node.name}"
+      region     = variable.region
+      versioning = node.inputs.versioning
+      public     = node.inputs.public
+      token      = variable.do_token
+    }
+  }
+
+  outputs = {
+    endpoint        = "https://${variable.region}.digitaloceanspaces.com"
+    bucket          = module.spaces_bucket.bucket_name
+    region          = variable.region
+    accessKeyId     = module.spaces_bucket.access_key
+    secretAccessKey = module.spaces_bucket.secret_key
+  }
+}
+```
+
+### Encryption Key Hook
+
+Generates cryptographic keys and stores them as app secrets.
+
+**Asymmetric keys (RSA/ECDSA):**
+
+```hcl
+encryptionKey {
+  when = node.inputs.keyType == "rsa" || node.inputs.keyType == "ecdsa"
+
+  module "asymmetric_key" {
+    build = "./modules/do-app-secret"
+    inputs = {
+      name     = "${environment.name}-${node.component}-${node.name}"
+      key_type = node.inputs.keyType
+      key_size = node.inputs.keySize
+      token    = variable.do_token
+    }
+  }
+
+  outputs = {
+    privateKey       = module.asymmetric_key.privateKey
+    publicKey        = module.asymmetric_key.publicKey
+    privateKeyBase64 = module.asymmetric_key.privateKeyBase64
+    publicKeyBase64  = module.asymmetric_key.publicKeyBase64
+  }
+}
+```
+
+**Symmetric keys:**
+
+```hcl
+encryptionKey {
+  when = node.inputs.keyType == "symmetric"
+
+  module "symmetric_key" {
+    build = "./modules/do-app-secret"
+    inputs = {
+      name     = "${environment.name}-${node.component}-${node.name}"
+      key_type = "symmetric"
+      key_size = node.inputs.keySize
+      token    = variable.do_token
+    }
+  }
+
+  outputs = {
+    key       = module.symmetric_key.key
+    keyBase64 = module.symmetric_key.keyBase64
+  }
+}
+```
+
+### SMTP Hook (External Relay)
+
+DigitalOcean does not have a native SMTP service. This hook uses a configurable external relay:
+
+```hcl
+smtp {
+  module "smtp_config" {
+    build = "./modules/do-app-secret"
+    inputs = {
+      name  = "${environment.name}-${node.component}-${node.name}-smtp"
+      token = variable.do_token
+      data = {
+        host     = variable.smtp_host
+        port     = tostring(variable.smtp_port)
+        username = variable.smtp_username
+        password = variable.smtp_password
+      }
+    }
+  }
+
+  outputs = {
+    host     = variable.smtp_host
+    port     = variable.smtp_port
+    username = variable.smtp_username
+    password = variable.smtp_password
+  }
+}
+```
+
+### Database User Hook
+
+Creates additional users on managed databases:
+
+```hcl
+databaseUser {
+  module "db_user" {
+    build = "./modules/do-database-user"
+    inputs = {
+      name     = "${environment.name}-${node.component}-${node.name}"
+      database = node.inputs.database
+      token    = variable.do_token
+    }
+  }
+
+  outputs = {
+    username = module.db_user.username
+    password = module.db_user.password
+    url      = module.db_user.url
+  }
+}
+```
+
+### Secret Hook
+
+Stores sensitive values as encrypted App Platform environment variables:
+
+```hcl
+secret {
+  module "app_secret" {
+    build = "./modules/do-app-secret"
+    inputs = {
+      name  = "${environment.name}-${node.component}-${node.name}"
+      token = variable.do_token
+      data = {
+        value = node.inputs.value
+      }
+    }
+  }
+
+  outputs = {
+    id = module.app_secret.secret_id
+  }
+}
+```
+
+### Deployment Hook (App Platform Service)
+
+Container-based deployments run as App Platform services. VM/runtime-based deployments are **not supported** on App Platform.
+
+```hcl
+deployment {
+  when = node.inputs.image != null
+
+  module "app_service" {
+    build = "./modules/do-app-service"
+    inputs = merge(node.inputs, {
+      name   = "${environment.name}-${node.component}-${node.name}"
+      region = variable.region
+      token  = variable.do_token
+    })
+  }
+
+  outputs = {
+    id = module.app_service.app_id
+  }
+}
+```
+
+### Function Hook (App Platform Functions)
+
+App Platform has native function support:
+
+```hcl
+function {
+  module "app_function" {
+    build = "./modules/do-app-function"
+    inputs = merge(node.inputs, {
+      name   = "${environment.name}-${node.component}-${node.name}"
+      region = variable.region
+      token  = variable.do_token
+    })
+  }
+
+  outputs = {
+    id       = module.app_function.function_id
+    endpoint = module.app_function.url
+  }
+}
+```
+
+### Service Hook
+
+App Platform provides internal service-to-service routing:
+
+```hcl
+service {
+  module "app_internal_service" {
+    build = "./modules/do-app-internal-service"
+    inputs = merge(node.inputs, {
+      name  = "${environment.name}-${node.component}-${node.name}"
+      token = variable.do_token
+    })
+  }
+
+  outputs = {
+    host = module.app_internal_service.host
+    port = module.app_internal_service.port
+    url  = "http://${module.app_internal_service.host}:${module.app_internal_service.port}"
+  }
+}
+```
+
+### Ingress Hook (App Platform Domains)
+
+App Platform handles routing and TLS automatically:
+
+```hcl
+ingress {
+  module "app_domain" {
+    build = "./modules/do-app-domain"
+    inputs = merge(node.inputs, {
+      name   = "${environment.name}-${node.component}-${node.name}"
+      domain = variable.domain
+      token  = variable.do_token
+    })
+  }
+
+  outputs = {
+    url      = module.app_domain.url
+    hosts    = [module.app_domain.host]
+    protocol = "https"
+    host     = module.app_domain.host
+    port     = 443
+  }
+}
+```
+
+### CronJob Hook (Scheduled Jobs)
+
+App Platform supports scheduled jobs natively:
+
+```hcl
+cronjob {
+  module "app_cron" {
+    build = "./modules/do-app-job"
+    inputs = merge(node.inputs, {
+      name     = "${environment.name}-${node.component}-${node.name}"
+      schedule = node.inputs.schedule
+      region   = variable.region
+      token    = variable.do_token
+    })
+  }
+
+  outputs = {
+    id = module.app_cron.job_id
+  }
+}
+```
+
+### Docker Build Hook
+
+```hcl
+dockerBuild {
+  module "docker_build" {
+    build = "./modules/docker-build-push"
+    inputs = {
+      context    = node.inputs.context
+      dockerfile = node.inputs.dockerfile
+      target     = node.inputs.target
+      args       = node.inputs.args
+      registry   = variable.registry
+      token      = variable.do_token
+    }
+  }
+
+  outputs = {
+    image = module.docker_build.image
+  }
+}
+```
+
+### Observability Hook
+
+Uses App Platform built-in monitoring with an OTel collector sidecar:
+
+```hcl
+observability {
+  module "app_monitoring" {
+    build = "./modules/do-app-monitoring"
+    inputs = {
+      name   = "${environment.name}-otel"
+      region = variable.region
+      token  = variable.do_token
+    }
+  }
+
+  outputs = {
+    endpoint       = module.app_monitoring.otlp_endpoint
+    protocol       = "http/protobuf"
+    query_type     = "loki"
+    query_endpoint = module.app_monitoring.loki_endpoint
+    dashboard_url  = module.app_monitoring.dashboard_url
+    attributes = {
+      "cloud.provider" = "digitalocean"
+      "cloud.platform" = "digitalocean_app_platform"
+      "cloud.region"   = variable.region
+    }
+  }
+}
+```
+
+## Deploying
+
+```bash
+# Build and push
+arcctl build datacenter ./do-app-platform -t ghcr.io/myorg/do-app-platform:v1
+arcctl push datacenter ghcr.io/myorg/do-app-platform:v1
+
+# Deploy datacenter
+arcctl deploy datacenter do-paas ghcr.io/myorg/do-app-platform:v1 \
+  --var do_token=$DO_TOKEN \
+  --var domain=app.example.com \
+  --var smtp_password=$SMTP_PASSWORD
+
+# Create environment and deploy
+arcctl create environment staging -d do-paas
+arcctl deploy component ghcr.io/myorg/my-app:v1 -e staging
+```
+
+## Cost Optimization
+
+- App Platform has a free tier for static sites
+- Basic tier starts at $5/month per app
+- Managed databases start at $15/month
+- Spaces is cost-effective for storage ($5/month for 250 GB)
+
+## Related Guides
+
+<CardGroup cols={2}>
+  <Card title="DO Kubernetes" href="/guides/datacenters/do-k8s">
+    Kubernetes-based DigitalOcean deployment
+  </Card>
+  <Card title="DO Droplet VMs" href="/guides/datacenters/do-vms">
+    VM-based DigitalOcean deployment
+  </Card>
+  <Card title="Managing Environments" href="/guides/managing-environments">
+    Day-to-day environment operations
+  </Card>
+</CardGroup>

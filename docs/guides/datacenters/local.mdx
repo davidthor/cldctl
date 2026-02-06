@@ -8,7 +8,7 @@ description: "Fast local development datacenter using Docker and the native plug
 This guide shows how to build a lightweight datacenter for local development using arcctl's native plugin. It's optimized for fast startup with minimal overhead.
 
 <Info>
-This is an officially maintained datacenter template. Source: [`official-templates/local-docker/`](https://github.com/architect-io/arcctl/tree/main/official-templates/local-docker)
+This is an officially maintained datacenter template. Source: [`official-templates/local/`](https://github.com/architect-io/arcctl/tree/main/official-templates/local)
 </Info>
 
 ## Overview
@@ -97,7 +97,7 @@ outputs:
 ## Datacenter Configuration
 
 ```hcl
-# datacenter.hcl
+# datacenter.dc
 
 variable "network_name" {
   description = "Docker network for service communication"
@@ -204,6 +204,10 @@ environment {
 
 Databases get auto-assigned ports and persist data in Docker volumes.
 
+### Database Users
+
+Additional database user credentials can be provisioned using the `databaseUser` hook. This creates new users with access to existing databases managed by the datacenter.
+
 ### Storage (Buckets)
 
 S3-compatible storage uses MinIO:
@@ -220,6 +224,10 @@ resources:
         - container: 9000
           host: auto
 ```
+
+### Secrets
+
+Secrets are stored locally in state. The `secret` hook persists secret values through the native plugin's state management, making them available to other resources during deployment.
 
 ### Functions (Dev Servers)
 
@@ -248,10 +256,10 @@ File changes are immediately reflected - no container rebuilds needed.
 
 ```bash
 # From your component directory
-arcctl up --datacenter local-docker
+arcctl up --datacenter local
 
 # Or set as default
-export ARCCTL_DATACENTER=local-docker
+export ARCCTL_DATACENTER=local
 arcctl up
 ```
 
@@ -259,7 +267,7 @@ arcctl up
 
 ```bash
 # Deploy the datacenter
-arcctl dc deploy local-dev ./local-docker
+arcctl dc deploy local-dev ./local
 
 # Create environment
 arcctl env create my-env --datacenter local-dev
@@ -359,7 +367,7 @@ outputs:
     value: "mongodb://localhost:${resources.container.ports[0].host}"
 ```
 
-Then add to `datacenter.hcl`:
+Then add to `datacenter.dc`:
 
 ```hcl
 database {
@@ -378,8 +386,8 @@ database {
 ## Related Guides
 
 <CardGroup cols={2}>
-  <Card title="AWS ECS" href="/guides/datacenters/aws-ecs">
-    Production datacenter example
+  <Card title="Startup (Vercel)" href="/guides/datacenters/startup">
+    Managed serverless datacenter for small teams
   </Card>
   <Card title="Managing Environments" href="/guides/managing-environments">
     Day-to-day environment operations

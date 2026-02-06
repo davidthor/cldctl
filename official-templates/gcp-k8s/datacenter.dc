@@ -1,0 +1,504 @@
+# GCP Kubernetes (GKE) Datacenter
+# Kubernetes on GCP: GKE for deployments, Knative for functions,
+# Cloud SQL for databases, Memorystore for Redis, GCS for storage,
+# Compute Engine for VM/runtime-based deployments.
+
+variable "gcp_project" {
+  description = "GCP project ID"
+  type        = string
+}
+
+variable "gcp_region" {
+  description = "GCP region"
+  type        = string
+  default     = "us-central1"
+}
+
+variable "cluster_name" {
+  description = "GKE cluster name"
+  type        = string
+}
+
+variable "domain" {
+  description = "Base domain for environments"
+  type        = string
+  default     = "app.example.com"
+}
+
+variable "registry" {
+  description = "Artifact Registry repository URL (e.g. us-central1-docker.pkg.dev/project/repo)"
+  type        = string
+}
+
+variable "ssh_key" {
+  description = "SSH public key for Compute Engine VM access"
+  type        = string
+  default     = ""
+}
+
+variable "smtp_host" {
+  description = "External SMTP relay host"
+  type        = string
+  default     = "smtp.sendgrid.net"
+}
+
+variable "smtp_port" {
+  description = "External SMTP relay port"
+  type        = number
+  default     = 587
+}
+
+variable "smtp_username" {
+  description = "External SMTP relay username"
+  type        = string
+  default     = "apikey"
+}
+
+variable "smtp_password" {
+  description = "External SMTP relay password"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+# VPC network for Cloud SQL / Memorystore private connectivity
+module "vpc" {
+  build = "./modules/gcp-vpc"
+  inputs = {
+    name    = "${variable.cluster_name}-vpc"
+    project = variable.gcp_project
+    region  = variable.gcp_region
+  }
+}
+
+# GKE cluster (shared across all environments)
+module "gke" {
+  build = "./modules/gcp-gke-cluster"
+  inputs = {
+    name    = variable.cluster_name
+    project = variable.gcp_project
+    region  = variable.gcp_region
+    network = module.vpc.network_id
+    subnet  = module.vpc.subnet_id
+    node_pool = {
+      machine_type = "e2-standard-4"
+      min_nodes    = 1
+      max_nodes    = 10
+      auto_scale   = true
+    }
+  }
+}
+
+environment {
+  # Kubernetes namespace per environment
+  module "namespace" {
+    build = "./modules/k8s-namespace"
+    inputs = {
+      name       = environment.name
+      kubeconfig = module.gke.kubeconfig
+    }
+  }
+
+  # Gateway for HTTP routes (only when ingress resources exist)
+  module "gateway" {
+    when  = contains(environment.nodes.*.type, "ingress")
+    build = "./modules/k8s-gateway"
+    inputs = {
+      name          = "${environment.name}-gateway"
+      namespace     = environment.name
+      gateway_class = "gke-l7-global-external-managed"
+      kubeconfig    = module.gke.kubeconfig
+      tls = {
+        enabled = true
+        issuer  = "letsencrypt-prod"
+      }
+    }
+  }
+
+  # Cloud DNS records per environment
+  module "dns_records" {
+    build = "./modules/gcp-cloud-dns"
+    inputs = {
+      project   = variable.gcp_project
+      zone_name = variable.domain
+      subdomain = environment.name
+      target    = module.gke.ingress_ip
+    }
+  }
+
+  # Database hook - PostgreSQL (Cloud SQL)
+  database {
+    when = element(split(":", node.inputs.type), 0) == "postgres"
+
+    module "cloud_sql_pg" {
+      build = "./modules/gcp-cloud-sql"
+      inputs = {
+        name          = "${environment.name}-${node.component}-${node.name}"
+        project       = variable.gcp_project
+        region        = variable.gcp_region
+        engine        = "POSTGRES"
+        version       = coalesce(try(element(split(":", node.inputs.type), 1), null), "16")
+        tier          = "db-f1-micro"
+        network       = module.vpc.network_id
+        database_name = node.name
+      }
+    }
+
+    outputs = {
+      host     = module.cloud_sql_pg.private_ip
+      port     = module.cloud_sql_pg.port
+      database = module.cloud_sql_pg.database
+      username = module.cloud_sql_pg.username
+      password = module.cloud_sql_pg.password
+      url      = module.cloud_sql_pg.connection_url
+    }
+  }
+
+  # Database hook - MySQL (Cloud SQL)
+  database {
+    when = element(split(":", node.inputs.type), 0) == "mysql"
+
+    module "cloud_sql_mysql" {
+      build = "./modules/gcp-cloud-sql"
+      inputs = {
+        name          = "${environment.name}-${node.component}-${node.name}"
+        project       = variable.gcp_project
+        region        = variable.gcp_region
+        engine        = "MYSQL"
+        version       = coalesce(try(element(split(":", node.inputs.type), 1), null), "8.0")
+        tier          = "db-f1-micro"
+        network       = module.vpc.network_id
+        database_name = node.name
+      }
+    }
+
+    outputs = {
+      host     = module.cloud_sql_mysql.private_ip
+      port     = module.cloud_sql_mysql.port
+      database = module.cloud_sql_mysql.database
+      username = module.cloud_sql_mysql.username
+      password = module.cloud_sql_mysql.password
+      url      = module.cloud_sql_mysql.connection_url
+    }
+  }
+
+  # Database hook - Redis (Memorystore)
+  database {
+    when = element(split(":", node.inputs.type), 0) == "redis"
+
+    module "memorystore_redis" {
+      build = "./modules/gcp-memorystore"
+      inputs = {
+        name    = "${environment.name}-${node.component}-${node.name}"
+        project = variable.gcp_project
+        region  = variable.gcp_region
+        version = coalesce(try(element(split(":", node.inputs.type), 1), null), "7")
+        tier    = "BASIC"
+        network = module.vpc.network_id
+      }
+    }
+
+    outputs = {
+      host     = module.memorystore_redis.host
+      port     = module.memorystore_redis.port
+      database = "0"
+      url      = module.memorystore_redis.connection_url
+    }
+  }
+
+  # Task hook - Kubernetes Jobs for one-time execution
+  task {
+    module "task_job" {
+      build = "./modules/k8s-job"
+      inputs = {
+        name        = "${node.component}--${node.name}"
+        namespace   = environment.name
+        kubeconfig  = module.gke.kubeconfig
+        image       = node.inputs.image
+        command     = node.inputs.command
+        environment = node.inputs.environment
+        backoff_limit              = 3
+        ttl_seconds_after_finished = 300
+      }
+    }
+
+    outputs = {
+      id     = module.task_job.job_id
+      status = module.task_job.status
+    }
+  }
+
+  # Bucket hook - Google Cloud Storage with HMAC keys
+  bucket {
+    module "gcs_bucket" {
+      build = "./modules/gcp-gcs"
+      inputs = {
+        name       = "${variable.gcp_project}-${environment.name}-${node.name}"
+        project    = variable.gcp_project
+        region     = variable.gcp_region
+        versioning = node.inputs.versioning
+        public     = node.inputs.public
+      }
+    }
+
+    outputs = {
+      endpoint        = "https://storage.googleapis.com"
+      bucket          = module.gcs_bucket.bucket_name
+      region          = variable.gcp_region
+      accessKeyId     = module.gcs_bucket.hmac_access_key
+      secretAccessKey = module.gcs_bucket.hmac_secret_key
+    }
+  }
+
+  # Encryption key hook - asymmetric (RSA/ECDSA)
+  encryptionKey {
+    when = node.inputs.keyType == "rsa" || node.inputs.keyType == "ecdsa"
+
+    module "asymmetric_key" {
+      build = "./modules/gcp-kms-key"
+      inputs = {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        project  = variable.gcp_project
+        region   = variable.gcp_region
+        key_type = node.inputs.keyType
+        key_size = node.inputs.keySize
+      }
+    }
+
+    outputs = {
+      privateKey       = module.asymmetric_key.privateKey
+      publicKey        = module.asymmetric_key.publicKey
+      privateKeyBase64 = module.asymmetric_key.privateKeyBase64
+      publicKeyBase64  = module.asymmetric_key.publicKeyBase64
+    }
+  }
+
+  # Encryption key hook - symmetric
+  encryptionKey {
+    when = node.inputs.keyType == "symmetric"
+
+    module "symmetric_key" {
+      build = "./modules/gcp-kms-key"
+      inputs = {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        project  = variable.gcp_project
+        region   = variable.gcp_region
+        key_type = "symmetric"
+        key_size = node.inputs.keySize
+      }
+    }
+
+    outputs = {
+      key       = module.symmetric_key.key
+      keyBase64 = module.symmetric_key.keyBase64
+    }
+  }
+
+  # SMTP hook - configurable external relay (GCP has no native SMTP service)
+  smtp {
+    module "smtp_relay" {
+      build = "./modules/gcp-smtp-relay"
+      inputs = {
+        host     = variable.smtp_host
+        port     = variable.smtp_port
+        username = variable.smtp_username
+        password = variable.smtp_password
+      }
+    }
+
+    outputs = {
+      host     = module.smtp_relay.host
+      port     = module.smtp_relay.port
+      username = module.smtp_relay.username
+      password = module.smtp_relay.password
+    }
+  }
+
+  # Deployment hook - container-based (Kubernetes)
+  deployment {
+    when = node.inputs.image != null
+
+    module "k8s_deployment" {
+      build = "./modules/k8s-deployment"
+      inputs = merge(node.inputs, {
+        namespace  = environment.name
+        kubeconfig = module.gke.kubeconfig
+      })
+    }
+
+    outputs = {
+      id = module.k8s_deployment.deployment_id
+    }
+  }
+
+  # Deployment hook - VM-based (Compute Engine for runtime workloads)
+  deployment {
+    when = node.inputs.runtime != null && node.inputs.image == null
+
+    module "gce_vm" {
+      plugin = "opentofu"
+      build  = "./modules/gcp-compute-engine"
+      inputs = merge(node.inputs, {
+        name    = "${environment.name}-${node.component}-${node.name}"
+        project = variable.gcp_project
+        zone    = "${variable.gcp_region}-a"
+        network = module.vpc.network_id
+        subnet  = module.vpc.subnet_id
+        ssh_key = variable.ssh_key
+      })
+    }
+
+    outputs = {
+      id = module.gce_vm.instance_id
+    }
+  }
+
+  # Function hook - Knative on GKE (scale-to-zero)
+  function {
+    module "knative_service" {
+      build = "./modules/knative-service"
+      inputs = merge(node.inputs, {
+        namespace  = environment.name
+        kubeconfig = module.gke.kubeconfig
+      })
+    }
+
+    outputs = {
+      id       = module.knative_service.service_id
+      endpoint = module.knative_service.url
+    }
+  }
+
+  # Service hook - Kubernetes ClusterIP service
+  service {
+    module "k8s_service" {
+      build = "./modules/k8s-service"
+      inputs = merge(node.inputs, {
+        namespace  = environment.name
+        kubeconfig = module.gke.kubeconfig
+      })
+    }
+
+    outputs = {
+      host = module.k8s_service.cluster_ip
+      port = module.k8s_service.port
+      url  = "http://${module.k8s_service.cluster_ip}:${module.k8s_service.port}"
+    }
+  }
+
+  # Ingress hook - GKE Gateway API
+  ingress {
+    module "httproute" {
+      build = "./modules/k8s-httproute"
+      inputs = merge(node.inputs, {
+        namespace    = environment.name
+        gateway_name = "${environment.name}-gateway"
+        kubeconfig   = module.gke.kubeconfig
+      })
+    }
+
+    outputs = {
+      url      = "https://${node.name}.${environment.name}.${variable.domain}"
+      hosts    = ["${node.name}.${environment.name}.${variable.domain}"]
+      protocol = "https"
+      host     = "${node.name}.${environment.name}.${variable.domain}"
+      port     = 443
+    }
+  }
+
+  # Cronjob hook - Kubernetes CronJobs
+  cronjob {
+    module "k8s_cronjob" {
+      build = "./modules/k8s-cronjob"
+      inputs = merge(node.inputs, {
+        namespace  = environment.name
+        kubeconfig = module.gke.kubeconfig
+      })
+    }
+
+    outputs = {
+      id = module.k8s_cronjob.cronjob_id
+    }
+  }
+
+  # Database user hook
+  databaseUser {
+    module "cloud_sql_user" {
+      build = "./modules/gcp-cloud-sql-user"
+      inputs = {
+        database = node.inputs.database
+        username = node.inputs.username
+        project  = variable.gcp_project
+        region   = variable.gcp_region
+      }
+    }
+
+    outputs = {
+      username = module.cloud_sql_user.username
+      password = module.cloud_sql_user.password
+      url      = module.cloud_sql_user.connection_url
+    }
+  }
+
+  # Secret hook - Secret Manager
+  secret {
+    module "secret_manager" {
+      build = "./modules/gcp-secret-manager"
+      inputs = {
+        name    = "${environment.name}-${node.name}"
+        project = variable.gcp_project
+        data    = node.inputs.data
+      }
+    }
+
+    outputs = {
+      id = module.secret_manager.secret_id
+    }
+  }
+
+  # Docker build hook - Artifact Registry
+  dockerBuild {
+    module "artifact_build" {
+      build = "./modules/gcp-artifact-build"
+      inputs = {
+        context    = node.inputs.context
+        dockerfile = node.inputs.dockerfile
+        target     = node.inputs.target
+        args       = node.inputs.args
+        registry   = variable.registry
+        project    = variable.gcp_project
+      }
+    }
+
+    outputs = {
+      image = module.artifact_build.image_uri
+    }
+  }
+
+  # Observability - Cloud Monitoring + OTel collector on GKE
+  observability {
+    module "gke_otel" {
+      build = "./modules/gcp-gke-otel"
+      inputs = {
+        name       = "${environment.name}-otel"
+        namespace  = environment.name
+        project    = variable.gcp_project
+        region     = variable.gcp_region
+        kubeconfig = module.gke.kubeconfig
+      }
+    }
+
+    outputs = {
+      endpoint       = module.gke_otel.otlp_endpoint
+      protocol       = "grpc"
+      query_type     = "gcp_monitoring"
+      query_endpoint = "https://monitoring.googleapis.com/v3/projects/${variable.gcp_project}"
+      dashboard_url  = "https://console.cloud.google.com/monitoring/dashboards?project=${variable.gcp_project}"
+      attributes = {
+        "cloud.provider" = "gcp"
+        "cloud.region"   = variable.gcp_region
+        "cloud.project"  = variable.gcp_project
+      }
+    }
+  }
+}

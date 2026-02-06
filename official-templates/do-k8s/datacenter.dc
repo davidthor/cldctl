@@ -1,5 +1,6 @@
-# Example: DigitalOcean Kubernetes datacenter
-# Creates a DOKS cluster and deploys workloads with managed databases
+# DigitalOcean Kubernetes datacenter
+# Creates a DOKS cluster and deploys workloads with managed databases,
+# Spaces storage, encryption keys, SMTP relay, and observability.
 
 variable "do_token" {
   description = "DigitalOcean API token"
@@ -28,6 +29,37 @@ variable "registry" {
   description = "Container registry URL"
   type        = string
   default     = "registry.digitalocean.com"
+}
+
+variable "ssh_key_fingerprint" {
+  description = "SSH key fingerprint for Droplet access (VM deployments)"
+  type        = string
+  default     = ""
+}
+
+variable "smtp_host" {
+  description = "External SMTP relay host"
+  type        = string
+  default     = "smtp.sendgrid.net"
+}
+
+variable "smtp_port" {
+  description = "External SMTP relay port"
+  type        = number
+  default     = 587
+}
+
+variable "smtp_username" {
+  description = "External SMTP relay username"
+  type        = string
+  default     = "apikey"
+}
+
+variable "smtp_password" {
+  description = "External SMTP relay password"
+  type        = string
+  sensitive   = true
+  default     = ""
 }
 
 # Create the DOKS cluster (shared across all environments)
@@ -150,6 +182,112 @@ environment {
     }
   }
 
+  # Encryption key hook - asymmetric (RSA/ECDSA) stored as Kubernetes secrets
+  encryptionKey {
+    when = node.inputs.keyType == "rsa" || node.inputs.keyType == "ecdsa"
+
+    module "asymmetric_key" {
+      build = "./modules/k8s-encryption-key"
+      inputs = {
+        name       = "${environment.name}-${node.component}-${node.name}"
+        namespace  = environment.name
+        kubeconfig = module.k8s.kubeconfig
+        key_type   = node.inputs.keyType
+        key_size   = node.inputs.keySize
+      }
+    }
+
+    outputs = {
+      privateKey       = module.asymmetric_key.privateKey
+      publicKey        = module.asymmetric_key.publicKey
+      privateKeyBase64 = module.asymmetric_key.privateKeyBase64
+      publicKeyBase64  = module.asymmetric_key.publicKeyBase64
+    }
+  }
+
+  # Encryption key hook - symmetric keys stored as Kubernetes secrets
+  encryptionKey {
+    when = node.inputs.keyType == "symmetric"
+
+    module "symmetric_key" {
+      build = "./modules/k8s-encryption-key"
+      inputs = {
+        name       = "${environment.name}-${node.component}-${node.name}"
+        namespace  = environment.name
+        kubeconfig = module.k8s.kubeconfig
+        key_type   = "symmetric"
+        key_size   = node.inputs.keySize
+      }
+    }
+
+    outputs = {
+      key       = module.symmetric_key.key
+      keyBase64 = module.symmetric_key.keyBase64
+    }
+  }
+
+  # SMTP hook - external relay (DigitalOcean has no native SMTP service)
+  smtp {
+    module "smtp_relay" {
+      build = "./modules/k8s-secret"
+      inputs = {
+        name       = "${environment.name}-${node.component}-${node.name}-smtp"
+        namespace  = environment.name
+        kubeconfig = module.k8s.kubeconfig
+        data = {
+          host     = variable.smtp_host
+          port     = tostring(variable.smtp_port)
+          username = variable.smtp_username
+          password = variable.smtp_password
+        }
+      }
+    }
+
+    outputs = {
+      host     = variable.smtp_host
+      port     = variable.smtp_port
+      username = variable.smtp_username
+      password = variable.smtp_password
+    }
+  }
+
+  # Database user hook - create additional users on managed databases
+  databaseUser {
+    module "db_user" {
+      build = "./modules/do-database-user"
+      inputs = {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        database = node.inputs.database
+        token    = variable.do_token
+      }
+    }
+
+    outputs = {
+      username = module.db_user.username
+      password = module.db_user.password
+      url      = module.db_user.url
+    }
+  }
+
+  # Secret hook - store secrets as Kubernetes secrets
+  secret {
+    module "k8s_secret" {
+      build = "./modules/k8s-secret"
+      inputs = {
+        name       = "${environment.name}-${node.component}-${node.name}"
+        namespace  = environment.name
+        kubeconfig = module.k8s.kubeconfig
+        data = {
+          value = node.inputs.value
+        }
+      }
+    }
+
+    outputs = {
+      id = module.k8s_secret.secret_name
+    }
+  }
+
   # Deployment hook - container-based (image present)
   deployment {
     when = node.inputs.image != null
@@ -268,6 +406,32 @@ environment {
 
     outputs = {
       image = module.docker_build.image
+    }
+  }
+
+  # Observability hook - DigitalOcean Monitoring + self-hosted OTel collector
+  observability {
+    module "otel_collector" {
+      build = "./modules/k8s-otel-collector"
+      inputs = {
+        name       = "${environment.name}-otel"
+        namespace  = environment.name
+        kubeconfig = module.k8s.kubeconfig
+        do_token   = variable.do_token
+        region     = variable.region
+      }
+    }
+
+    outputs = {
+      endpoint       = module.otel_collector.otlp_endpoint
+      protocol       = "http/protobuf"
+      query_type     = "loki"
+      query_endpoint = module.otel_collector.loki_endpoint
+      dashboard_url  = module.otel_collector.grafana_url
+      attributes = {
+        "cloud.provider" = "digitalocean"
+        "cloud.region"   = variable.region
+      }
     }
   }
 }
