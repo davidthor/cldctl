@@ -503,6 +503,22 @@ When building a datacenter, arcctl bundles all IaC modules:
 					return fmt.Errorf("failed to push artifact: %w", err)
 				}
 				fmt.Printf("[success] Pushed %s\n", tag)
+
+				// Print summary of all pushed artifacts
+				pushedModules := 0
+				for _, modInfo := range allModules {
+					if modInfo.plugin != "native" {
+						pushedModules++
+					}
+				}
+				fmt.Printf("\nPushed %d artifact(s) total (1 root + %d modules):\n", 1+pushedModules, pushedModules)
+				fmt.Printf("  %s\n", tag)
+				for modulePath, ref := range moduleArtifacts {
+					modInfo := allModules[modulePath]
+					if modInfo.plugin != "native" {
+						fmt.Printf("  %s\n", ref)
+					}
+				}
 			}
 
 			return nil
