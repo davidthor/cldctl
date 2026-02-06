@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/architect-io/arcctl/pkg/iac/container"
@@ -56,6 +57,18 @@ func (m *moduleBuilder) Build(ctx context.Context, sourceDir, plugin, tag string
 		Tag:        tag,
 		Output:     io.Discard, // Suppress verbose build output
 	})
+}
+
+// Push pushes a module container image to a remote registry using docker push.
+// This relies on the Docker CLI being authenticated (e.g., via docker login).
+func (m *moduleBuilder) Push(ctx context.Context, ref string) error {
+	cmd := exec.CommandContext(ctx, "docker", "push", ref)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker push failed for %s: %w", ref, err)
+	}
+	return nil
 }
 
 // Close releases resources.

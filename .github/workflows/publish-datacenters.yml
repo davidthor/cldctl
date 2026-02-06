@@ -97,19 +97,14 @@ jobs:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build datacenter artifact
+      - name: Build and push datacenter artifact
         run: |
           IMAGE="${REGISTRY}/${DOCKERHUB_USERNAME}/${{ matrix.template }}-datacenter:latest"
-          echo "Building ${IMAGE}..."
+          echo "Building and pushing ${IMAGE}..."
           bin/arcctl build datacenter \
             "./official-templates/${{ matrix.template }}" \
-            -t "${IMAGE}"
-
-      - name: Push datacenter artifact
-        run: |
-          IMAGE="${REGISTRY}/${DOCKERHUB_USERNAME}/${{ matrix.template }}-datacenter:latest"
-          echo "Pushing ${IMAGE}..."
-          bin/arcctl push datacenter "${IMAGE}" -y
+            -t "${IMAGE}" \
+            --push
 
   # ---------------------------------------------------------------------------
   # Tag & push release version (on GitHub release → :vX.Y.Z)
@@ -142,21 +137,15 @@ jobs:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build datacenter artifact
+      - name: Build and push versioned artifact
         run: |
           VERSION="${{ github.ref_name }}"
           IMAGE="${REGISTRY}/${DOCKERHUB_USERNAME}/${{ matrix.template }}-datacenter"
-          echo "Building ${IMAGE}:${VERSION}..."
+          echo "Building and pushing ${IMAGE}:${VERSION}..."
           bin/arcctl build datacenter \
             "./official-templates/${{ matrix.template }}" \
-            -t "${IMAGE}:${VERSION}"
-
-      - name: Push versioned tag
-        run: |
-          VERSION="${{ github.ref_name }}"
-          IMAGE="${REGISTRY}/${DOCKERHUB_USERNAME}/${{ matrix.template }}-datacenter"
-          echo "Pushing ${IMAGE}:${VERSION}..."
-          bin/arcctl push datacenter "${IMAGE}:${VERSION}" -y
+            -t "${IMAGE}:${VERSION}" \
+            --push
 
       - name: Tag and push as latest
         run: |
@@ -164,4 +153,3 @@ jobs:
           IMAGE="${REGISTRY}/${DOCKERHUB_USERNAME}/${{ matrix.template }}-datacenter"
           echo "Tagging ${IMAGE}:${VERSION} → ${IMAGE}:latest..."
           bin/arcctl tag datacenter "${IMAGE}:${VERSION}" "${IMAGE}:latest" -y
-          bin/arcctl push datacenter "${IMAGE}:latest" -y

@@ -348,6 +348,7 @@ func newBuildDatacenterCmd() *cobra.Command {
 		moduleTags []string
 		file       string
 		dryRun     bool
+		push       bool
 	)
 
 	cmd := &cobra.Command{
@@ -466,6 +467,15 @@ When building a datacenter, arcctl bundles all IaC modules:
 				}
 
 				fmt.Printf("[success] Built %s (%s)\n", ref, buildResult.ModuleType)
+
+				// Push module image if --push flag is set
+				if push && buildResult.ModuleType != "native" {
+					fmt.Printf("[push] Pushing module %s...\n", ref)
+					if err := moduleBuilder.Push(ctx, ref); err != nil {
+						return fmt.Errorf("failed to push module %s: %w", modulePath, err)
+					}
+					fmt.Printf("[success] Pushed %s\n", ref)
+				}
 			}
 
 			// Build root artifact
@@ -489,6 +499,15 @@ When building a datacenter, arcctl bundles all IaC modules:
 			artifact.Reference = tag
 			fmt.Printf("[success] Built %s\n", tag)
 
+			// Push to remote registry if --push flag is set
+			if push {
+				fmt.Printf("[push] Pushing %s...\n", tag)
+				if err := client.Push(ctx, artifact); err != nil {
+					return fmt.Errorf("failed to push artifact: %w", err)
+				}
+				fmt.Printf("[success] Pushed %s\n", tag)
+			}
+
 			return nil
 		},
 	}
@@ -497,6 +516,7 @@ When building a datacenter, arcctl bundles all IaC modules:
 	cmd.Flags().StringArrayVar(&moduleTags, "module-tag", nil, "Override tag for a specific module (name=repo:tag)")
 	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to datacenter.hcl if not in default location")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be built without building")
+	cmd.Flags().BoolVar(&push, "push", false, "Push to registry after building")
 	_ = cmd.MarkFlagRequired("tag")
 
 	return cmd
