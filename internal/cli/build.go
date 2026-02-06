@@ -452,13 +452,6 @@ When building a datacenter, arcctl bundles all IaC modules:
 			}
 			defer moduleBuilder.Close()
 
-			// Build shared provider base image for OpenTofu modules.
-			// This downloads all required providers once instead of once per module.
-			providerBaseTag := fmt.Sprintf("%s-provider-base:build", baseRef)
-			if err := moduleBuilder.BuildProviderBase(ctx, allModules, providerBaseTag); err != nil {
-				return err
-			}
-
 			// Build (and optionally push) each module
 			for modulePath, ref := range moduleArtifacts {
 				modInfo := allModules[modulePath]

@@ -115,8 +115,7 @@ go 1.21
 }
 
 func TestGenerateOpenTofuDockerfile(t *testing.T) {
-	// Test without base image (fallback: downloads from scratch)
-	dockerfile, err := generateOpenTofuDockerfile("")
+	dockerfile, err := generateOpenTofuDockerfile()
 	if err != nil {
 		t.Fatalf("generateOpenTofuDockerfile failed: %v", err)
 	}
@@ -124,26 +123,16 @@ func TestGenerateOpenTofuDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "opentofu/opentofu") {
 		t.Error("Expected opentofu base image reference")
 	}
-	if !strings.Contains(dockerfile, "tofu init") {
-		t.Error("Expected tofu init")
+	if strings.Contains(dockerfile, "RUN tofu init") {
+		t.Error("RUN tofu init should not be in dockerfile (deferred to deploy time)")
 	}
-
-	// Test with base image (fast path: extends provider base)
-	dockerfileWithBase, err := generateOpenTofuDockerfile("my-provider-base:latest")
-	if err != nil {
-		t.Fatalf("generateOpenTofuDockerfile with base failed: %v", err)
-	}
-
-	if !strings.Contains(dockerfileWithBase, "FROM my-provider-base:latest") {
-		t.Error("Expected FROM base image")
-	}
-	if !strings.Contains(dockerfileWithBase, "tofu init") {
-		t.Error("Expected tofu init")
+	if !strings.Contains(dockerfile, "ENTRYPOINT") {
+		t.Error("Expected ENTRYPOINT directive")
 	}
 }
 
 func TestGenerateDockerfile_UnsupportedType(t *testing.T) {
-	_, err := generateDockerfile("unsupported", "/tmp", "")
+	_, err := generateDockerfile("unsupported", "/tmp")
 	if err == nil {
 		t.Error("Expected error for unsupported module type")
 	}

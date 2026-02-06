@@ -43,10 +43,6 @@ type BuildOptions struct {
 
 	// Output for build logs
 	Output io.Writer
-
-	// BaseImage is an optional pre-built base image (with providers pre-downloaded).
-	// Used by OpenTofu modules to avoid re-downloading providers for every module.
-	BaseImage string
 }
 
 // BuildResult contains the result of a module build.
@@ -74,7 +70,7 @@ func (b *Builder) Build(ctx context.Context, opts BuildOptions) (*BuildResult, e
 	}
 
 	// Generate Dockerfile
-	dockerfile, err := generateDockerfile(moduleType, opts.ModuleDir, opts.BaseImage)
+	dockerfile, err := generateDockerfile(moduleType, opts.ModuleDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate dockerfile: %w", err)
 	}
@@ -96,60 +92,6 @@ func (b *Builder) Build(ctx context.Context, opts BuildOptions) (*BuildResult, e
 		Digest:     result.id,
 		ModuleType: moduleType,
 	}, nil
-}
-
-// BuildProviderBase builds a Docker base image containing OpenTofu with all
-// providers pre-downloaded. Each module directory is temporarily copied in
-// and initialized, populating a shared TF_PLUGIN_CACHE_DIR. This means
-// providers are only downloaded once across all modules in a template.
-func (b *Builder) BuildProviderBase(ctx context.Context, moduleDirectories map[string]string, tag string, output io.Writer) error {
-	// Generate Dockerfile
-	var df strings.Builder
-	df.WriteString(`FROM ghcr.io/opentofu/opentofu:minimal AS tofu
-
-FROM alpine:3.20
-
-COPY --from=tofu /usr/local/bin/tofu /usr/local/bin/tofu
-RUN apk add --no-cache git curl ca-certificates
-
-ENV TF_PLUGIN_CACHE_DIR=/usr/share/tofu/providers
-RUN mkdir -p $TF_PLUGIN_CACHE_DIR
-
-# Copy all module source files
-COPY modules/ /tmp/modules/
-
-# Initialize each module to populate the shared provider cache, then clean up
-RUN set -e; for dir in /tmp/modules/*/; do \
-      echo "--- Caching providers for $(basename "$dir") ---"; \
-      cd "$dir" && tofu init -backend=false 2>&1 && cd /; \
-    done && rm -rf /tmp/modules
-`)
-
-	dockerfileBytes := []byte(df.String())
-
-	// Build tar context: Dockerfile + modules/<name>/<files>
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-
-	// Add Dockerfile
-	if err := writeTarFile(tw, "Dockerfile", dockerfileBytes); err != nil {
-		return fmt.Errorf("failed to write dockerfile to tar: %w", err)
-	}
-
-	// Add each module directory under modules/<name>/
-	for name, dir := range moduleDirectories {
-		prefix := filepath.Join("modules", name)
-		if err := addDirToTar(tw, dir, prefix); err != nil {
-			return fmt.Errorf("failed to add module %s to build context: %w", name, err)
-		}
-	}
-
-	if err := tw.Close(); err != nil {
-		return fmt.Errorf("failed to close tar: %w", err)
-	}
-
-	_, err := b.buildImage(ctx, &buf, tag, output)
-	return err
 }
 
 // buildImageResult holds metadata returned by buildImage.
@@ -224,12 +166,12 @@ func (b *Builder) Close() error {
 }
 
 // generateDockerfile generates a Dockerfile for the given module type.
-func generateDockerfile(moduleType ModuleType, moduleDir string, baseImage string) (string, error) {
+func generateDockerfile(moduleType ModuleType, moduleDir string) (string, error) {
 	switch moduleType {
 	case ModuleTypePulumi:
 		return generatePulumiDockerfile(moduleDir)
 	case ModuleTypeOpenTofu:
-		return generateOpenTofuDockerfile(baseImage)
+		return generateOpenTofuDockerfile()
 	default:
 		return "", fmt.Errorf("unsupported module type: %s", moduleType)
 	}
@@ -338,32 +280,16 @@ ENTRYPOINT ["pulumi"]
 }
 
 // generateOpenTofuDockerfile generates a Dockerfile for an OpenTofu module.
-// If baseImage is provided, the module extends the pre-built provider base
-// (which already has tofu + all providers cached). Otherwise it builds from
-// scratch using a multi-stage build per OpenTofu 1.10+ requirements.
-func generateOpenTofuDockerfile(baseImage string) (string, error) {
-	if baseImage != "" {
-		// Fast path: extend the provider base image (providers already cached)
-		return fmt.Sprintf(`# Auto-generated Dockerfile for OpenTofu module
-# Extends pre-built provider base image for fast builds
-
-FROM %s
-
-WORKDIR /app
-
-# Copy module files
-COPY . .
-
-# Initialize (providers are found in TF_PLUGIN_CACHE_DIR — no download needed)
-RUN tofu init -backend=false
-
-ENTRYPOINT ["tofu"]
-`, baseImage), nil
-	}
-
-	// Fallback: build from scratch (downloads providers from registry)
+// The image packages only the tofu binary and module source files. Provider
+// downloads and state backend initialization happen at deploy time via
+// tofu init, since the execution environment needs internet access for state
+// management regardless.
+func generateOpenTofuDockerfile() (string, error) {
 	return `# Auto-generated Dockerfile for OpenTofu module
 # Uses multi-stage build per OpenTofu 1.10+ requirements
+#
+# Provider download and backend init happen at deploy time (tofu init),
+# keeping build images small and builds fast.
 
 FROM ghcr.io/opentofu/opentofu:minimal AS tofu
 
@@ -379,9 +305,6 @@ WORKDIR /app
 
 # Copy module files
 COPY . .
-
-# Initialize the module (download providers and lock versions)
-RUN tofu init -backend=false
 
 ENTRYPOINT ["tofu"]
 `, nil
@@ -467,56 +390,6 @@ func createBuildContext(moduleDir string, dockerfile string) (io.Reader, error) 
 	}
 
 	return &buf, nil
-}
-
-// writeTarFile writes a single file entry to a tar writer.
-func writeTarFile(tw *tar.Writer, name string, data []byte) error {
-	if err := tw.WriteHeader(&tar.Header{
-		Name: name,
-		Mode: 0644,
-		Size: int64(len(data)),
-	}); err != nil {
-		return err
-	}
-	_, err := tw.Write(data)
-	return err
-}
-
-// addDirToTar walks a directory and adds all files to a tar writer under
-// the given prefix. Hidden files/directories and common build artifacts
-// are excluded.
-func addDirToTar(tw *tar.Writer, srcDir string, prefix string) error {
-	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		name := info.Name()
-		if strings.HasPrefix(name, ".") {
-			if info.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if info.IsDir() {
-			if name == "node_modules" || name == "__pycache__" || name == ".terraform" || name == ".pulumi" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		relPath, err := filepath.Rel(srcDir, path)
-		if err != nil {
-			return err
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-
-		return writeTarFile(tw, filepath.Join(prefix, relPath), data)
-	})
 }
 
 // fileExists checks if a file exists.
