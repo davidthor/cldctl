@@ -47,10 +47,13 @@ name: my-app
 smtp:
   notifications: {}
 
+builds:
+  api:
+    context: ./api
+
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       SMTP_HOST: ${{ smtp.notifications.host }}
       SMTP_PORT: ${{ smtp.notifications.port }}

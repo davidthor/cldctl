@@ -94,8 +94,8 @@ database {
     build = "./modules/neon-database"
     inputs = {
       name    = node.name
-      type    = node.inputs.databaseType
-      version = node.inputs.databaseVersion
+      type    = element(split(":", node.inputs.type), 0)
+      version = try(element(split(":", node.inputs.type), 1), null)
       project = environment.name
       api_key = variable.neon_api_key
     }

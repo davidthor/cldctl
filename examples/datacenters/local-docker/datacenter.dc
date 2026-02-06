@@ -33,14 +33,14 @@ module "network" {
 environment {
   # Database hook - PostgreSQL
   database {
-    when = node.inputs.databaseType == "postgres"
+    when = element(split(":", node.inputs.type), 0) == "postgres"
     
     module "postgres" {
       plugin = "native"
       build  = "./modules/docker-postgres"
       inputs = {
         name     = "${environment.name}-${node.component}-${node.name}"
-        version  = coalesce(node.inputs.databaseVersion, "16")
+        version  = coalesce(try(element(split(":", node.inputs.type), 1), null), "16")
         database = node.name
         network  = variable.network_name
       }
@@ -58,14 +58,14 @@ environment {
   
   # Database hook - MySQL
   database {
-    when = node.inputs.databaseType == "mysql"
+    when = element(split(":", node.inputs.type), 0) == "mysql"
     
     module "mysql" {
       plugin = "native"
       build  = "./modules/docker-mysql"
       inputs = {
         name     = "${environment.name}-${node.component}-${node.name}"
-        version  = coalesce(node.inputs.databaseVersion, "8")
+        version  = coalesce(try(element(split(":", node.inputs.type), 1), null), "8")
         database = node.name
         network  = variable.network_name
       }
@@ -83,14 +83,14 @@ environment {
   
   # Database hook - Redis
   database {
-    when = node.inputs.databaseType == "redis"
+    when = element(split(":", node.inputs.type), 0) == "redis"
     
     module "redis" {
       plugin = "native"
       build  = "./modules/docker-redis"
       inputs = {
         name    = "${environment.name}-${node.component}-${node.name}"
-        version = coalesce(node.inputs.databaseVersion, "7")
+        version = coalesce(try(element(split(":", node.inputs.type), 1), null), "7")
         network = variable.network_name
       }
     }
@@ -103,30 +103,23 @@ environment {
     }
   }
   
-  # Database migration hook - run migrations as one-time container
-  databaseMigration {
-    module "migration" {
+  # Task hook - run one-time containers (e.g., database migrations)
+  task {
+    module "task" {
       plugin = "native"
       build  = "./modules/docker-exec"
       inputs = {
-        name        = "${node.component}--${node.name}--migration"
+        name        = "${environment.name}-${node.component}-${node.name}"
         image       = node.inputs.image
         command     = node.inputs.command
         network     = variable.network_name
-        environment = merge(node.inputs.environment, {
-          DATABASE_URL      = node.inputs.databaseUrl
-          DATABASE_HOST     = node.inputs.databaseHost
-          DATABASE_PORT     = tostring(node.inputs.databasePort)
-          DATABASE_NAME     = node.inputs.databaseName
-          DATABASE_USER     = node.inputs.databaseUser
-          DATABASE_PASSWORD = node.inputs.databasePassword
-        })
+        environment = node.inputs.environment
       }
     }
     
     outputs = {
-      id     = module.migration.container_id
-      status = module.migration.exit_code == 0 ? "success" : "failed"
+      id     = module.task.container_id
+      status = module.task.exit_code == 0 ? "success" : "failed"
     }
   }
   
@@ -213,34 +206,36 @@ environment {
     }
   }
   
-  # Deployment hook - run as local process for fast development
-  # For components built from source (have build.context)
-  # Assumes system dependencies are installed; no Docker build needed
+  # Deployment hook - run Docker containers from built images
+  # For components that have a build section (build.context/build.dockerfile)
+  # The image comes from the completed dockerBuild dependency
   deployment {
-    when = node.inputs.context != null
+    when = node.inputs.build != null
     
-    module "process" {
+    module "container" {
       plugin = "native"
-      build  = "./modules/process-deployment"
+      build  = "./modules/docker-deployment"
       inputs = {
         name           = "${environment.name}-${node.component}-${node.name}"
-        context        = node.inputs.context
-        dockerfile     = node.inputs.dockerfile
+        # Image is resolved by executor from build dependency outputs
+        image          = node.inputs.image
         command        = node.inputs.command
+        entrypoint     = node.inputs.entrypoint
         environment    = node.inputs.environment
         cpu            = node.inputs.cpu
         memory         = node.inputs.memory
+        network        = variable.network_name
         liveness_probe = node.inputs.liveness_probe
       }
     }
     
     outputs = {
-      id = module.process.id
+      id = module.container.container_id
     }
   }
   
   # Deployment hook - run pre-built Docker images
-  # For components using existing images (no build context)
+  # For components using existing images directly (no build section)
   deployment {
     when = node.inputs.image != null
     
@@ -262,6 +257,32 @@ environment {
     
     outputs = {
       id = module.container.container_id
+    }
+  }
+  
+  # Deployment hook - run as local process for fast development
+  # Handles deployments with runtime (VM workloads run as processes locally)
+  # and deployments with neither image nor runtime (bare process execution)
+  # Assumes system dependencies are installed; no Docker build needed
+  deployment {
+    when = node.inputs.image == null
+    
+    module "process" {
+      plugin = "native"
+      build  = "./modules/process-deployment"
+      inputs = {
+        name             = "${environment.name}-${node.component}-${node.name}"
+        command          = node.inputs.command
+        environment      = node.inputs.environment
+        workingDirectory = node.inputs.workingDirectory
+        cpu              = node.inputs.cpu
+        memory           = node.inputs.memory
+        liveness_probe   = node.inputs.liveness_probe
+      }
+    }
+    
+    outputs = {
+      id = module.process.id
     }
   }
   
@@ -313,11 +334,11 @@ environment {
       plugin = "native"
       build  = "./modules/local-route"
       inputs = {
-        name     = node.name
-        type     = node.inputs.type
-        rules    = node.inputs.rules
-        internal = node.inputs.internal
-        host     = variable.host
+        name        = "${environment.name}-${node.component}-${node.name}"
+        type        = node.inputs.type
+        rules       = node.inputs.rules
+        internal    = node.inputs.internal
+        host        = variable.host
       }
     }
     

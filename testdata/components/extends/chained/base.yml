@@ -1,0 +1,10 @@
+# Grandparent base component
+databases:
+  main:
+    type: postgres:^16
+
+deployments:
+  api:
+    command: ["echo", "hello"]
+    environment:
+      NODE_ENV: base

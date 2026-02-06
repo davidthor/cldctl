@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -13,8 +12,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/architect-io/arcctl/pkg/engine"
+	"github.com/architect-io/arcctl/pkg/engine/executor"
 	"github.com/architect-io/arcctl/pkg/schema/component"
-	"github.com/architect-io/arcctl/pkg/schema/component/inference"
 	"github.com/architect-io/arcctl/pkg/state"
 	"github.com/architect-io/arcctl/pkg/state/types"
 	"github.com/spf13/cobra"
@@ -27,30 +27,37 @@ func resourceID(component, resourceType, name string) string {
 
 func newUpCmd() *cobra.Command {
 	var (
-		file      string
-		name      string
-		variables []string
-		varFile   string
-		detach    bool
-		noOpen    bool
-		port      int
+		file       string
+		name       string
+		datacenter string
+		variables  []string
+		varFile    string
+		detach     bool
+		noOpen     bool
+		port       int
 	)
 
 	cmd := &cobra.Command{
 		Use:   "up [path]",
 		Short: "Deploy a component to a local environment",
 		Long: `The up command provides a streamlined experience for local development.
-It deploys your component with all its dependencies to a local environment
-with minimal configuration.
+It deploys your component with all its dependencies to an environment
+using the specified datacenter.
 
 The up command:
   1. Parses your architect.yml file
-  2. Creates a local development environment
-  3. Provisions all required resources (databases, etc.)
+  2. Creates or uses an existing environment with the specified datacenter
+  3. Provisions all required resources (databases, etc.) in parallel
   4. Builds and deploys your application
   5. Watches for file changes and auto-reloads (unless --detach)
-  6. Exposes routes for local access`,
-		Args: cobra.MaximumNArgs(1),
+  6. Exposes routes for local access
+
+Examples:
+  arcctl up ./my-app -d local
+  arcctl up -d my-datacenter --name my-env
+  arcctl up ./my-app -d local --var API_KEY=secret`,
+		Args:         cobra.MaximumNArgs(1),
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := "."
 			if len(args) > 0 {
@@ -119,8 +126,10 @@ The up command:
 			}
 
 			componentName := filepath.Base(absPath)
+
 			fmt.Printf("Component: %s\n", componentName)
-			fmt.Printf("Environment: %s (local)\n", envName)
+			fmt.Printf("Datacenter: %s\n", datacenter)
+			fmt.Printf("Environment: %s\n", envName)
 			fmt.Println()
 
 			// Create state manager (always local for 'up')
@@ -133,65 +142,126 @@ The up command:
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
+			// Verify datacenter exists
+			dc, err := mgr.GetDatacenter(ctx, datacenter)
+			if err != nil {
+				return fmt.Errorf("datacenter %q not found: %w\nDeploy a datacenter first with: arcctl deploy datacenter <name> <path>", datacenter, err)
+			}
+
+			// Track if we've started provisioning (for cleanup purposes)
+			provisioningStarted := false
+
+			// cleanupEnvironment handles full cleanup of the environment
+			cleanupEnvironment := func(reason string) {
+				if !provisioningStarted {
+					return
+				}
+
+				fmt.Println()
+				fmt.Printf("Cleaning up (%s)...\n", reason)
+
+				// Use a fresh context since the original may be cancelled
+				cleanupCtx := context.Background()
+
+				// Use the engine to destroy the environment
+				eng := createEngine(mgr)
+				_, err := eng.Destroy(cleanupCtx, engine.DestroyOptions{
+					Environment: envName,
+					Output:      os.Stdout,
+					DryRun:      false,
+					AutoApprove: true,
+				})
+				if err != nil {
+					// Fall back to direct cleanup if engine destroy fails
+					_ = CleanupByEnvName(cleanupCtx, envName)
+				}
+
+				// Delete environment state
+				if err := mgr.DeleteEnvironment(cleanupCtx, envName); err != nil {
+					fmt.Printf("Warning: failed to delete environment state: %v\n", err)
+				}
+
+				// Update datacenter to remove environment reference
+				if dc, err := mgr.GetDatacenter(cleanupCtx, datacenter); err == nil {
+					newEnvs := make([]string, 0, len(dc.Environments))
+					for _, e := range dc.Environments {
+						if e != envName {
+							newEnvs = append(newEnvs, e)
+						}
+					}
+					dc.Environments = newEnvs
+					dc.UpdatedAt = time.Now()
+					_ = mgr.SaveDatacenter(cleanupCtx, dc)
+				}
+
+				fmt.Println("Cleanup complete.")
+			}
+
 			// Set up signal handling for graceful shutdown during provisioning
 			sigChan := make(chan os.Signal, 1)
 			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+			var cancelCount int
 			go func() {
-				<-sigChan
-				fmt.Println("\nInterrupted, cancelling...")
-				cancel()
+				for {
+					<-sigChan
+					cancelCount++
+					if cancelCount == 1 {
+						fmt.Println("\nInterrupted, cancelling... (press Ctrl+C again to force quit)")
+						cancel()
+					} else {
+						fmt.Println("\nForce quitting...")
+						// Force cleanup by environment name
+						_ = CleanupByEnvName(context.Background(), envName)
+						os.Exit(1)
+					}
+				}
 			}()
-
-			// Ensure local datacenter exists
-			dcName := "local"
-			dc, err := mgr.GetDatacenter(ctx, dcName)
-			if err != nil {
-				dc = &types.DatacenterState{
-					Name:         dcName,
-					Version:      "local",
-					CreatedAt:    time.Now(),
-					UpdatedAt:    time.Now(),
-					Environments: []string{},
-				}
-				if err := mgr.SaveDatacenter(ctx, dc); err != nil {
-					return fmt.Errorf("failed to create local datacenter: %w", err)
-				}
-			}
 
 			// Create or get environment
 			env, err := mgr.GetEnvironment(ctx, envName)
 			if err != nil {
 				env = &types.EnvironmentState{
 					Name:       envName,
-					Datacenter: dcName,
+					Datacenter: datacenter,
 					Status:     types.EnvironmentStatusPending,
 					CreatedAt:  time.Now(),
 					UpdatedAt:  time.Now(),
 					Components: make(map[string]*types.ComponentState),
 				}
 
-				dc.Environments = append(dc.Environments, envName)
-				dc.UpdatedAt = time.Now()
-				if err := mgr.SaveDatacenter(ctx, dc); err != nil {
-					return fmt.Errorf("failed to update datacenter: %w", err)
+				// Add to datacenter only if not already present (avoid duplicates)
+				envExists := false
+				for _, e := range dc.Environments {
+					if e == envName {
+						envExists = true
+						break
+					}
+				}
+				if !envExists {
+					dc.Environments = append(dc.Environments, envName)
+					dc.UpdatedAt = time.Now()
+					if err := mgr.SaveDatacenter(ctx, dc); err != nil {
+						return fmt.Errorf("failed to update datacenter: %w", err)
+					}
+				}
+
+				if err := mgr.SaveEnvironment(ctx, env); err != nil {
+					return fmt.Errorf("failed to create environment: %w", err)
 				}
 			}
 
-			// Initialize Docker provisioner
-			basePort := port
-			if basePort == 0 {
-				basePort = 8080
-			}
-			provisioner := NewDockerProvisioner(envName, basePort)
+			// Mark that provisioning has started (for cleanup purposes)
+			provisioningStarted = true
 
 			// Create progress table
 			progress := NewProgressTable(os.Stdout)
 
-			// Add resources to progress table with dependencies
-			// Databases have no dependencies
+			// Build dependency lists for progress tracking
+			var dbDeps []string
 			for _, db := range comp.Databases() {
 				id := resourceID(componentName, "database", db.Name())
 				progress.AddResource(id, db.Name(), "database", componentName, nil)
+				dbDeps = append(dbDeps, id)
 			}
 
 			// Buckets have no dependencies
@@ -200,312 +270,156 @@ The up command:
 				progress.AddResource(id, bucket.Name(), "bucket", componentName, nil)
 			}
 
-			// Functions depend on databases
-			var dbDeps []string
-			for _, db := range comp.Databases() {
-				dbDeps = append(dbDeps, resourceID(componentName, "database", db.Name()))
-			}
+			// Functions depend on databases (and their own builds if they have one)
 			for _, fn := range comp.Functions() {
+				fnDeps := dbDeps
+				// Add build dependency if function has a container with build
+				if fn.IsContainerBased() && fn.Container() != nil && fn.Container().Build() != nil {
+					buildID := resourceID(componentName, "dockerBuild", fn.Name()+"-build")
+					progress.AddResource(buildID, fn.Name()+"-build", "build", componentName, nil)
+					fnDeps = append(fnDeps, buildID)
+				}
 				id := resourceID(componentName, "function", fn.Name())
-				progress.AddResource(id, fn.Name(), "function", componentName, dbDeps)
+				progress.AddResource(id, fn.Name(), "function", componentName, fnDeps)
 			}
 
-			// Deployments depend on databases
+			// Add top-level build resources
+			buildIDs := make(map[string]string)
+			for _, build := range comp.Builds() {
+				buildID := resourceID(componentName, "dockerBuild", build.Name())
+				progress.AddResource(buildID, build.Name(), "build", componentName, nil)
+				buildIDs[build.Name()] = buildID
+			}
+
+			// Deployments depend on databases (and any builds they reference via expressions)
 			for _, depl := range comp.Deployments() {
+				deplDeps := dbDeps
+				// If deployment image references a build, add it as a dependency
+				for buildName, buildID := range buildIDs {
+					if strings.Contains(depl.Image(), fmt.Sprintf("builds.%s.", buildName)) {
+						deplDeps = append(deplDeps, buildID)
+					}
+				}
 				id := resourceID(componentName, "deployment", depl.Name())
-				progress.AddResource(id, depl.Name(), "deployment", componentName, dbDeps)
+				progress.AddResource(id, depl.Name(), "deployment", componentName, deplDeps)
 			}
 
-			// Services depend on deployments/functions
-			var workloadDeps []string
-			for _, fn := range comp.Functions() {
-				workloadDeps = append(workloadDeps, resourceID(componentName, "function", fn.Name()))
-			}
-			for _, depl := range comp.Deployments() {
-				workloadDeps = append(workloadDeps, resourceID(componentName, "deployment", depl.Name()))
-			}
+			// Services have no dependencies - they can be created in parallel with deployments
+			// (In Kubernetes and similar platforms, a Service is a networking abstraction
+			// that doesn't require the underlying pods to exist yet)
 			for _, svc := range comp.Services() {
 				id := resourceID(componentName, "service", svc.Name())
-				progress.AddResource(id, svc.Name(), "service", componentName, workloadDeps)
+				progress.AddResource(id, svc.Name(), "service", componentName, nil)
 			}
 
-			// Routes depend on services/functions
+			// Routes have no dependencies - they can be created in parallel with everything
+			// (Routes are ingress configuration that can exist before backends are ready)
 			for _, route := range comp.Routes() {
 				id := resourceID(componentName, "route", route.Name())
-				// Routes can depend on services or directly on functions
-				var routeDeps []string
-				if route.Service() != "" {
-					routeDeps = append(routeDeps, resourceID(componentName, "service", route.Service()))
-				} else if route.Function() != "" {
-					routeDeps = append(routeDeps, resourceID(componentName, "function", route.Function()))
-				}
-				progress.AddResource(id, route.Name(), "route", componentName, routeDeps)
+				progress.AddResource(id, route.Name(), "route", componentName, nil)
 			}
 
 			// Print initial progress table
 			progress.PrintInitial()
 
-			// Ensure Docker network exists (not tracked as a resource)
-			if err := provisioner.EnsureNetwork(ctx); err != nil {
-				return fmt.Errorf("failed to create network: %w", err)
-			}
-
-			// Collect database connection info for deployments
-			dbConnections := make(map[string]*DatabaseConnection)
-
-			// Provision databases
-			for _, db := range comp.Databases() {
-				id := resourceID(componentName, "database", db.Name())
-				progress.UpdateStatus(id, StatusInProgress, "")
-				progress.PrintUpdate(id)
-
-				conn, err := provisioner.ProvisionDatabase(ctx, db, componentName)
-				if err != nil {
-					progress.SetError(id, err)
-					progress.PrintUpdate(id)
-					return fmt.Errorf("failed to provision database %q: %w", db.Name(), err)
+			// Create progress callback for engine updates
+			onProgress := func(event executor.ProgressEvent) {
+				var status ResourceStatus
+				switch event.Status {
+				case "running":
+					status = StatusInProgress
+				case "completed":
+					status = StatusCompleted
+				case "failed":
+					status = StatusFailed
+				case "skipped":
+					status = StatusSkipped
+				default:
+					status = StatusPending
 				}
-				dbConnections[db.Name()] = conn
-				progress.UpdateStatus(id, StatusCompleted, fmt.Sprintf("localhost:%d", conn.Port))
-				progress.PrintUpdate(id)
-			}
 
-			// Provision buckets (placeholder - would need MinIO or similar)
-			for _, bucket := range comp.Buckets() {
-				id := resourceID(componentName, "bucket", bucket.Name())
-				progress.UpdateStatus(id, StatusSkipped, "not yet implemented")
-				progress.PrintUpdate(id)
-			}
-
-			// Build and deploy containers (deployments and functions)
-			var appPort int
-
-			// Helper function to build environment variables
-			buildEnv := func() map[string]string {
-				envVars := make(map[string]string)
-				// Add database URLs
-				for dbName, conn := range dbConnections {
-					containerDBHost := fmt.Sprintf("%s-%s-%s", envName, componentName, dbName)
-					containerURL := fmt.Sprintf("postgres://app:%s@%s:5432/%s?sslmode=disable",
-						conn.Password, containerDBHost, conn.Database)
-					envVars["DATABASE_URL"] = containerURL
-					envVars[fmt.Sprintf("DB_%s_URL", strings.ToUpper(dbName))] = containerURL
-					envVars[fmt.Sprintf("DB_%s_HOST", strings.ToUpper(dbName))] = containerDBHost
-					envVars[fmt.Sprintf("DB_%s_PORT", strings.ToUpper(dbName))] = "5432"
-					envVars[fmt.Sprintf("DB_%s_USER", strings.ToUpper(dbName))] = conn.Username
-					envVars[fmt.Sprintf("DB_%s_PASSWORD", strings.ToUpper(dbName))] = conn.Password
-					envVars[fmt.Sprintf("DB_%s_NAME", strings.ToUpper(dbName))] = conn.Database
-				}
-				// Add user-provided variables
-				for k, v := range vars {
-					envVars[k] = v
-				}
-				return envVars
-			}
-
-			// Helper function to build and run a workload (deployment or function)
-			buildAndRun := func(name string, build component.Build, image string, resourceType string, resID string) error {
-				progress.UpdateStatus(resID, StatusInProgress, "building")
-				progress.PrintUpdate(resID)
-
-				workloadEnv := buildEnv()
-
-				var imageTag string
-				if build != nil {
-					buildCtx := build.Context()
-					if !filepath.IsAbs(buildCtx) {
-						buildCtx = filepath.Join(absPath, buildCtx)
-					}
-
-					dockerfile := ""
-					explicitDockerfile := build.Dockerfile()
-					if explicitDockerfile != "" && explicitDockerfile != "Dockerfile" {
-						if !filepath.IsAbs(explicitDockerfile) {
-							dockerfile = filepath.Join(buildCtx, explicitDockerfile)
-						} else {
-							dockerfile = explicitDockerfile
-						}
-					}
-
-					// Collect build args (NEXT_PUBLIC_* vars need to be available at build time)
-					buildArgs := make(map[string]string)
-					for k, v := range vars {
-						if strings.HasPrefix(k, "NEXT_PUBLIC_") {
-							buildArgs[k] = v
-						}
-					}
-
-					var err error
-					imageTag, err = provisioner.BuildImage(ctx, name, buildCtx, dockerfile, buildArgs)
-					if err != nil {
-						progress.SetError(resID, err)
-						progress.PrintUpdate(resID)
-						return fmt.Errorf("failed to build %s %q: %w", resourceType, name, err)
-					}
-				} else if image != "" {
-					imageTag = image
+				if event.Error != nil {
+					progress.SetError(event.NodeID, event.Error)
 				} else {
-					progress.UpdateStatus(resID, StatusSkipped, "no build context or image")
-					progress.PrintUpdate(resID)
-					return nil
+					progress.UpdateStatus(event.NodeID, status, event.Message)
 				}
-
-				containerPort := 3000 // Default for Next.js/Node apps
-				ports := map[int]int{containerPort: 0}
-
-				_, hostPort, err := provisioner.RunContainer(ctx, name, imageTag, componentName, workloadEnv, ports)
-				if err != nil {
-					progress.SetError(resID, err)
-					progress.PrintUpdate(resID)
-					return fmt.Errorf("failed to run %s %q: %w", resourceType, name, err)
-				}
-				appPort = hostPort
-				progress.UpdateStatus(resID, StatusCompleted, fmt.Sprintf("port %d", hostPort))
-				progress.PrintUpdate(resID)
-				return nil
+				progress.PrintUpdate(event.NodeID)
 			}
 
-			// Track running processes for cleanup
-			var runningProcesses []*exec.Cmd
+			// Create the engine
+			eng := createEngine(mgr)
 
-			// Process functions (preferred for Next.js apps)
-			for _, fn := range comp.Functions() {
-				fnID := resourceID(componentName, "function", fn.Name())
-
-				if fn.IsSourceBased() {
-					progress.UpdateStatus(fnID, StatusInProgress, "starting")
-					progress.PrintUpdate(fnID)
-
-					// Source-based functions run as local processes
-					src := fn.Src()
-					srcPath := src.Path()
-					if !filepath.IsAbs(srcPath) {
-						srcPath = filepath.Join(absPath, srcPath)
-					}
-
-					// Use inference to fill in missing values
-					inferredInfo, err := inference.InferProjectWithOverrides(srcPath, src.Language(), src.Framework())
-					if err != nil {
-						// Warning only, continue
-						_ = err
-					}
-
-					// Determine dev command (explicit > inferred)
-					devCommand := inference.FirstNonEmpty(src.Dev(), inferredInfo.DevCommand)
-					if devCommand == "" {
-						progress.UpdateStatus(fnID, StatusSkipped, "no dev command")
-						progress.PrintUpdate(fnID)
-						continue
-					}
-
-					// Determine install command
-					installCommand := inference.FirstNonEmpty(src.Install(), inferredInfo.InstallCommand)
-
-					// Determine port
-					fnPort := inference.FirstNonZero(fn.Port(), inferredInfo.Port, 3000)
-
-					// Run install command if specified
-					if installCommand != "" {
-						installCmd := exec.CommandContext(ctx, "sh", "-c", installCommand)
-						installCmd.Dir = srcPath
-						installCmd.Stdout = os.Stdout
-						installCmd.Stderr = os.Stderr
-						if err := installCmd.Run(); err != nil {
-							progress.SetError(fnID, fmt.Errorf("install failed: %w", err))
-							progress.PrintUpdate(fnID)
-							return fmt.Errorf("install command failed for %q: %w", fn.Name(), err)
-						}
-					}
-
-					// Start the dev server
-					devCmd := exec.CommandContext(ctx, "sh", "-c", devCommand)
-					devCmd.Dir = srcPath
-
-					// Merge environment variables
-					devCmd.Env = os.Environ()
-					for k, v := range buildEnv() {
-						devCmd.Env = append(devCmd.Env, fmt.Sprintf("%s=%s", k, v))
-					}
-					for k, v := range fn.Environment() {
-						devCmd.Env = append(devCmd.Env, fmt.Sprintf("%s=%s", k, v))
-					}
-					// Set PORT environment variable
-					devCmd.Env = append(devCmd.Env, fmt.Sprintf("PORT=%d", fnPort))
-
-					// Create pipes for output
-					stdout, _ := devCmd.StdoutPipe()
-					stderr, _ := devCmd.StderrPipe()
-
-					if err := devCmd.Start(); err != nil {
-						progress.SetError(fnID, err)
-						progress.PrintUpdate(fnID)
-						return fmt.Errorf("failed to start function %q: %w", fn.Name(), err)
-					}
-
-					runningProcesses = append(runningProcesses, devCmd)
-
-					// Stream output with prefix
-					go streamWithPrefix(stdout, fmt.Sprintf("[%s] ", fn.Name()))
-					go streamWithPrefix(stderr, fmt.Sprintf("[%s] ", fn.Name()))
-
-					appPort = fnPort
-					progress.UpdateStatus(fnID, StatusCompleted, fmt.Sprintf("port %d", fnPort))
-					progress.PrintUpdate(fnID)
-					continue
-				}
-				// Container-based functions
-				var build component.Build
-				var image string
-				if fn.Container() != nil {
-					build = fn.Container().Build()
-					image = fn.Container().Image()
-				}
-				if err := buildAndRun(fn.Name(), build, image, "function", fnID); err != nil {
-					return err
-				}
+			// Convert vars to interface{} map
+			varsInterface := make(map[string]interface{})
+			for k, v := range vars {
+				varsInterface[k] = v
 			}
 
-			// Cleanup function for processes
-			cleanupProcesses := func() {
-				for _, cmd := range runningProcesses {
-					if cmd.Process != nil {
-						_ = cmd.Process.Signal(syscall.SIGTERM)
-					}
-				}
-				// Give processes time to terminate gracefully
-				time.Sleep(500 * time.Millisecond)
-				for _, cmd := range runningProcesses {
-					if cmd.Process != nil {
-						_ = cmd.Process.Kill()
-					}
-				}
-			}
-			defer cleanupProcesses()
+			// Execute deployment using the engine with parallelism
+			// Note: We pass nil for Output to suppress the plan summary which would
+			// interfere with the progress table's ANSI cursor management
+			result, err := eng.Deploy(ctx, engine.DeployOptions{
+				Environment: envName,
+				Datacenter:  datacenter,
+				Components:  map[string]string{componentName: componentFile},
+				Variables:   map[string]map[string]interface{}{componentName: varsInterface},
+				Output:      nil, // Suppress plan summary - progress table handles display
+				DryRun:      false,
+				AutoApprove: true,
+				Parallelism: defaultParallelism, // Enable parallel execution
+				OnProgress:  onProgress,
+			})
 
-			// Process deployments
-			for _, depl := range comp.Deployments() {
-				deplID := resourceID(componentName, "deployment", depl.Name())
-				if err := buildAndRun(depl.Name(), depl.Build(), depl.Image(), "deployment", deplID); err != nil {
-					return err
-				}
+			if err != nil {
+				cleanupEnvironment("deployment failed")
+				return fmt.Errorf("deployment failed: %w", err)
 			}
 
-			// Expose routes
-			routeURLs := make(map[string]string)
-			for _, route := range comp.Routes() {
-				routeID := resourceID(componentName, "route", route.Name())
-				progress.UpdateStatus(routeID, StatusInProgress, "")
-				progress.PrintUpdate(routeID)
+			if !result.Success {
+				cleanupEnvironment("deployment failed")
+				if result.Execution != nil && len(result.Execution.Errors) > 0 {
+					return fmt.Errorf("deployment failed: %v", result.Execution.Errors[0])
+				}
+				return fmt.Errorf("deployment failed")
+			}
 
-				url := fmt.Sprintf("http://localhost:%d", appPort)
-				routeURLs[route.Name()] = url
-
-				progress.UpdateStatus(routeID, StatusCompleted, url)
-				progress.PrintUpdate(routeID)
+			// Check if interrupted during deployment
+			if ctx.Err() != nil {
+				cleanupEnvironment("interrupted")
+				return ctx.Err()
 			}
 
 			// Print final progress summary
 			progress.PrintFinalSummary()
+
+			// Get route URLs from the deployed state
+			routeURLs := make(map[string]string)
+			basePort := port
+			if basePort == 0 {
+				basePort = 8080
+			}
+
+			// Try to get route URLs from state
+			updatedEnv, err := mgr.GetEnvironment(ctx, envName)
+			if err == nil {
+				if compState, ok := updatedEnv.Components[componentName]; ok {
+					for resName, resState := range compState.Resources {
+						if resState.Type == "route" {
+							if url, ok := resState.Outputs["url"].(string); ok {
+								routeURLs[resName] = url
+							}
+						}
+					}
+				}
+			}
+
+			// If no routes found from state, construct default URL
+			if len(routeURLs) == 0 && len(comp.Routes()) > 0 {
+				for _, route := range comp.Routes() {
+					routeURLs[route.Name()] = fmt.Sprintf("http://localhost:%d", basePort)
+					break
+				}
+			}
 
 			if len(routeURLs) > 0 {
 				var primaryURL string
@@ -521,27 +435,6 @@ The up command:
 				}
 			}
 
-			// Update environment state
-			env.Status = types.EnvironmentStatusReady
-			env.UpdatedAt = time.Now()
-			env.Variables = vars
-
-			compState := &types.ComponentState{
-				Name:       componentName,
-				Version:    "local",
-				Source:     path,
-				Status:     types.ResourceStatusReady,
-				Variables:  vars,
-				DeployedAt: time.Now(),
-				UpdatedAt:  time.Now(),
-				Resources:  provisioner.ProvisionedResources(),
-			}
-			env.Components[componentName] = compState
-
-			if err := mgr.SaveEnvironment(ctx, env); err != nil {
-				return fmt.Errorf("failed to save environment state: %w", err)
-			}
-
 			if detach {
 				fmt.Println()
 				fmt.Println("Running in background. To stop:")
@@ -553,23 +446,8 @@ The up command:
 				// Wait for context cancellation (already set up above)
 				<-ctx.Done()
 
-				fmt.Println()
-				fmt.Println("Shutting down...")
-
-				// Use a fresh context for cleanup since the original is cancelled
-				cleanupCtx := context.Background()
-
-				// Cleanup containers
-				if err := CleanupByEnvName(cleanupCtx, envName); err != nil {
-					fmt.Printf("Warning: failed to cleanup containers: %v\n", err)
-				}
-
-				// Update state
-				env.Status = types.EnvironmentStatusPending
-				env.UpdatedAt = time.Now()
-				_ = mgr.SaveEnvironment(cleanupCtx, env)
-
-				fmt.Println("Stopped.")
+				// Clean up everything and remove the environment
+				cleanupEnvironment("interrupted")
 			}
 
 			return nil
@@ -577,12 +455,14 @@ The up command:
 	}
 
 	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to architect.yml if not in default location")
+	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Datacenter to use for provisioning (required)")
 	cmd.Flags().StringVarP(&name, "name", "n", "", "Environment name (default: auto-generated from component name)")
 	cmd.Flags().StringArrayVar(&variables, "var", nil, "Set a component variable (key=value)")
 	cmd.Flags().StringVar(&varFile, "var-file", "", "Load variables from a file")
-	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "Run in background (don't watch for changes)")
+	cmd.Flags().BoolVar(&detach, "detach", false, "Run in background (don't watch for changes)")
 	cmd.Flags().BoolVar(&noOpen, "no-open", false, "Don't open browser to application URL")
 	cmd.Flags().IntVar(&port, "port", 0, "Override the port for local access (default: 8080)")
+	_ = cmd.MarkFlagRequired("datacenter")
 
 	return cmd
 }
@@ -626,23 +506,4 @@ func upParseVarFile(data []byte, vars map[string]string) error {
 		}
 	}
 	return nil
-}
-
-// streamWithPrefix reads from a reader and prints each line with a prefix.
-func streamWithPrefix(r io.Reader, prefix string) {
-	buf := make([]byte, 1024)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			lines := strings.Split(string(buf[:n]), "\n")
-			for _, line := range lines {
-				if line != "" {
-					fmt.Printf("%s%s\n", prefix, line)
-				}
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
 }

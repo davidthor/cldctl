@@ -61,7 +61,7 @@ type InternalEnvironment struct {
 // InternalHooks contains resource hooks.
 type InternalHooks struct {
 	Database          []InternalHook
-	DatabaseMigration []InternalHook
+	Task              []InternalHook
 	Bucket            []InternalHook
 	EncryptionKey     []InternalHook
 	SMTP              []InternalHook

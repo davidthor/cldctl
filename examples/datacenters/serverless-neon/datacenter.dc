@@ -44,7 +44,7 @@ variable "domain" {
 environment {
   # Create a Neon branch per environment (instant, zero-cost when idle)
   module "neon_branch" {
-    when  = contains(environment.nodes.*.inputs.databaseType, "postgres")
+    when  = anytrue([for n in environment.nodes : element(split(":", n.inputs.type), 0) == "postgres" if n.type == "database"])
     build = "./modules/neon-branch"
     inputs = {
       project_id  = variable.neon_project_id
@@ -55,7 +55,7 @@ environment {
 
   # Create Upstash Redis database per environment
   module "upstash_redis" {
-    when  = contains(environment.nodes.*.inputs.databaseType, "redis")
+    when  = anytrue([for n in environment.nodes : element(split(":", n.inputs.type), 0) == "redis" if n.type == "database"])
     build = "./modules/upstash-redis"
     inputs = {
       name    = environment.name
@@ -88,14 +88,14 @@ environment {
 
   # Resource hooks
   database {
-    when = node.inputs.databaseType == "postgres"
+    when = element(split(":", node.inputs.type), 0) == "postgres"
 
     module "neon_database" {
       build = "./modules/serverless-database"
       inputs = {
         name              = node.name
-        type              = node.inputs.databaseType
-        version           = node.inputs.databaseVersion
+        type              = element(split(":", node.inputs.type), 0)
+        version           = try(element(split(":", node.inputs.type), 1), null)
         environment       = environment.name
         neon_project_id   = variable.neon_project_id
         neon_branch_id    = module.neon_branch.branch_id
@@ -112,7 +112,7 @@ environment {
   }
 
   database {
-    when = node.inputs.databaseType == "redis"
+    when = element(split(":", node.inputs.type), 0) == "redis"
 
     module "redis_database" {
       build = "./modules/upstash-database"
@@ -256,7 +256,7 @@ environment {
   }
 
   databaseUser {
-    when = node.inputs.databaseType == "postgres"
+    when = element(split(":", node.inputs.type), 0) == "postgres"
 
     module "neon_role" {
       build = "./modules/neon-role"

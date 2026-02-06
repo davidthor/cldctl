@@ -114,7 +114,7 @@ func (t *Transformer) transformEnvironment(env *EnvironmentBlockV1) internal.Int
 
 	// Transform hooks
 	ie.Hooks.Database = t.transformHooks(env.DatabaseHooks)
-	ie.Hooks.DatabaseMigration = t.transformHooks(env.DatabaseMigrationHooks)
+	ie.Hooks.Task = t.transformHooks(env.TaskHooks)
 	ie.Hooks.Bucket = t.transformHooks(env.BucketHooks)
 	ie.Hooks.EncryptionKey = t.transformHooks(env.EncryptionKeyHooks)
 	ie.Hooks.SMTP = t.transformHooks(env.SMTPHooks)

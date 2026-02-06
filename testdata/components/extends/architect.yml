@@ -1,0 +1,20 @@
+# Dev base: process-based deployment (no Docker, hot-reload)
+databases:
+  main:
+    type: postgres:^16
+
+deployments:
+  api:
+    command: ["npm", "run", "dev"]
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+
+services:
+  api:
+    deployment: api
+    port: 3000
+
+routes:
+  main:
+    type: http
+    service: api

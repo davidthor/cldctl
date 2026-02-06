@@ -313,7 +313,7 @@ func printNodesByType(nodesByType map[graph.NodeType][]*graph.Node) {
 		graph.NodeTypeDockerBuild,
 		graph.NodeTypeDeployment,
 		graph.NodeTypeFunction,
-		graph.NodeTypeMigration,
+		graph.NodeTypeTask,
 		graph.NodeTypeService,
 		graph.NodeTypeCronjob,
 		graph.NodeTypeRoute,
@@ -327,7 +327,7 @@ func printNodesByType(nodesByType map[graph.NodeType][]*graph.Node) {
 		graph.NodeTypeDockerBuild:   "[BL]",
 		graph.NodeTypeDeployment:    "[DP]",
 		graph.NodeTypeFunction:      "[FN]",
-		graph.NodeTypeMigration:     "[MG]",
+		graph.NodeTypeTask:          "[TK]",
 		graph.NodeTypeService:       "[SV]",
 		graph.NodeTypeCronjob:       "[CJ]",
 		graph.NodeTypeRoute:         "[RT]",
@@ -342,7 +342,7 @@ func printNodesByType(nodesByType map[graph.NodeType][]*graph.Node) {
 		graph.NodeTypeDockerBuild:   "Docker Builds",
 		graph.NodeTypeDeployment:    "Deployments",
 		graph.NodeTypeFunction:      "Functions",
-		graph.NodeTypeMigration:     "Migrations",
+		graph.NodeTypeTask:          "Tasks",
 		graph.NodeTypeService:       "Services",
 		graph.NodeTypeCronjob:       "Cronjobs",
 		graph.NodeTypeRoute:         "Routes",
@@ -376,7 +376,7 @@ func getNodeInfo(node *graph.Node) string {
 
 	switch node.Type {
 	case graph.NodeTypeDatabase:
-		if dbType, ok := node.Inputs["databaseType"].(string); ok {
+		if dbType, ok := node.Inputs["type"].(string); ok {
 			parts = append(parts, dbType)
 		}
 	case graph.NodeTypeDeployment:
@@ -559,7 +559,7 @@ func formatNodeID(node *graph.Node) string {
 		graph.NodeTypeDockerBuild:   "[BL]",
 		graph.NodeTypeDeployment:    "[DP]",
 		graph.NodeTypeFunction:      "[FN]",
-		graph.NodeTypeMigration:     "[MG]",
+		graph.NodeTypeTask:          "[TK]",
 		graph.NodeTypeService:       "[SV]",
 		graph.NodeTypeCronjob:       "[CJ]",
 		graph.NodeTypeRoute:         "[RT]",

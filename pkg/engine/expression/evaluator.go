@@ -7,6 +7,7 @@ import (
 
 // EvalContext provides values for expression evaluation.
 type EvalContext struct {
+	Builds         map[string]BuildOutputs
 	Databases      map[string]DatabaseOutputs
 	Buckets        map[string]BucketOutputs
 	EncryptionKeys map[string]EncryptionKeyOutputs
@@ -17,6 +18,11 @@ type EvalContext struct {
 	Variables      map[string]interface{}
 	Dependencies   map[string]DependencyOutputs
 	Dependents     map[string]DependentOutputs
+}
+
+// BuildOutputs contains outputs from a completed Docker build.
+type BuildOutputs struct {
+	Image string // The built image tag/ID
 }
 
 // DatabaseOutputs contains outputs from a provisioned database.
@@ -95,6 +101,7 @@ type DependentOutputs struct {
 // NewEvalContext creates a new empty evaluation context.
 func NewEvalContext() *EvalContext {
 	return &EvalContext{
+		Builds:         make(map[string]BuildOutputs),
 		Databases:      make(map[string]DatabaseOutputs),
 		Buckets:        make(map[string]BucketOutputs),
 		EncryptionKeys: make(map[string]EncryptionKeyOutputs),
@@ -184,6 +191,8 @@ func (e *Evaluator) evaluateReference(ref ReferenceSegment, ctx *EvalContext) (i
 	var err error
 
 	switch ref.Path[0] {
+	case "builds":
+		value, err = e.resolveBuild(ref.Path[1:], ctx.Builds)
 	case "databases":
 		value, err = e.resolveDatabase(ref.Path[1:], ctx.Databases)
 	case "buckets":
@@ -225,6 +234,27 @@ func (e *Evaluator) evaluateReference(ref ReferenceSegment, ctx *EvalContext) (i
 	}
 
 	return value, nil
+}
+
+func (e *Evaluator) resolveBuild(path []string, builds map[string]BuildOutputs) (interface{}, error) {
+	if len(path) < 2 {
+		return nil, fmt.Errorf("invalid build reference: need name and property")
+	}
+
+	name := path[0]
+	prop := path[1]
+
+	build, ok := builds[name]
+	if !ok {
+		return nil, fmt.Errorf("build %q not found", name)
+	}
+
+	switch prop {
+	case "image":
+		return build.Image, nil
+	default:
+		return nil, fmt.Errorf("unknown build property: %s", prop)
+	}
 }
 
 func (e *Evaluator) resolveDatabase(path []string, databases map[string]DatabaseOutputs) (interface{}, error) {

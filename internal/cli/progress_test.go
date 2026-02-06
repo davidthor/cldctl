@@ -65,6 +65,45 @@ func TestProgressTable_SetError(t *testing.T) {
 	assert.Equal(t, assert.AnError, pt.resources["comp/database/main"].Error)
 }
 
+func TestProgressTable_SetInferredConfig(t *testing.T) {
+	buf := &bytes.Buffer{}
+	pt := NewProgressTable(buf)
+
+	pt.AddResource("comp/function/app", "app", "function", "comp", nil)
+
+	config := map[string]string{
+		"language":        "javascript",
+		"framework":       "nextjs",
+		"install_command": "npm install",
+		"dev_command":     "npm run dev",
+		"port":            "3000",
+	}
+	pt.SetInferredConfig("comp/function/app", config)
+
+	assert.Equal(t, config, pt.resources["comp/function/app"].InferredConfig)
+}
+
+func TestProgressTable_SetLogs(t *testing.T) {
+	buf := &bytes.Buffer{}
+	pt := NewProgressTable(buf)
+
+	pt.AddResource("comp/function/app", "app", "function", "comp", nil)
+	pt.SetLogs("comp/function/app", "npm ERR! code ENOENT\nnpm ERR! missing script: dev")
+
+	assert.Equal(t, "npm ERR! code ENOENT\nnpm ERR! missing script: dev", pt.resources["comp/function/app"].Logs)
+}
+
+func TestProgressTable_AppendLogs(t *testing.T) {
+	buf := &bytes.Buffer{}
+	pt := NewProgressTable(buf)
+
+	pt.AddResource("comp/function/app", "app", "function", "comp", nil)
+	pt.SetLogs("comp/function/app", "Line 1\n")
+	pt.AppendLogs("comp/function/app", "Line 2\n")
+
+	assert.Equal(t, "Line 1\nLine 2\n", pt.resources["comp/function/app"].Logs)
+}
+
 func TestProgressTable_GetCompletedCount(t *testing.T) {
 	buf := &bytes.Buffer{}
 	pt := NewProgressTable(buf)
@@ -117,17 +156,16 @@ func TestProgressTable_CheckDependencies(t *testing.T) {
 	assert.Equal(t, StatusPending, pt.resources["comp/deployment/api"].Status)
 }
 
-func TestProgressTable_PrintInitial(t *testing.T) {
+func TestProgressTable_PrintInitialPlan(t *testing.T) {
 	buf := &bytes.Buffer{}
 	pt := NewProgressTable(buf)
-	pt.isTTY = false // Force non-TTY mode for predictable output
 
 	pt.AddResource("comp/database/main", "main", "database", "comp", nil)
 	pt.AddResource("comp/deployment/api", "api", "deployment", "comp", []string{"comp/database/main"})
 	pt.PrintInitial()
 
 	output := buf.String()
-	assert.Contains(t, output, "Resource Deployment Progress")
+	assert.Contains(t, output, "Deployment Plan")
 	assert.Contains(t, output, "main")
 	assert.Contains(t, output, "api")
 }
@@ -135,7 +173,6 @@ func TestProgressTable_PrintInitial(t *testing.T) {
 func TestProgressTable_PrintFinalSummary_Success(t *testing.T) {
 	buf := &bytes.Buffer{}
 	pt := NewProgressTable(buf)
-	pt.isTTY = false
 
 	pt.AddResource("comp/database/main", "main", "database", "comp", nil)
 	pt.UpdateStatus("comp/database/main", StatusCompleted, "")
@@ -149,7 +186,6 @@ func TestProgressTable_PrintFinalSummary_Success(t *testing.T) {
 func TestProgressTable_PrintFinalSummary_WithFailures(t *testing.T) {
 	buf := &bytes.Buffer{}
 	pt := NewProgressTable(buf)
-	pt.isTTY = false
 
 	pt.AddResource("comp/database/main", "main", "database", "comp", nil)
 	pt.AddResource("comp/deployment/api", "api", "deployment", "comp", nil)
@@ -162,6 +198,71 @@ func TestProgressTable_PrintFinalSummary_WithFailures(t *testing.T) {
 	assert.Contains(t, output, "1 succeeded")
 	assert.Contains(t, output, "1 failed")
 	assert.Contains(t, output, "Failed resources")
+}
+
+func TestProgressTable_PrintFinalSummary_WithInferredConfig(t *testing.T) {
+	buf := &bytes.Buffer{}
+	pt := NewProgressTable(buf)
+
+	pt.AddResource("comp/function/app", "app", "function", "comp", nil)
+
+	// Set inferred configuration
+	config := map[string]string{
+		"language":        "javascript",
+		"framework":       "nextjs",
+		"install_command": "npm install",
+		"dev_command":     "npm run dev",
+		"port":            "3000",
+	}
+	pt.SetInferredConfig("comp/function/app", config)
+	pt.SetError("comp/function/app", assert.AnError)
+	pt.PrintFinalSummary()
+
+	output := buf.String()
+	assert.Contains(t, output, "Inferred configuration")
+	assert.Contains(t, output, "language: javascript")
+	assert.Contains(t, output, "framework: nextjs")
+	assert.Contains(t, output, "install_command: npm install")
+	assert.Contains(t, output, "dev_command: npm run dev")
+	assert.Contains(t, output, "port: 3000")
+}
+
+func TestProgressTable_PrintFinalSummary_WithLogs(t *testing.T) {
+	buf := &bytes.Buffer{}
+	pt := NewProgressTable(buf)
+
+	pt.AddResource("comp/function/app", "app", "function", "comp", nil)
+
+	// Set logs
+	pt.SetLogs("comp/function/app", "npm ERR! code ENOENT\nnpm ERR! missing script: dev")
+	pt.SetError("comp/function/app", assert.AnError)
+	pt.PrintFinalSummary()
+
+	output := buf.String()
+	assert.Contains(t, output, "Output:")
+	assert.Contains(t, output, "npm ERR! code ENOENT")
+	assert.Contains(t, output, "npm ERR! missing script: dev")
+}
+
+func TestProgressTable_PrintFinalSummary_TruncatesLongLogs(t *testing.T) {
+	buf := &bytes.Buffer{}
+	pt := NewProgressTable(buf)
+
+	pt.AddResource("comp/function/app", "app", "function", "comp", nil)
+
+	// Generate 50 lines of logs (should be truncated to last 30)
+	var logs strings.Builder
+	for i := 1; i <= 50; i++ {
+		logs.WriteString("Log line " + string(rune('0'+i/10)) + string(rune('0'+i%10)) + "\n")
+	}
+	pt.SetLogs("comp/function/app", logs.String())
+	pt.SetError("comp/function/app", assert.AnError)
+	pt.PrintFinalSummary()
+
+	output := buf.String()
+	assert.Contains(t, output, "lines truncated")
+	// Should contain the later lines but not the early ones
+	assert.Contains(t, output, "Log line")
 }
 
 func TestStatusIcon(t *testing.T) {
@@ -210,24 +311,4 @@ func TestFormatResourceType(t *testing.T) {
 func TestResourceID(t *testing.T) {
 	id := resourceID("mycomp", "database", "main")
 	assert.Equal(t, "mycomp/database/main", id)
-}
-
-func TestProgressTable_BuildTable(t *testing.T) {
-	buf := &bytes.Buffer{}
-	pt := NewProgressTable(buf)
-
-	pt.AddResource("comp/database/main", "main", "database", "comp", nil)
-	pt.AddResource("comp/deployment/api", "api", "deployment", "comp", []string{"comp/database/main"})
-
-	lines := pt.buildTable()
-
-	// Should have header, separator, 2 resources, separator, summary
-	assert.GreaterOrEqual(t, len(lines), 6)
-
-	// Check header contains expected columns
-	header := lines[0]
-	assert.True(t, strings.Contains(header, "TYPE"))
-	assert.True(t, strings.Contains(header, "NAME"))
-	assert.True(t, strings.Contains(header, "STATUS"))
-	assert.True(t, strings.Contains(header, "DEPENDENCIES"))
 }

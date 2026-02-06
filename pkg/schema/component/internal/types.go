@@ -8,6 +8,9 @@ type InternalComponent struct {
 	// Metadata
 	Readme string // README content loaded from README.md if present
 
+	// Build artifacts
+	Builds []InternalComponentBuild
+
 	// Resources
 	Databases      []InternalDatabase
 	Buckets        []InternalBucket
@@ -27,6 +30,16 @@ type InternalComponent struct {
 	// Source information
 	SourceVersion string // Which schema version this came from
 	SourcePath    string // Original file path
+}
+
+// InternalComponentBuild represents a top-level named Docker build configuration.
+// Deployments reference the built image via ${{ builds.<name>.image }}.
+type InternalComponentBuild struct {
+	Name       string
+	Context    string            // Build context directory
+	Dockerfile string            // Dockerfile path within context
+	Target     string            // Build target for multi-stage
+	Args       map[string]string // Build arguments
 }
 
 // InternalDatabase represents a database requirement.
@@ -83,17 +96,24 @@ type InternalSMTP struct {
 }
 
 // InternalDeployment represents a deployment workload.
+// Image is optional. When absent, the datacenter decides how to execute
+// (e.g., as a host process for local development).
 type InternalDeployment struct {
 	Name string
 
-	// Image source (one of these is set)
-	Image string          // Pre-built image reference
-	Build *InternalBuild  // Build from source
+	// Image source (optional - may reference a top-level build via expression)
+	Image string // Pre-built image reference or ${{ builds.<name>.image }} expression
+
+	// Runtime environment (optional - describes VM/managed runtime requirements)
+	Runtime *InternalRuntime
 
 	// Container configuration
 	Command     []string
 	Entrypoint  []string
 	Environment map[string]Expression // Values may contain expressions
+
+	// Process configuration
+	WorkingDirectory string // Working directory for process-based execution (defaults to component dir)
 
 	// Resource allocation
 	CPU      string
@@ -105,6 +125,16 @@ type InternalDeployment struct {
 	LivenessProbe  *InternalProbe
 	ReadinessProbe *InternalProbe
 	Labels         map[string]string
+}
+
+// InternalRuntime describes the runtime environment for a deployment.
+// When present without an image, the datacenter can provision a VM or managed runtime.
+type InternalRuntime struct {
+	Language string   // Required: language and version (e.g., "node:20", "python:^3.12")
+	OS       string   // Optional: target OS (default: linux)
+	Arch     string   // Optional: target architecture (default: datacenter's choice)
+	Packages []string // Optional: system-level dependencies (e.g., ffmpeg, imagemagick)
+	Setup    []string // Optional: provisioning commands (e.g., npm ci --production)
 }
 
 // InternalFunction represents a serverless function.

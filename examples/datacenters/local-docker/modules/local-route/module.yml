@@ -7,7 +7,7 @@ inputs:
   name:
     type: string
     required: true
-    description: Route name
+    description: Route name (should include environment prefix for cleanup)
   type:
     type: string
     default: "http"
@@ -31,7 +31,7 @@ resources:
     type: docker:container
     properties:
       image: "nginx:alpine"
-      name: "${inputs.name}-route"
+      name: "${inputs.name}"
       ports:
         - container: 80
           host: auto

@@ -54,22 +54,15 @@ func TestValidator_Validate(t *testing.T) {
 			wantErrors: 0,
 		},
 		{
-			name: "valid deployment with build",
+			name: "valid deployment without image or build (process-based)",
 			schema: &SchemaV1{
 				Deployments: map[string]DeploymentV1{
-					"api": {Build: &BuildV1{Context: "./api"}},
+					"api": {
+						Command: []string{"npm", "run", "dev"},
+					},
 				},
 			},
 			wantErrors: 0,
-		},
-		{
-			name: "deployment without image or build",
-			schema: &SchemaV1{
-				Deployments: map[string]DeploymentV1{
-					"api": {},
-				},
-			},
-			wantErrors: 1,
 		},
 		{
 			name: "service with deployment",

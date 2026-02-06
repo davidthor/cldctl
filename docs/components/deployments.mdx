@@ -5,15 +5,18 @@ description: "Define long-running application workloads in arcctl components"
 
 # Deployments
 
-Define long-running application workloads. Deployments are containers that run continuously, handling traffic and processing background work.
+Define long-running application workloads. Deployments are containers or processes that run continuously, handling traffic and processing background work.
 
 ## Basic Usage
 
 ```yaml
+builds:
+  api:
+    context: ./api
+
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
 ```
@@ -22,11 +25,12 @@ deployments:
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `image` | string | Container image (mutually exclusive with `build`) |
-| `build` | object | Build configuration (mutually exclusive with `image`) |
+| `image` | string | Container image or `${{ builds.<name>.image }}` expression |
+| `runtime` | string or object | Runtime environment for VM/managed deployments (see below) |
 | `command` | string[] | Override container command |
 | `entrypoint` | string[] | Override container entrypoint |
 | `environment` | map | Environment variables (supports expressions) |
+| `workingDirectory` | string | Working directory for process-based execution |
 | `cpu` | string | CPU allocation |
 | `memory` | string | Memory allocation |
 | `replicas` | number | Default replica count |
@@ -36,17 +40,22 @@ deployments:
 
 ## Source Configuration
 
-### Build from Source
+### Use a Top-level Build
+
+Define Docker builds in the top-level `builds` section and reference them via expressions:
 
 ```yaml
+builds:
+  api:
+    context: ./api
+    dockerfile: Dockerfile          # Optional, defaults to "Dockerfile"
+    target: production              # Multi-stage build target
+    args:
+      NODE_ENV: production
+
 deployments:
   api:
-    build:
-      context: ./api
-      dockerfile: Dockerfile          # Optional, defaults to "Dockerfile"
-      target: production              # Multi-stage build target
-      args:
-        NODE_ENV: production
+    image: ${{ builds.api.image }}
 ```
 
 ### Use Pre-built Image
@@ -58,15 +67,73 @@ deployments:
     command: ["npm", "start"]
 ```
 
-## Runtime Configuration
+### Process-based (No Image)
 
-### Command and Entrypoint
+For local development, deployments can run directly on the host without Docker:
 
 ```yaml
 deployments:
   api:
-    build:
-      context: ./api
+    command: ["npm", "run", "dev"]
+    workingDirectory: ./backend  # Optional, defaults to architect.yml directory
+```
+
+## Runtime Property
+
+The `runtime` property declares what language and system dependencies a deployment needs to run,
+without specifying how they get provisioned. This enables datacenters to provision VMs (e.g., EC2
+instances, DigitalOcean Droplets) or managed runtimes for workloads that don't use Docker images.
+
+### Three-Way Routing Model
+
+Datacenters use the presence of `image` and `runtime` to decide how to handle deployments:
+
+- **`image` present** -- container-based (Docker, Kubernetes, ECS, etc.)
+- **`runtime` present, no `image`** -- VM-based or managed runtime (EC2, Droplets, etc.)
+- **Neither** -- process-based local execution
+
+### String Shorthand
+
+```yaml
+deployments:
+  worker:
+    runtime: node:20
+    command: ["node", "dist/worker.js"]
+```
+
+### Full Object Form
+
+```yaml
+deployments:
+  worker:
+    runtime:
+      language: node:20          # Required. Language and version
+      os: linux                  # Optional. Default: linux (linux, windows)
+      arch: amd64                # Optional. Default: datacenter's choice (amd64, arm64)
+      packages:                  # Optional. System-level dependencies
+        - ffmpeg
+        - imagemagick
+      setup:                     # Optional. Provisioning commands
+        - npm ci --production
+    command: ["node", "dist/worker.js"]
+```
+
+### Runtime Properties
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `language` | string | Yes | Language runtime with version (e.g., `node:20`, `python:^3.12`, `go:1.22`) |
+| `os` | string | No | Target OS. Default: `linux`. Options: `linux`, `windows` |
+| `arch` | string | No | Target architecture. Options: `amd64`, `arm64` |
+| `packages` | string[] | No | System packages the app depends on (e.g., `ffmpeg`, `libpng-dev`) |
+| `setup` | string[] | No | Commands to run during provisioning (e.g., `npm ci --production`) |
+
+## Command and Entrypoint
+
+```yaml
+deployments:
+  api:
+    image: ${{ builds.api.image }}
     command: ["npm", "run", "start:prod"]
     entrypoint: ["/bin/sh", "-c"]
 ```
@@ -76,8 +143,7 @@ deployments:
 ```yaml
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       # Static values
       NODE_ENV: production
@@ -100,8 +166,7 @@ deployments:
 ```yaml
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     cpu: "0.5"           # 0.5 CPU cores
     memory: "512Mi"      # 512 MB memory
     replicas: 2          # 2 replicas
@@ -116,8 +181,7 @@ Determines if the container is running. If it fails, the container is restarted.
 ```yaml
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     liveness_probe:
       path: /health
       port: 8080
@@ -134,8 +198,7 @@ Determines if the container is ready to receive traffic.
 ```yaml
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     readiness_probe:
       path: /ready
       port: 8080
@@ -150,8 +213,7 @@ For non-HTTP services:
 ```yaml
 deployments:
   worker:
-    build:
-      context: ./worker
+    image: ${{ builds.worker.image }}
     liveness_probe:
       tcp_socket:
         port: 9000
@@ -165,8 +227,7 @@ Mount volumes for persistent data or configuration:
 ```yaml
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     volumes:
       - mount_path: /data
         host_path: ./data           # For local development
@@ -178,7 +239,12 @@ deployments:
 ## Complete Example
 
 ```yaml
-name: my-app
+builds:
+  api:
+    context: ./api
+    dockerfile: Dockerfile
+  worker:
+    context: ./worker
 
 databases:
   main:
@@ -192,9 +258,7 @@ variables:
 
 deployments:
   api:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
+    image: ${{ builds.api.image }}
     command: ["npm", "start"]
     environment:
       NODE_ENV: production
@@ -213,8 +277,7 @@ deployments:
       port: 8080
 
   worker:
-    build:
-      context: ./worker
+    image: ${{ builds.worker.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
       REDIS_URL: ${{ databases.cache.url }}
@@ -226,4 +289,38 @@ services:
   api:
     deployment: api
     port: 8080
+```
+
+## VM Worker Example (Dev/Prod with Runtime)
+
+```yaml
+# architect.yml (dev base)
+databases:
+  queue:
+    type: redis:^7
+
+deployments:
+  worker:
+    runtime: node:20
+    command: ["npx", "tsx", "watch", "src/worker.ts"]
+    environment:
+      REDIS_URL: ${{ databases.queue.url }}
+```
+
+```yaml
+# architect.prod.yml (production - runs on VMs)
+extends: architect.yml
+
+deployments:
+  worker:
+    runtime:
+      language: node:20
+      packages:
+        - ffmpeg
+      setup:
+        - npm ci --production
+    command: ["node", "dist/worker.js"]
+    cpu: "2"
+    memory: "4Gi"
+    replicas: 5
 ```

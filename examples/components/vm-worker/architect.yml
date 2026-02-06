@@ -1,0 +1,35 @@
+# Example: VM-based background worker using the runtime property
+# Demonstrates deploying workloads to VMs instead of containers.
+# The datacenter decides which cloud VMs to provision (EC2, Droplets, GCE, etc.)
+#
+# Dev usage:  arcctl up (runs as a local process)
+# Prod usage: arcctl deploy -e production (provisions VMs via datacenter)
+
+variables:
+  worker_concurrency:
+    description: "Number of concurrent jobs per worker"
+    default: "5"
+
+databases:
+  queue:
+    type: redis:^7
+
+deployments:
+  # VM-based worker using runtime property
+  # In development: runs as a local process
+  # In production: datacenter provisions VMs with the specified runtime
+  worker:
+    runtime:
+      language: node:20
+      packages:
+        - ffmpeg
+        - imagemagick
+      setup:
+        - npm ci --production
+    command: ["node", "dist/worker.js"]
+    environment:
+      REDIS_URL: ${{ databases.queue.url }}
+      WORKER_CONCURRENCY: ${{ variables.worker_concurrency }}
+    cpu: "2"
+    memory: "4Gi"
+    replicas: 3

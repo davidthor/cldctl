@@ -53,6 +53,16 @@ func (l *versionDetectingLoader) Load(path string) (Component, error) {
 		return nil, errors.Wrap(errors.ErrCodeParse, fmt.Sprintf("failed to read %s", path), err)
 	}
 
+	// Resolve extends chain before parsing
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, errors.Wrap(errors.ErrCodeParse, "failed to resolve absolute path", err)
+	}
+	data, err = l.resolveExtends(data, absPath, make(map[string]bool))
+	if err != nil {
+		return nil, err
+	}
+
 	comp, err := l.LoadFromBytes(data, path)
 	if err != nil {
 		return nil, err
@@ -187,6 +197,75 @@ func (l *versionDetectingLoader) Validate(path string) error {
 	}
 
 	return nil
+}
+
+// resolveExtends resolves the extends chain for a component file.
+// It reads the raw YAML, detects the `extends` field, recursively loads and merges
+// the base file, strips the `extends` field, and returns the resolved YAML bytes.
+// The `seen` set tracks visited absolute paths for circular reference detection.
+func (l *versionDetectingLoader) resolveExtends(data []byte, sourcePath string, seen map[string]bool) ([]byte, error) {
+	// Check for circular reference
+	if seen[sourcePath] {
+		return nil, errors.New(errors.ErrCodeParse, fmt.Sprintf("circular extends reference detected: %s", sourcePath))
+	}
+	seen[sourcePath] = true
+
+	// Parse as raw map to detect extends
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, errors.Wrap(errors.ErrCodeParse, "failed to parse YAML for extends resolution", err)
+	}
+
+	extendsVal, hasExtends := raw["extends"]
+	if !hasExtends {
+		return data, nil
+	}
+
+	extendsPath, ok := extendsVal.(string)
+	if !ok || extendsPath == "" {
+		return nil, errors.New(errors.ErrCodeParse, "extends must be a non-empty string path")
+	}
+
+	// Resolve the base path relative to the extending file's directory
+	sourceDir := filepath.Dir(sourcePath)
+	basePath := extendsPath
+	if !filepath.IsAbs(basePath) {
+		basePath = filepath.Join(sourceDir, basePath)
+	}
+	basePath, err := filepath.Abs(basePath)
+	if err != nil {
+		return nil, errors.Wrap(errors.ErrCodeParse, "failed to resolve extends path", err)
+	}
+
+	// Read and recursively resolve the base file
+	baseData, err := os.ReadFile(basePath)
+	if err != nil {
+		return nil, errors.Wrap(errors.ErrCodeParse, fmt.Sprintf("failed to read base component %s", basePath), err)
+	}
+
+	baseData, err = l.resolveExtends(baseData, basePath, seen)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse the resolved base as a raw map
+	var baseRaw map[string]interface{}
+	if err := yaml.Unmarshal(baseData, &baseRaw); err != nil {
+		return nil, errors.Wrap(errors.ErrCodeParse, "failed to parse base component YAML", err)
+	}
+
+	// Deep merge: override (current file) onto base
+	// Remove extends from the override before merging
+	delete(raw, "extends")
+	merged := deepMerge(baseRaw, raw)
+
+	// Marshal back to YAML
+	result, err := yaml.Marshal(merged)
+	if err != nil {
+		return nil, errors.Wrap(errors.ErrCodeParse, "failed to marshal merged component", err)
+	}
+
+	return result, nil
 }
 
 // detectVersion detects the schema version from the data.

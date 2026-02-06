@@ -36,6 +36,10 @@ variables:
     description: "Allowed CORS origins (comma-separated)"
     default: "*"
 
+builds:
+  api:
+    context: ./api
+
 databases:
   main:
     type: mysql:^8
@@ -52,8 +56,7 @@ databases:
 
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
       REDIS_URL: ${{ databases.cache.url }}

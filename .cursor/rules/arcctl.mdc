@@ -67,6 +67,7 @@ make lint     # Run linter
 - **Next.js apps**: Always use `functions` with `framework: nextjs`
 - **Serverless workloads**: Use `functions` for scale-to-zero benefits
 - **Long-running services**: Use `deployments` for workers, background processors
+- **VM-based workers**: Use `deployments` with `runtime` for VM-provisioned workloads
 - **Routes**: Can point directly to functions (no service wrapper needed)
 
 ```yaml
@@ -84,4 +85,24 @@ routes:
   main:
     type: http
     function: web
+```
+
+### Deployment Modes
+
+```yaml
+# Container-based (with image)
+deployments:
+  api:
+    image: ${{ builds.api.image }}
+
+# VM-based (with runtime, no image)
+deployments:
+  worker:
+    runtime: node:20           # or full object with language, os, arch, packages, setup
+    command: ["node", "worker.js"]
+
+# Process-based (no image, no runtime - local dev)
+deployments:
+  api:
+    command: ["npm", "run", "dev"]
 ```

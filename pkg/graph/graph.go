@@ -60,20 +60,21 @@ func (g *Graph) AddEdge(dependentID, dependencyID string) error {
 
 // TopologicalSort returns nodes in topological order (dependencies first).
 func (g *Graph) TopologicalSort() ([]*Node, error) {
+	// First, validate that all dependencies exist and filter out non-existent ones
+	for _, node := range g.Nodes {
+		var validDeps []string
+		for _, depID := range node.DependsOn {
+			if _, exists := g.Nodes[depID]; exists {
+				validDeps = append(validDeps, depID)
+			}
+			// Silently ignore dependencies on non-existent nodes
+			// (they may be external or optional)
+		}
+		node.DependsOn = validDeps
+	}
+
 	// Kahn's algorithm
 	inDegree := make(map[string]int)
-	for id := range g.Nodes {
-		inDegree[id] = 0
-	}
-
-	for _, node := range g.Nodes {
-		for _, depID := range node.DependsOn {
-			inDegree[node.ID]++
-			_ = depID // dependency contributes to dependent's in-degree
-		}
-	}
-
-	// Recount properly
 	for id := range g.Nodes {
 		inDegree[id] = len(g.Nodes[id].DependsOn)
 	}
@@ -111,7 +112,31 @@ func (g *Graph) TopologicalSort() ([]*Node, error) {
 
 	// Check for cycles
 	if len(result) != len(g.Nodes) {
-		return nil, fmt.Errorf("dependency cycle detected")
+		// Find nodes that weren't processed (involved in cycles)
+		processed := make(map[string]bool)
+		for _, n := range result {
+			processed[n.ID] = true
+		}
+
+		var cycleNodes []string
+		for id := range g.Nodes {
+			if !processed[id] {
+				cycleNodes = append(cycleNodes, id)
+			}
+		}
+		sort.Strings(cycleNodes)
+
+		// Build a more helpful error message showing the dependencies
+		var details string
+		for _, id := range cycleNodes {
+			node := g.Nodes[id]
+			if len(node.DependsOn) > 0 {
+				details += fmt.Sprintf("\n  %s depends on: %v", id, node.DependsOn)
+			}
+		}
+
+		return nil, fmt.Errorf("dependency cycle detected involving %d nodes: %v%s",
+			len(cycleNodes), cycleNodes, details)
 	}
 
 	return result, nil

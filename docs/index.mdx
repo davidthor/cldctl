@@ -84,14 +84,17 @@ This contract allows components to be **portable across any datacenter** that im
 Here's a simple web application with a database:
 
 ```yaml architect.yml
+builds:
+  api:
+    context: ./api
+
 databases:
   main:
     type: postgres:^15
 
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
 

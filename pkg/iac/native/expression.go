@@ -23,8 +23,12 @@ func evaluateExpression(expr string, ctx *EvalContext) (interface{}, error) {
 		return expr, nil
 	}
 
-	// If the entire string is a single expression, return the actual value
-	if strings.HasPrefix(expr, "${") && strings.HasSuffix(expr, "}") {
+	// Count how many ${...} patterns are in the string
+	matches := expressionPattern.FindAllString(expr, -1)
+
+	// If the entire string is a single expression, return the actual value (preserving type)
+	// Only do this if there's exactly one match and it spans the entire string
+	if len(matches) == 1 && matches[0] == expr {
 		trimmed := expr[2 : len(expr)-1]
 		return resolveReference(trimmed, ctx)
 	}
@@ -75,7 +79,23 @@ func resolveReference(ref string, ctx *EvalContext) (interface{}, error) {
 		} else if parts[2] == "id" {
 			return resource.ID, nil
 		}
-		return nil, fmt.Errorf("invalid resource property: %s", parts[2])
+
+		// Shorthand: resources.name.field -> try outputs first, then properties
+		// This allows expressions like ${resources.proxy.ports[0].host} instead of
+		// ${resources.proxy.outputs.ports[0].host}
+		if resource.Outputs != nil {
+			result, err := navigatePath(resource.Outputs, parts[2:])
+			if err == nil && result != nil {
+				return result, nil
+			}
+		}
+		if resource.Properties != nil {
+			result, err := navigatePath(resource.Properties, parts[2:])
+			if err == nil && result != nil {
+				return result, nil
+			}
+		}
+		return nil, fmt.Errorf("property %s not found in resource %s", parts[2], resourceName)
 
 	default:
 		// Try as a function call
@@ -83,7 +103,9 @@ func resolveReference(ref string, ctx *EvalContext) (interface{}, error) {
 	}
 }
 
-// navigatePath navigates a path through nested maps.
+// navigatePath navigates a path through nested maps and arrays.
+// Supports array indexing like "ports[0]" or "items[2].name".
+// Returns nil (not error) for missing keys to support optional values.
 func navigatePath(data interface{}, path []string) (interface{}, error) {
 	if len(path) == 0 {
 		return data, nil
@@ -91,19 +113,67 @@ func navigatePath(data interface{}, path []string) (interface{}, error) {
 
 	current := data
 	for _, key := range path {
+		// Check for array indexing: key[index]
+		if idx := strings.Index(key, "["); idx != -1 {
+			// Split into key and index parts
+			baseKey := key[:idx]
+			indexPart := key[idx:]
+
+			// First navigate to the base key if it's not empty
+			if baseKey != "" {
+				var err error
+				current, err = navigatePath(current, []string{baseKey})
+				if err != nil || current == nil {
+					return nil, err
+				}
+			}
+
+			// Parse index from [N] format
+			if !strings.HasSuffix(indexPart, "]") {
+				return nil, fmt.Errorf("invalid array index: %s", key)
+			}
+			indexStr := indexPart[1 : len(indexPart)-1]
+			index := 0
+			if _, err := fmt.Sscanf(indexStr, "%d", &index); err != nil {
+				return nil, fmt.Errorf("invalid array index: %s", indexStr)
+			}
+
+			// Access the array element
+			switch arr := current.(type) {
+			case []interface{}:
+				if index < 0 || index >= len(arr) {
+					return nil, nil // Out of bounds, return nil
+				}
+				current = arr[index]
+			case []map[string]interface{}:
+				if index < 0 || index >= len(arr) {
+					return nil, nil
+				}
+				current = arr[index]
+			default:
+				return nil, fmt.Errorf("cannot index into %T", current)
+			}
+			continue
+		}
+
 		switch v := current.(type) {
 		case map[string]interface{}:
 			var ok bool
 			current, ok = v[key]
 			if !ok {
-				return nil, fmt.Errorf("key not found: %s", key)
+				// Return nil for missing keys (supports optional inputs)
+				return nil, nil
 			}
 		case map[string]string:
 			val, ok := v[key]
 			if !ok {
-				return nil, fmt.Errorf("key not found: %s", key)
+				// Return nil for missing keys (supports optional inputs)
+				return nil, nil
 			}
 			current = val
+		case nil:
+			// If we hit nil, the path doesn't exist
+			return nil, nil
 		default:
 			return nil, fmt.Errorf("cannot navigate into %T", current)
 		}
@@ -191,6 +261,108 @@ func evaluateFunction(expr string, ctx *EvalContext) (interface{}, error) {
 		}
 		return cmd, nil
 
+	case "lookup_port":
+		// lookup_port(target, port) - In local Docker mode, containers use known ports
+		// For now, just return the port argument since we use fixed port assignments
+		args := splitFunctionArgs(argsStr)
+		if len(args) < 2 {
+			return nil, fmt.Errorf("lookup_port requires 2 arguments (target, port)")
+		}
+		// Return the port argument as-is
+		portArg := strings.TrimSpace(args[1])
+		portVal, err := resolveReference(portArg, ctx)
+		if err != nil {
+			// Try parsing as literal
+			return portArg, nil
+		}
+		return portVal, nil
+
+	case "jsonencode":
+		// jsonencode(value) - Encode a value as JSON
+		args := splitFunctionArgs(argsStr)
+		if len(args) < 1 {
+			return nil, fmt.Errorf("jsonencode requires 1 argument")
+		}
+		val, err := resolveReference(args[0], ctx)
+		if err != nil {
+			// Try as literal string
+			return args[0], nil
+		}
+		// For simple cases, just return the value as string
+		return fmt.Sprintf("%v", val), nil
+
+	case "random_string":
+		// Alias for random_password
+		return generateRandomString(16), nil
+
+	case "merge":
+		// merge(map1, map2) - Merge two maps, map2 values override map1
+		args := splitFunctionArgs(argsStr)
+		if len(args) < 2 {
+			return nil, fmt.Errorf("merge requires 2 arguments")
+		}
+
+		// Resolve both arguments
+		val1, err1 := resolveReference(args[0], ctx)
+		val2, err2 := resolveReference(args[1], ctx)
+
+		result := make(map[string]interface{})
+
+		// Add values from first map if it's a map
+		if err1 == nil {
+			if m1, ok := val1.(map[string]interface{}); ok {
+				for k, v := range m1 {
+					result[k] = v
+				}
+			}
+		}
+
+		// Override/add values from second map
+		if err2 == nil {
+			if m2, ok := val2.(map[string]interface{}); ok {
+				for k, v := range m2 {
+					result[k] = v
+				}
+			}
+		}
+
+		return result, nil
+
+	case "framework_command":
+		// framework_command(framework) - Return the appropriate start command for a framework
+		args := splitFunctionArgs(argsStr)
+		if len(args) < 1 {
+			return nil, fmt.Errorf("framework_command requires 1 argument")
+		}
+
+		framework, err := resolveReference(args[0], ctx)
+		if err != nil {
+			framework = args[0]
+		}
+
+		frameworkStr, ok := framework.(string)
+		if !ok {
+			return []string{"npm", "start"}, nil
+		}
+
+		// Return appropriate command based on framework
+		switch strings.ToLower(frameworkStr) {
+		case "nextjs", "next":
+			return []string{"npm", "run", "dev"}, nil
+		case "react", "create-react-app":
+			return []string{"npm", "start"}, nil
+		case "vue", "nuxt":
+			return []string{"npm", "run", "dev"}, nil
+		case "express", "node":
+			return []string{"npm", "start"}, nil
+		case "fastapi", "flask", "django":
+			return []string{"python", "-m", "uvicorn", "main:app", "--reload"}, nil
+		case "go", "golang":
+			return []string{"go", "run", "."}, nil
+		default:
+			return []string{"npm", "start"}, nil
+		}
+
 	default:
 		return nil, fmt.Errorf("unknown function: %s", funcName)
 	}
@@ -254,7 +426,10 @@ func resolveProperties(props map[string]interface{}, ctx *EvalContext) (map[stri
 		if err != nil {
 			return nil, fmt.Errorf("property %s: %w", key, err)
 		}
-		result[key] = resolved
+		// Skip nil values (optional inputs that weren't provided)
+		if resolved != nil {
+			result[key] = resolved
+		}
 	}
 
 	return result, nil

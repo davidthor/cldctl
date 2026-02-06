@@ -104,6 +104,62 @@ func TestEvaluator_Evaluate(t *testing.T) {
 	}
 }
 
+func TestEvaluator_BuildsExpression(t *testing.T) {
+	parser := NewParser()
+	evaluator := NewEvaluator()
+
+	ctx := NewEvalContext()
+	ctx.Builds["api"] = BuildOutputs{
+		Image: "ghcr.io/org/api:v1",
+	}
+
+	tests := []struct {
+		name    string
+		input   string
+		want    interface{}
+		wantErr bool
+	}{
+		{
+			name:  "builds image reference",
+			input: "${{ builds.api.image }}",
+			want:  "ghcr.io/org/api:v1",
+		},
+		{
+			name:    "builds unknown name",
+			input:   "${{ builds.unknown.image }}",
+			wantErr: true,
+		},
+		{
+			name:    "builds unknown property",
+			input:   "${{ builds.api.tag }}",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expr, err := parser.Parse(tt.input)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+
+			got, err := evaluator.Evaluate(expr, ctx)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("expected %v (%T), got %v (%T)", tt.want, tt.want, got, got)
+			}
+		})
+	}
+}
+
 func TestEvaluator_EvaluateString(t *testing.T) {
 	parser := NewParser()
 	evaluator := NewEvaluator()

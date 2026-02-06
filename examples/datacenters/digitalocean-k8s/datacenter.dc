@@ -89,8 +89,8 @@ environment {
       build = "./modules/do-managed-database"
       inputs = {
         name    = "${environment.name}-${node.name}"
-        type    = node.inputs.databaseType
-        version = node.inputs.databaseVersion
+        type    = element(split(":", node.inputs.type), 0)
+        version = try(element(split(":", node.inputs.type), 1), null)
         region  = variable.region
         size    = "db-s-1vcpu-1gb"
         token   = variable.do_token
@@ -105,25 +105,18 @@ environment {
     }
   }
 
-  # Run database migrations after database is provisioned
+  # Task hook - run one-time containers (e.g., database migrations)
   # Uses Kubernetes Jobs for one-time execution
-  databaseMigration {
-    module "migration_job" {
+  task {
+    module "task_job" {
       build = "./modules/k8s-job"
       inputs = {
-        name       = "${node.component}--${node.name}--migration"
+        name       = "${node.component}--${node.name}"
         namespace  = environment.name
         kubeconfig = module.k8s.kubeconfig
         image      = node.inputs.image
         command    = node.inputs.command
-        environment = merge(node.inputs.environment, {
-          DATABASE_URL      = node.inputs.databaseUrl
-          DATABASE_HOST     = node.inputs.databaseHost
-          DATABASE_PORT     = node.inputs.databasePort
-          DATABASE_NAME     = node.inputs.databaseName
-          DATABASE_USER     = node.inputs.databaseUser
-          DATABASE_PASSWORD = node.inputs.databasePassword
-        })
+        environment = node.inputs.environment
         # Wait for job completion before continuing deployment
         backoff_limit = 3
         ttl_seconds_after_finished = 300
@@ -131,8 +124,8 @@ environment {
     }
 
     outputs = {
-      id     = module.migration_job.job_id
-      status = module.migration_job.status
+      id     = module.task_job.job_id
+      status = module.task_job.status
     }
   }
 
@@ -157,7 +150,10 @@ environment {
     }
   }
 
+  # Deployment hook - container-based (image present)
   deployment {
+    when = node.inputs.image != null
+
     module "deployment" {
       build = "./modules/k8s-deployment"
       inputs = merge(node.inputs, {
@@ -168,6 +164,27 @@ environment {
 
     outputs = {
       id = module.deployment.deployment_id
+    }
+  }
+
+  # Deployment hook - VM-based (runtime present, no image)
+  # Provisions Droplets for workloads using the runtime property
+  deployment {
+    when = node.inputs.runtime != null && node.inputs.image == null
+
+    module "droplet" {
+      plugin = "opentofu"
+      build  = "./modules/do-droplet"
+      inputs = merge(node.inputs, {
+        name                = "${environment.name}-${node.component}-${node.name}"
+        region              = variable.region
+        do_token            = variable.do_token
+        ssh_key_fingerprint = variable.ssh_key_fingerprint
+      })
+    }
+
+    outputs = {
+      id = module.droplet.droplet_id
     }
   }
 

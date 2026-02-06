@@ -94,12 +94,10 @@ When building a component, arcctl creates multiple artifacts:
 				tagPart = tag[idx:]
 			}
 
-			// Process deployments
-			for _, depl := range comp.Deployments() {
-				if depl.Build() != nil {
-					childRef := fmt.Sprintf("%s-deployment-%s%s", baseRef, depl.Name(), tagPart)
-					childArtifacts[fmt.Sprintf("deployments/%s", depl.Name())] = childRef
-				}
+			// Process top-level builds
+			for _, build := range comp.Builds() {
+				childRef := fmt.Sprintf("%s-build-%s%s", baseRef, build.Name(), tagPart)
+				childArtifacts[fmt.Sprintf("builds/%s", build.Name())] = childRef
 			}
 
 			// Process functions (only container-based functions have builds)
@@ -159,16 +157,14 @@ When building a component, arcctl creates multiple artifacts:
 			}
 			childBuilds := make(map[string]buildInfo)
 
-			// Collect build info from deployments
-			for _, depl := range comp.Deployments() {
-				if depl.Build() != nil {
-					key := fmt.Sprintf("deployments/%s", depl.Name())
-					childBuilds[key] = buildInfo{
-						context:    depl.Build().Context(),
-						dockerfile: depl.Build().Dockerfile(),
-						target:     depl.Build().Target(),
-						args:       depl.Build().Args(),
-					}
+			// Collect build info from top-level builds
+			for _, build := range comp.Builds() {
+				key := fmt.Sprintf("builds/%s", build.Name())
+				childBuilds[key] = buildInfo{
+					context:    build.Context(),
+					dockerfile: build.Dockerfile(),
+					target:     build.Target(),
+					args:       build.Args(),
 				}
 			}
 

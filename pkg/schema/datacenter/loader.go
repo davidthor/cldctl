@@ -200,9 +200,9 @@ type hooksWrapper struct {
 	h *internal.InternalHooks
 }
 
-func (h *hooksWrapper) Database() []Hook          { return wrapHooks(h.h.Database) }
-func (h *hooksWrapper) DatabaseMigration() []Hook { return wrapHooks(h.h.DatabaseMigration) }
-func (h *hooksWrapper) Bucket() []Hook            { return wrapHooks(h.h.Bucket) }
+func (h *hooksWrapper) Database() []Hook { return wrapHooks(h.h.Database) }
+func (h *hooksWrapper) Task() []Hook     { return wrapHooks(h.h.Task) }
+func (h *hooksWrapper) Bucket() []Hook   { return wrapHooks(h.h.Bucket) }
 func (h *hooksWrapper) EncryptionKey() []Hook     { return wrapHooks(h.h.EncryptionKey) }
 func (h *hooksWrapper) SMTP() []Hook              { return wrapHooks(h.h.SMTP) }
 func (h *hooksWrapper) DatabaseUser() []Hook      { return wrapHooks(h.h.DatabaseUser) }

@@ -11,13 +11,13 @@ The database hook provisions databases when components declare database requirem
 
 ```hcl
 database {
-  when = node.inputs.databaseType == "postgres"
+  when = element(split(":", node.inputs.type), 0) == "postgres"
 
   module "db" {
     build = "./modules/rds-postgres"
     inputs = {
       name    = "${environment.name}-${node.component}-${node.name}"
-      version = node.inputs.databaseVersion
+      version = try(element(split(":", node.inputs.type), 1), null)
       region  = variable.region
     }
   }
@@ -40,8 +40,7 @@ The following inputs are available via `node.inputs`:
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | string | Resource identifier |
-| `databaseType` | string | Database type (postgres, mysql, mariadb, mongodb, redis, cockroachdb, clickhouse) |
-| `databaseVersion` | string | Requested version |
+| `type` | string | Database type and version (e.g., postgres:^16, redis:7) |
 | `migrations` | object | Optional migration configuration |
 
 ## Required Outputs
@@ -67,13 +66,13 @@ Handle different database types with conditional hooks:
 ```hcl
 # PostgreSQL databases
 database {
-  when = node.inputs.databaseType == "postgres"
+  when = element(split(":", node.inputs.type), 0) == "postgres"
 
   module "postgres" {
     build = "./modules/rds-postgres"
     inputs = {
       name    = "${environment.name}-${node.component}-${node.name}"
-      version = node.inputs.databaseVersion
+      version = try(element(split(":", node.inputs.type), 1), null)
     }
   }
 
@@ -87,13 +86,13 @@ database {
 
 # MySQL databases
 database {
-  when = node.inputs.databaseType == "mysql"
+  when = element(split(":", node.inputs.type), 0) == "mysql"
 
   module "mysql" {
     build = "./modules/rds-mysql"
     inputs = {
       name    = "${environment.name}-${node.component}-${node.name}"
-      version = node.inputs.databaseVersion
+      version = try(element(split(":", node.inputs.type), 1), null)
     }
   }
 
@@ -107,13 +106,13 @@ database {
 
 # Redis databases
 database {
-  when = node.inputs.databaseType == "redis"
+  when = element(split(":", node.inputs.type), 0) == "redis"
 
   module "redis" {
     build = "./modules/elasticache-redis"
     inputs = {
       name    = "${environment.name}-${node.component}-${node.name}"
-      version = node.inputs.databaseVersion
+      version = try(element(split(":", node.inputs.type), 1), null)
     }
   }
 
@@ -210,13 +209,13 @@ For local development datacenters, you might use Docker-based databases:
 
 ```hcl
 database {
-  when = node.inputs.databaseType == "postgres"
+  when = element(split(":", node.inputs.type), 0) == "postgres"
 
   module "postgres" {
     build = "./modules/docker-postgres"
     inputs = {
       name    = "${node.component}-${node.name}"
-      version = node.inputs.databaseVersion
+      version = try(element(split(":", node.inputs.type), 1), null)
     }
   }
 

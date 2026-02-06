@@ -38,8 +38,7 @@ dependencies:
 
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       AUTH_SERVICE_URL: ${{ dependencies.auth.services.api.url }}
       AUTH_PUBLIC_URL: ${{ dependencies.auth.routes.public.url }}
@@ -114,14 +113,17 @@ variables:
     required: true
     sensitive: true
 
+builds:
+  api:
+    context: ./api
+
 databases:
   users:
     type: postgres:^15
 
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.users.url }}
       JWT_SECRET: ${{ variables.jwt_secret }}
@@ -156,22 +158,26 @@ variables:
     required: true
     sensitive: true
 
+builds:
+  api:
+    context: ./api
+  frontend:
+    context: ./frontend
+
 databases:
   main:
     type: postgres:^15
 
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
       AUTH_SERVICE_URL: ${{ dependencies.auth.services.api.url }}
       JWT_SECRET: ${{ variables.jwt_secret }}
 
   frontend:
-    build:
-      context: ./frontend
+    image: ${{ builds.frontend.image }}
     environment:
       API_URL: ${{ services.api.url }}
       AUTH_URL: ${{ dependencies.auth.routes.public.url }}
@@ -194,8 +200,7 @@ routes:
 
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.users.url }}
       JWT_SECRET: ${{ variables.jwt_secret }}

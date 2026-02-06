@@ -124,8 +124,8 @@ database {
     build = "./modules/do-managed-database"
     inputs = {
       name    = "${environment.name}-${node.name}"
-      type    = node.inputs.databaseType
-      version = node.inputs.databaseVersion
+      type    = element(split(":", node.inputs.type), 0)
+      version = try(element(split(":", node.inputs.type), 1), null)
       region  = variable.region
       size    = "db-s-1vcpu-1gb"
       token   = variable.do_token
@@ -141,10 +141,14 @@ database {
 }
 ```
 
-### Deployment Hook
+### Deployment Hook (Kubernetes)
+
+Container-based deployments run on Kubernetes:
 
 ```hcl
 deployment {
+  when = node.inputs.image != null
+
   module "deployment" {
     build = "./modules/k8s-deployment"
     inputs = merge(node.inputs, {
@@ -155,6 +159,31 @@ deployment {
 
   outputs = {
     id = module.deployment.deployment_id
+  }
+}
+```
+
+### Deployment Hook (Droplet VM)
+
+VM-based deployments use DigitalOcean Droplets for workloads with the `runtime` property:
+
+```hcl
+deployment {
+  when = node.inputs.runtime != null && node.inputs.image == null
+
+  module "droplet" {
+    plugin = "opentofu"
+    build  = "./modules/do-droplet"
+    inputs = merge(node.inputs, {
+      name                = "${environment.name}-${node.component}-${node.name}"
+      region              = variable.region
+      do_token            = variable.do_token
+      ssh_key_fingerprint = variable.ssh_key_fingerprint
+    })
+  }
+
+  outputs = {
+    id = module.droplet.droplet_id
   }
 }
 ```

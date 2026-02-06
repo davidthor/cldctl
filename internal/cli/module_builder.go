@@ -93,7 +93,7 @@ func collectAllModules(dc datacenter.Datacenter, dcPath string) map[string]modul
 
 		// Collect modules from hooks
 		collectHookModules(env.Hooks().Database(), modules, dcPath)
-		collectHookModules(env.Hooks().DatabaseMigration(), modules, dcPath)
+		collectHookModules(env.Hooks().Task(), modules, dcPath)
 		collectHookModules(env.Hooks().Bucket(), modules, dcPath)
 		collectHookModules(env.Hooks().EncryptionKey(), modules, dcPath)
 		collectHookModules(env.Hooks().SMTP(), modules, dcPath)

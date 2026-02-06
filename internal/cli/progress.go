@@ -3,13 +3,10 @@ package cli
 import (
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-
-	"golang.org/x/term"
 )
 
 // ResourceStatus represents the current status of a resource.
@@ -35,32 +32,28 @@ type ResourceInfo struct {
 	EndTime      time.Time
 	Error        error
 	Message      string
+	// InferredConfig stores detected configuration for debugging
+	InferredConfig map[string]string
+	// Logs stores captured output for debugging failures
+	Logs string
 }
 
-// ProgressTable displays and updates deployment progress.
+// ProgressTable displays deployment progress.
+// It shows an initial plan table, then tracks status silently for the final summary.
 type ProgressTable struct {
-	mu           sync.Mutex
-	resources    map[string]*ResourceInfo
-	order        []string // Maintains insertion order for display
-	writer       io.Writer
-	isTTY        bool
-	lastRender   int // Number of lines in last render
-	startTime    time.Time
-	headerPrinted bool
+	mu        sync.Mutex
+	resources map[string]*ResourceInfo
+	order     []string // Maintains insertion order for display
+	writer    io.Writer
+	startTime time.Time
 }
 
 // NewProgressTable creates a new progress table.
 func NewProgressTable(w io.Writer) *ProgressTable {
-	isTTY := false
-	if f, ok := w.(*os.File); ok {
-		isTTY = term.IsTerminal(int(f.Fd()))
-	}
-
 	return &ProgressTable{
 		resources: make(map[string]*ResourceInfo),
 		order:     []string{},
 		writer:    w,
-		isTTY:     isTTY,
 		startTime: time.Now(),
 	}
 }
@@ -88,24 +81,25 @@ func (p *ProgressTable) AddResource(id, name, resourceType, component string, de
 	}
 }
 
-// UpdateStatus updates the status of a resource.
+// UpdateStatus updates the status of a resource (tracked silently for final summary).
 func (p *ProgressTable) UpdateStatus(id string, status ResourceStatus, message string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if res, ok := p.resources[id]; ok {
-		res.Status = status
-		res.Message = message
-
-		if status == StatusInProgress && res.StartTime.IsZero() {
-			res.StartTime = time.Now()
-		}
-		if status == StatusCompleted || status == StatusFailed || status == StatusSkipped {
-			res.EndTime = time.Now()
-		}
+	res, ok := p.resources[id]
+	if !ok {
+		return
 	}
 
-	p.render()
+	res.Status = status
+	res.Message = message
+
+	if status == StatusInProgress && res.StartTime.IsZero() {
+		res.StartTime = time.Now()
+	}
+	if status == StatusCompleted || status == StatusFailed || status == StatusSkipped {
+		res.EndTime = time.Now()
+	}
 }
 
 // SetError sets an error for a resource.
@@ -113,93 +107,108 @@ func (p *ProgressTable) SetError(id string, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if res, ok := p.resources[id]; ok {
-		res.Status = StatusFailed
-		res.Error = err
-		res.EndTime = time.Now()
+	res, ok := p.resources[id]
+	if !ok {
+		return
 	}
 
-	p.render()
+	res.Status = StatusFailed
+	res.Error = err
+	res.EndTime = time.Now()
 }
 
-// Render displays the current state of all resources.
-func (p *ProgressTable) Render() {
+// SetInferredConfig stores the inferred configuration for a resource.
+func (p *ProgressTable) SetInferredConfig(id string, config map[string]string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.render()
-}
 
-func (p *ProgressTable) render() {
-	if p.isTTY {
-		p.renderTTY()
-	} else {
-		p.renderStream()
+	if res, ok := p.resources[id]; ok {
+		res.InferredConfig = config
 	}
 }
 
-func (p *ProgressTable) renderTTY() {
-	// Clear previous output
-	if p.lastRender > 0 {
-		// Move cursor up and clear lines
-		for i := 0; i < p.lastRender; i++ {
-			fmt.Fprintf(p.writer, "\033[A\033[K")
-		}
-	}
+// SetLogs stores captured logs for a resource.
+func (p *ProgressTable) SetLogs(id string, logs string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
-	lines := p.buildTable()
-	for _, line := range lines {
-		fmt.Fprintln(p.writer, line)
+	if res, ok := p.resources[id]; ok {
+		res.Logs = logs
 	}
-	p.lastRender = len(lines)
 }
 
-func (p *ProgressTable) renderStream() {
-	// For non-TTY, only print changes (status updates)
-	// This is handled by UpdateStatus printing individual lines
+// AppendLogs appends to the captured logs for a resource.
+func (p *ProgressTable) AppendLogs(id string, logs string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if res, ok := p.resources[id]; ok {
+		res.Logs += logs
+	}
 }
 
-// PrintInitial prints the initial table state (for both TTY and non-TTY).
+
+// PrintInitial prints the deployment plan showing what resources will be created.
 func (p *ProgressTable) PrintInitial() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if !p.headerPrinted {
-		fmt.Fprintln(p.writer)
-		fmt.Fprintln(p.writer, "Resource Deployment Progress:")
-		fmt.Fprintln(p.writer, strings.Repeat("─", 80))
-		p.headerPrinted = true
+	fmt.Fprintln(p.writer)
+	fmt.Fprintln(p.writer, "Deployment Plan:")
+	fmt.Fprintln(p.writer, strings.Repeat("─", 60))
+
+	// Group resources by type for cleaner display
+	byType := make(map[string][]*ResourceInfo)
+	for _, id := range p.order {
+		res := p.resources[id]
+		byType[res.Type] = append(byType[res.Type], res)
 	}
 
-	if p.isTTY {
-		lines := p.buildTable()
-		for _, line := range lines {
-			fmt.Fprintln(p.writer, line)
+	// Print in a logical order
+	typeOrder := []string{"database", "bucket", "build", "function", "deployment", "service", "route"}
+	for _, resType := range typeOrder {
+		resources := byType[resType]
+		if len(resources) == 0 {
+			continue
 		}
-		p.lastRender = len(lines)
-	} else {
-		// For non-TTY, print the resource list with initial status
-		for _, id := range p.order {
-			res := p.resources[id]
+		for _, res := range resources {
 			deps := ""
 			if len(res.Dependencies) > 0 {
 				depNames := p.getDependencyNames(res.Dependencies)
 				deps = fmt.Sprintf(" (depends on: %s)", strings.Join(depNames, ", "))
 			}
-			fmt.Fprintf(p.writer, "  %-12s %-30s %s%s\n",
-				formatResourceType(res.Type),
-				res.Name,
-				p.statusIcon(res.Status),
-				deps)
+			fmt.Fprintf(p.writer, "  + %-12s %s%s\n", res.Type, res.Name, deps)
 		}
 	}
-}
 
-// PrintUpdate prints a status update for a resource (used in non-TTY mode).
-func (p *ProgressTable) PrintUpdate(id string) {
-	if p.isTTY {
-		return // TTY mode uses full table re-render
+	// Print any types not in the standard order
+	for resType, resources := range byType {
+		found := false
+		for _, t := range typeOrder {
+			if t == resType {
+				found = true
+				break
+			}
+		}
+		if !found {
+			for _, res := range resources {
+				deps := ""
+				if len(res.Dependencies) > 0 {
+					depNames := p.getDependencyNames(res.Dependencies)
+					deps = fmt.Sprintf(" (depends on: %s)", strings.Join(depNames, ", "))
+				}
+				fmt.Fprintf(p.writer, "  + %-12s %s%s\n", res.Type, res.Name, deps)
+			}
+		}
 	}
 
+	fmt.Fprintln(p.writer, strings.Repeat("─", 60))
+	fmt.Fprintf(p.writer, "Total: %d resources\n", len(p.order))
+	fmt.Fprintln(p.writer)
+}
+
+// PrintUpdate prints a status update for a resource as a single line.
+func (p *ProgressTable) PrintUpdate(id string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -211,131 +220,25 @@ func (p *ProgressTable) PrintUpdate(id string) {
 	var statusStr string
 	switch res.Status {
 	case StatusInProgress:
-		statusStr = fmt.Sprintf("  %s Starting %s %q...", p.statusIcon(res.Status), res.Type, res.Name)
+		statusStr = fmt.Sprintf("%s Starting %s/%s...", p.statusIcon(res.Status), res.Type, res.Name)
 	case StatusCompleted:
 		duration := ""
 		if !res.EndTime.IsZero() && !res.StartTime.IsZero() {
 			duration = fmt.Sprintf(" (%s)", res.EndTime.Sub(res.StartTime).Round(time.Millisecond))
 		}
-		statusStr = fmt.Sprintf("  %s Completed %s %q%s", p.statusIcon(res.Status), res.Type, res.Name, duration)
-		if res.Message != "" {
-			statusStr += fmt.Sprintf(" - %s", res.Message)
-		}
+		statusStr = fmt.Sprintf("%s %s/%s completed%s", p.statusIcon(res.Status), res.Type, res.Name, duration)
 	case StatusFailed:
-		statusStr = fmt.Sprintf("  %s Failed %s %q", p.statusIcon(res.Status), res.Type, res.Name)
+		statusStr = fmt.Sprintf("%s %s/%s failed", p.statusIcon(res.Status), res.Type, res.Name)
 		if res.Error != nil {
 			statusStr += fmt.Sprintf(": %v", res.Error)
 		}
 	case StatusSkipped:
-		statusStr = fmt.Sprintf("  %s Skipped %s %q", p.statusIcon(res.Status), res.Type, res.Name)
-		if res.Message != "" {
-			statusStr += fmt.Sprintf(" - %s", res.Message)
-		}
+		statusStr = fmt.Sprintf("%s %s/%s skipped", p.statusIcon(res.Status), res.Type, res.Name)
 	default:
-		return // Don't print pending/waiting updates in stream mode
+		return // Don't print pending/waiting updates
 	}
 
 	fmt.Fprintln(p.writer, statusStr)
-}
-
-func (p *ProgressTable) buildTable() []string {
-	var lines []string
-
-	// Calculate column widths
-	maxType := 10
-	maxName := 20
-	maxStatus := 12
-
-	for _, id := range p.order {
-		res := p.resources[id]
-		if len(res.Type) > maxType {
-			maxType = len(res.Type)
-		}
-		if len(res.Name) > maxName {
-			maxName = len(res.Name)
-		}
-	}
-
-	// Cap maximums for readability
-	if maxType > 15 {
-		maxType = 15
-	}
-	if maxName > 35 {
-		maxName = 35
-	}
-
-	// Header
-	header := fmt.Sprintf("  %-*s  %-*s  %-*s  %s",
-		maxType, "TYPE",
-		maxName, "NAME",
-		maxStatus, "STATUS",
-		"DEPENDENCIES")
-	lines = append(lines, header)
-	lines = append(lines, "  "+strings.Repeat("─", maxType+maxName+maxStatus+30))
-
-	// Resources
-	for _, id := range p.order {
-		res := p.resources[id]
-
-		// Truncate if needed
-		typeName := res.Type
-		if len(typeName) > maxType {
-			typeName = typeName[:maxType-2] + ".."
-		}
-		name := res.Name
-		if len(name) > maxName {
-			name = name[:maxName-2] + ".."
-		}
-
-		statusStr := p.formatStatus(res)
-
-		// Dependencies column
-		deps := "-"
-		if len(res.Dependencies) > 0 {
-			depNames := p.getDependencyNames(res.Dependencies)
-			deps = strings.Join(depNames, ", ")
-			if len(deps) > 30 {
-				deps = deps[:27] + "..."
-			}
-		}
-
-		line := fmt.Sprintf("  %-*s  %-*s  %-*s  %s",
-			maxType, typeName,
-			maxName, name,
-			maxStatus, statusStr,
-			deps)
-		lines = append(lines, line)
-	}
-
-	// Summary line
-	lines = append(lines, "  "+strings.Repeat("─", maxType+maxName+maxStatus+30))
-	summary := p.buildSummary()
-	lines = append(lines, "  "+summary)
-
-	return lines
-}
-
-func (p *ProgressTable) formatStatus(res *ResourceInfo) string {
-	icon := p.statusIcon(res.Status)
-	var status string
-
-	switch res.Status {
-	case StatusPending:
-		status = "Pending"
-	case StatusWaiting:
-		status = "Waiting"
-	case StatusInProgress:
-		elapsed := time.Since(res.StartTime).Round(time.Second)
-		status = fmt.Sprintf("Running %s", elapsed)
-	case StatusCompleted:
-		status = "Done"
-	case StatusFailed:
-		status = "Failed"
-	case StatusSkipped:
-		status = "Skipped"
-	}
-
-	return fmt.Sprintf("%s %s", icon, status)
 }
 
 func (p *ProgressTable) statusIcon(status ResourceStatus) string {
@@ -375,56 +278,6 @@ func (p *ProgressTable) getDependencyNames(depIDs []string) []string {
 	return names
 }
 
-func (p *ProgressTable) buildSummary() string {
-	var pending, waiting, running, completed, failed, skipped int
-
-	for _, res := range p.resources {
-		switch res.Status {
-		case StatusPending:
-			pending++
-		case StatusWaiting:
-			waiting++
-		case StatusInProgress:
-			running++
-		case StatusCompleted:
-			completed++
-		case StatusFailed:
-			failed++
-		case StatusSkipped:
-			skipped++
-		}
-	}
-
-	total := len(p.resources)
-	elapsed := time.Since(p.startTime).Round(time.Second)
-
-	parts := []string{}
-	if completed > 0 {
-		parts = append(parts, fmt.Sprintf("● %d completed", completed))
-	}
-	if running > 0 {
-		parts = append(parts, fmt.Sprintf("◐ %d running", running))
-	}
-	if waiting > 0 {
-		parts = append(parts, fmt.Sprintf("◔ %d waiting", waiting))
-	}
-	if pending > 0 {
-		parts = append(parts, fmt.Sprintf("○ %d pending", pending))
-	}
-	if failed > 0 {
-		parts = append(parts, fmt.Sprintf("✗ %d failed", failed))
-	}
-	if skipped > 0 {
-		parts = append(parts, fmt.Sprintf("◌ %d skipped", skipped))
-	}
-
-	return fmt.Sprintf("%s  |  %d/%d resources  |  %s elapsed",
-		strings.Join(parts, "  "),
-		completed+failed+skipped,
-		total,
-		elapsed)
-}
-
 // PrintFinalSummary prints the final deployment summary.
 func (p *ProgressTable) PrintFinalSummary() {
 	p.mu.Lock()
@@ -451,16 +304,48 @@ func (p *ProgressTable) PrintFinalSummary() {
 		fmt.Fprintf(p.writer, "Deployment completed with errors in %s\n", elapsed)
 		fmt.Fprintf(p.writer, "  ● %d succeeded, ✗ %d failed, ◌ %d skipped\n", completed, failed, skipped)
 
-		// List failed resources
+		// List failed resources with detailed information
 		fmt.Fprintln(p.writer, "\nFailed resources:")
 		for _, id := range p.order {
 			res := p.resources[id]
 			if res.Status == StatusFailed {
-				fmt.Fprintf(p.writer, "  ✗ %s %q", res.Type, res.Name)
+				fmt.Fprintf(p.writer, "\n  ✗ %s %q", res.Type, res.Name)
 				if res.Error != nil {
 					fmt.Fprintf(p.writer, ": %v", res.Error)
 				}
 				fmt.Fprintln(p.writer)
+
+				// Show inferred configuration if available
+				if len(res.InferredConfig) > 0 {
+					fmt.Fprintln(p.writer, "\n    Inferred configuration:")
+					// Sort keys for consistent output
+					keys := make([]string, 0, len(res.InferredConfig))
+					for k := range res.InferredConfig {
+						keys = append(keys, k)
+					}
+					sort.Strings(keys)
+					for _, k := range keys {
+						v := res.InferredConfig[k]
+						if v != "" {
+							fmt.Fprintf(p.writer, "      %s: %s\n", k, v)
+						}
+					}
+				}
+
+				// Show logs if available
+				if res.Logs != "" {
+					fmt.Fprintln(p.writer, "\n    Output:")
+					lines := strings.Split(strings.TrimSpace(res.Logs), "\n")
+					// Limit to last 30 lines to avoid overwhelming output
+					startIdx := 0
+					if len(lines) > 30 {
+						startIdx = len(lines) - 30
+						fmt.Fprintf(p.writer, "      ... (%d lines truncated)\n", startIdx)
+					}
+					for _, line := range lines[startIdx:] {
+						fmt.Fprintf(p.writer, "      %s\n", line)
+					}
+				}
 			}
 		}
 	} else {

@@ -26,8 +26,8 @@ func TestNewUpCmd(t *testing.T) {
 func TestUpCmd_Flags(t *testing.T) {
 	cmd := newUpCmd()
 
-	// Check optional flags
-	flags := []string{"file", "name", "var", "var-file", "detach", "no-open", "port"}
+	// Check flags including required datacenter
+	flags := []string{"file", "datacenter", "name", "var", "var-file", "detach", "no-open", "port"}
 	for _, flagName := range flags {
 		if cmd.Flags().Lookup(flagName) == nil {
 			t.Errorf("expected --%s flag", flagName)
@@ -42,7 +42,23 @@ func TestUpCmd_Flags(t *testing.T) {
 		t.Error("expected -n shorthand for --name")
 	}
 	if cmd.Flags().ShorthandLookup("d") == nil {
-		t.Error("expected -d shorthand for --detach")
+		t.Error("expected -d shorthand for --datacenter")
+	}
+}
+
+func TestUpCmd_RequiredFlags(t *testing.T) {
+	cmd := newUpCmd()
+
+	// Check that datacenter is required
+	dcFlag := cmd.Flags().Lookup("datacenter")
+	if dcFlag == nil {
+		t.Fatal("expected --datacenter flag")
+	}
+
+	// Check the required annotation
+	annotations := dcFlag.Annotations
+	if _, ok := annotations["cobra_annotation_bash_completion_one_required_flag"]; !ok {
+		t.Error("expected --datacenter to be marked as required")
 	}
 }
 

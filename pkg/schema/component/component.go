@@ -11,6 +11,9 @@ type Component interface {
 	// Metadata
 	Readme() string // README content loaded from README.md if present
 
+	// Build artifacts
+	Builds() []ComponentBuild
+
 	// Resources
 	Databases() []Database
 	Buckets() []Bucket
@@ -39,6 +42,16 @@ type Component interface {
 
 	// Internal access (for engine use)
 	Internal() *internal.InternalComponent
+}
+
+// ComponentBuild represents a top-level named Docker build configuration.
+// Deployments reference the built image via ${{ builds.<name>.image }}.
+type ComponentBuild interface {
+	Name() string
+	Context() string
+	Dockerfile() string
+	Target() string
+	Args() map[string]string
 }
 
 // Database represents a database requirement.
@@ -89,19 +102,32 @@ type SMTPConnection interface {
 }
 
 // Deployment represents a deployment workload.
+// Image is optional. When absent, the datacenter decides how to execute
+// (e.g., as a host process for local development).
 type Deployment interface {
 	Name() string
 	Image() string
-	Build() Build
+	Runtime() Runtime
 	Command() []string
 	Entrypoint() []string
 	Environment() map[string]string
+	WorkingDirectory() string
 	CPU() string
 	Memory() string
 	Replicas() int
 	Volumes() []Volume
 	LivenessProbe() Probe
 	ReadinessProbe() Probe
+}
+
+// Runtime describes the runtime environment for a deployment.
+// When present without an image, the datacenter can provision a VM or managed runtime.
+type Runtime interface {
+	Language() string  // Required: language and version (e.g., "node:20", "python:^3.12")
+	OS() string        // Optional: target OS (default: linux)
+	Arch() string      // Optional: target architecture
+	Packages() []string // Optional: system-level dependencies
+	Setup() []string    // Optional: provisioning commands
 }
 
 // Function represents a serverless function.

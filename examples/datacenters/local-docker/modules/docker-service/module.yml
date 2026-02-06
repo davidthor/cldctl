@@ -28,16 +28,17 @@ inputs:
     default: "localhost"
     description: Host for service URL
 
-# Services in local mode are just lookups - the container/process already exposes the port
-# This module resolves the actual port from the target
+# Services in local mode are just configuration - they define the port that deployments
+# should listen on. The executor injects the PORT env var into deployments based on
+# their associated service.
 
 outputs:
   host:
     value: "${inputs.host}"
     description: Service host
   port:
-    value: "${lookup_port(inputs.target, inputs.port)}"
+    value: "${inputs.port}"
     description: Service port
   url:
-    value: "${inputs.protocol}://${inputs.host}:${lookup_port(inputs.target, inputs.port)}"
+    value: "${inputs.protocol}://${inputs.host}:${inputs.port}"
     description: Full service URL

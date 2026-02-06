@@ -1,0 +1,13 @@
+# Production config: extends dev, adds Docker build
+extends: ./dev.yml
+
+builds:
+  api:
+    context: .
+
+deployments:
+  api:
+    image: ${{ builds.api.image }}
+    command: ["npm", "start"]
+    environment:
+      NODE_ENV: production

@@ -38,6 +38,11 @@ mkdir my-app && cd my-app
 Create an `architect.yml` file that describes your application:
 
 ```yaml architect.yml
+# Define Docker image builds
+builds:
+  api:
+    context: .
+
 # Declare a PostgreSQL database
 databases:
   main:
@@ -46,8 +51,7 @@ databases:
 # Define your application deployment
 deployments:
   api:
-    build:
-      context: .
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
       PORT: "8080"

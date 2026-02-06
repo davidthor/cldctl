@@ -124,8 +124,8 @@ database {
     build = "./modules/rds-database"
     inputs = {
       name              = "${environment.name}-${node.name}"
-      type              = node.inputs.databaseType
-      version           = node.inputs.databaseVersion
+      type              = element(split(":", node.inputs.type), 0)
+      version           = try(element(split(":", node.inputs.type), 1), null)
       region            = variable.aws_region
       vpc_id            = variable.vpc_id
       instance_class    = "db.t3.micro"
@@ -145,8 +145,12 @@ database {
 
 ### Deployment Hook (ECS Service)
 
+Container-based deployments run on ECS Fargate:
+
 ```hcl
 deployment {
+  when = node.inputs.image != null
+
   module "ecs_service" {
     build = "./modules/ecs-service"
     inputs = merge(node.inputs, {
@@ -162,6 +166,33 @@ deployment {
   }
 }
 ```
+
+### Deployment Hook (EC2 VM)
+
+VM-based deployments use EC2 instances for workloads with the `runtime` property:
+
+```hcl
+deployment {
+  when = node.inputs.runtime != null && node.inputs.image == null
+
+  module "ec2_vm" {
+    plugin = "opentofu"
+    build  = "./modules/ec2-vm"
+    inputs = merge(node.inputs, {
+      name           = "${environment.name}-${node.component}-${node.name}"
+      subnet_id      = module.network.subnet_id
+      security_group = module.security_group.id
+      key_pair       = variable.ssh_key_pair
+    })
+  }
+
+  outputs = {
+    id = module.ec2_vm.instance_id
+  }
+}
+```
+
+The EC2 VM module translates the portable `runtime` inputs into cloud-specific provisioning: selecting an AMI, installing the language runtime, system packages, running setup commands, and creating a systemd service.
 
 ### Function Hook (Lambda)
 

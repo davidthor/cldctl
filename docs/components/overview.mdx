@@ -14,6 +14,12 @@ Components are developer-focused application bundles defined in an `architect.ym
 # Component name is determined by the OCI tag at build time
 # README.md (if present) is bundled into the artifact for registry documentation
 
+# Inheritance
+extends: string                    # Path to base component file
+
+# Docker image builds
+builds: map<string, Build>
+
 # Application resources
 databases: map<string, Database>
 buckets: map<string, Bucket>
@@ -48,7 +54,7 @@ Components support a variety of resource types to define your application:
     Email sending capabilities
   </Card>
   <Card title="Deployments" icon="server" href="/components/deployments">
-    Long-running container workloads
+    Long-running container, VM, or process workloads
   </Card>
   <Card title="Functions" icon="bolt" href="/components/functions">
     Serverless auto-scaling workloads
@@ -74,6 +80,7 @@ Components use the `${{ ... }}` expression syntax to reference values:
 ```yaml
 deployments:
   api:
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
       REDIS_URL: ${{ databases.cache.url }}
@@ -103,10 +110,13 @@ buckets:
   uploads:
     type: s3
 
+builds:
+  api:
+    context: ./api
+
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
       REDIS_URL: ${{ databases.cache.url }}

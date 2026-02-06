@@ -337,7 +337,7 @@ func (p *Parser) parseEnvironment(block *hcl.Block) (*EnvironmentBlockV1, hcl.Di
 		Blocks: []hcl.BlockHeaderSchema{
 			{Type: "module", LabelNames: []string{"name"}},
 			{Type: "database"},
-			{Type: "databaseMigration"},
+			{Type: "task"},
 			{Type: "bucket"},
 			{Type: "encryptionKey"},
 			{Type: "smtp"},
@@ -371,7 +371,7 @@ func (p *Parser) parseEnvironment(block *hcl.Block) (*EnvironmentBlockV1, hcl.Di
 	// Parse hooks
 	hookTypes := map[string]*[]HookBlockV1{
 		"database":          &env.DatabaseHooks,
-		"databaseMigration": &env.DatabaseMigrationHooks,
+		"task":              &env.TaskHooks,
 		"bucket":            &env.BucketHooks,
 		"encryptionKey":     &env.EncryptionKeyHooks,
 		"smtp":              &env.SMTPHooks,

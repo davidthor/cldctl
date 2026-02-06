@@ -247,37 +247,31 @@ Examples:
 					progress.AddResource(id, bucket.Name(), "bucket", componentName, nil)
 				}
 
-				var workloadDeps []string
 				for _, fn := range comp.Functions() {
 					id := fmt.Sprintf("%s/function/%s", componentName, fn.Name())
 					progress.AddResource(id, fn.Name(), "function", componentName, dbDeps)
-					workloadDeps = append(workloadDeps, id)
 				}
 
 				for _, depl := range comp.Deployments() {
 					id := fmt.Sprintf("%s/deployment/%s", componentName, depl.Name())
 					progress.AddResource(id, depl.Name(), "deployment", componentName, dbDeps)
-					workloadDeps = append(workloadDeps, id)
 				}
 
+				// Services have no dependencies - they can be created in parallel with deployments
 				for _, svc := range comp.Services() {
 					id := fmt.Sprintf("%s/service/%s", componentName, svc.Name())
-					progress.AddResource(id, svc.Name(), "service", componentName, workloadDeps)
+					progress.AddResource(id, svc.Name(), "service", componentName, nil)
 				}
 
+				// Routes have no dependencies - they can be created in parallel
 				for _, route := range comp.Routes() {
 					id := fmt.Sprintf("%s/route/%s", componentName, route.Name())
-					var routeDeps []string
-					if route.Service() != "" {
-						routeDeps = append(routeDeps, fmt.Sprintf("%s/service/%s", componentName, route.Service()))
-					} else if route.Function() != "" {
-						routeDeps = append(routeDeps, fmt.Sprintf("%s/function/%s", componentName, route.Function()))
-					}
-					progress.AddResource(id, route.Name(), "route", componentName, routeDeps)
+					progress.AddResource(id, route.Name(), "route", componentName, nil)
 				}
 
 				// Print initial progress table
 				progress.PrintInitial()
+
 			}
 
 			// Create progress callback
@@ -461,13 +455,24 @@ Examples:
 			fmt.Println()
 			fmt.Printf("[deploy] Deploying datacenter %q...\n", dcName)
 
+			// Resolve the config reference to an absolute path if it's a local path
+			// This ensures the datacenter can be loaded from any working directory later
+			resolvedRef := configRef
+			if isLocalPath {
+				absPath, err := filepath.Abs(configRef)
+				if err != nil {
+					return fmt.Errorf("failed to resolve absolute path: %w", err)
+				}
+				resolvedRef = absPath
+			}
+
 			// Create or update datacenter state
 			// Note: Datacenter "deployment" registers the datacenter configuration so it can
 			// be used by environments. Datacenter modules are hooks that get executed when
 			// components are deployed to environments that use this datacenter.
 			dcState := &types.DatacenterState{
 				Name:      dcName,
-				Version:   configRef,
+				Version:   resolvedRef,
 				Variables: vars,
 				Modules:   make(map[string]*types.ModuleState),
 				CreatedAt: time.Now(),

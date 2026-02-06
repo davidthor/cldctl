@@ -32,12 +32,16 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 	// Add databases
 	for _, db := range comp.Databases() {
 		node := NewNode(NodeTypeDatabase, componentName, db.Name())
-		node.SetInput("databaseType", db.Type())
-		node.SetInput("databaseVersion", extractVersion(db.Type()))
+		// Pass the type in the same format as the component schema (e.g., "postgres:^16")
+		typeStr := db.Type()
+		if db.Version() != "" {
+			typeStr = typeStr + ":" + db.Version()
+		}
+		node.SetInput("type", typeStr)
 
 		// Add migration node if migrations defined
 		if db.Migrations() != nil {
-			migNode := NewNode(NodeTypeMigration, componentName, db.Name()+"-migration")
+			migNode := NewNode(NodeTypeTask, componentName, db.Name()+"-migration")
 			migNode.SetInput("database", db.Name())
 			if db.Migrations().Image() != "" {
 				migNode.SetInput("image", db.Migrations().Image())
@@ -68,6 +72,17 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		_ = b.graph.AddNode(node)
 	}
 
+	// Add top-level builds
+	for _, build := range comp.Builds() {
+		buildNode := NewNode(NodeTypeDockerBuild, componentName, build.Name())
+		buildNode.SetInput("context", resolveBuildContext(compDir, build.Context()))
+		buildNode.SetInput("dockerfile", resolveBuildContext(compDir, build.Dockerfile()))
+		buildNode.SetInput("target", build.Target())
+		buildNode.SetInput("args", build.Args())
+
+		_ = b.graph.AddNode(buildNode)
+	}
+
 	// Add buckets
 	for _, bucket := range comp.Buckets() {
 		node := NewNode(NodeTypeBucket, componentName, bucket.Name())
@@ -85,38 +100,41 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		if deploy.Image() != "" {
 			node.SetInput("image", deploy.Image())
 		}
+		if deploy.Runtime() != nil {
+			rt := deploy.Runtime()
+			runtimeMap := map[string]interface{}{
+				"language": rt.Language(),
+			}
+			if rt.OS() != "" {
+				runtimeMap["os"] = rt.OS()
+			}
+			if rt.Arch() != "" {
+				runtimeMap["arch"] = rt.Arch()
+			}
+			if len(rt.Packages()) > 0 {
+				runtimeMap["packages"] = rt.Packages()
+			}
+			if len(rt.Setup()) > 0 {
+				runtimeMap["setup"] = rt.Setup()
+			}
+			node.SetInput("runtime", runtimeMap)
+		}
 		node.SetInput("command", deploy.Command())
 		node.SetInput("entrypoint", deploy.Entrypoint())
 		node.SetInput("environment", deploy.Environment())
 		node.SetInput("cpu", deploy.CPU())
 		node.SetInput("memory", deploy.Memory())
 		node.SetInput("replicas", deploy.Replicas())
+		node.SetInput("liveness_probe", deploy.LivenessProbe())
 
-		// If has build, add docker build node
-		if deploy.Build() != nil {
-			buildNode := NewNode(NodeTypeDockerBuild, componentName, deploy.Name()+"-build")
-			buildNode.SetInput("context", resolveBuildContext(compDir, deploy.Build().Context()))
-			buildNode.SetInput("dockerfile", resolveBuildContext(compDir, deploy.Build().Dockerfile()))
-			buildNode.SetInput("target", deploy.Build().Target())
-			buildNode.SetInput("args", deploy.Build().Args())
-
-			node.AddDependency(buildNode.ID)
-			buildNode.AddDependent(node.ID)
-
-			_ = b.graph.AddNode(buildNode)
+		// Set working directory: explicit value or default to component directory
+		if deploy.WorkingDirectory() != "" {
+			node.SetInput("workingDirectory", resolveBuildContext(compDir, deploy.WorkingDirectory()))
+		} else {
+			node.SetInput("workingDirectory", compDir)
 		}
 
-		// Parse environment for dependencies
-		for _, value := range deploy.Environment() {
-			deps := extractDependencies(value)
-			for _, dep := range deps {
-				depNodeID := b.resolveDepReference(componentName, dep)
-				if depNodeID != "" {
-					node.AddDependency(depNodeID)
-				}
-			}
-		}
-
+		// Parse environment for dependencies (deferred until all nodes are added)
 		_ = b.graph.AddNode(node)
 	}
 
@@ -134,7 +152,9 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		// Handle discriminated union
 		if fn.IsSourceBased() {
 			src := fn.Src()
-			node.SetInput("srcPath", src.Path())
+			// Resolve srcPath relative to component directory so processes run
+			// in the correct location (important for OCI-pulled components too)
+			node.SetInput("srcPath", resolveBuildContext(compDir, src.Path()))
 			node.SetInput("language", src.Language())
 			node.SetInput("runtime", src.Runtime())
 			node.SetInput("framework", src.Framework())
@@ -163,33 +183,21 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 			}
 		}
 
-		// Parse environment for dependencies
-		for _, value := range fn.Environment() {
-			deps := extractDependencies(value)
-			for _, dep := range deps {
-				depNodeID := b.resolveDepReference(componentName, dep)
-				if depNodeID != "" {
-					node.AddDependency(depNodeID)
-				}
-			}
-		}
-
+		// Parse environment for dependencies (deferred until all nodes are added)
 		_ = b.graph.AddNode(node)
 	}
 
 	// Add services (for deployments only - functions don't need services)
+	// Note: Services do NOT depend on deployments - they can be created in parallel.
+	// In Kubernetes and similar platforms, a Service is a stable networking abstraction
+	// that routes to pods matching a selector. The pods don't need to exist yet.
 	for _, svc := range comp.Services() {
 		node := NewNode(NodeTypeService, componentName, svc.Name())
 		node.SetInput("port", svc.Port())
 		node.SetInput("protocol", svc.Protocol())
 
-		// Service depends on its deployment
+		// Record target info for the service hook (but no dependency)
 		if svc.Deployment() != "" {
-			targetID := fmt.Sprintf("%s/deployment/%s", componentName, svc.Deployment())
-			node.AddDependency(targetID)
-			if target := b.graph.GetNode(targetID); target != nil {
-				target.AddDependent(node.ID)
-			}
 			node.SetInput("target", svc.Deployment())
 			node.SetInput("targetType", "deployment")
 		}
@@ -198,48 +206,34 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 	}
 
 	// Add routes
+	// Note: Routes do NOT depend on services/functions - they can be created in parallel.
+	// Routes are ingress configuration that can exist before backends are ready.
+	// This also avoids cycles when workloads reference their own route URLs in env vars.
 	for _, route := range comp.Routes() {
 		node := NewNode(NodeTypeRoute, componentName, route.Name())
 		node.SetInput("type", route.Type())
 		node.SetInput("internal", route.Internal())
 		node.SetInput("rules", route.Rules())
 
-		// Routes can depend on services or functions
-		// Check simplified form first
+		// Record target info for the route hook (but no dependency)
 		if route.Service() != "" {
-			targetID := fmt.Sprintf("%s/service/%s", componentName, route.Service())
-			node.AddDependency(targetID)
-			if target := b.graph.GetNode(targetID); target != nil {
-				target.AddDependent(node.ID)
-			}
 			node.SetInput("target", route.Service())
 			node.SetInput("targetType", "service")
 		} else if route.Function() != "" {
-			targetID := fmt.Sprintf("%s/function/%s", componentName, route.Function())
-			node.AddDependency(targetID)
-			if target := b.graph.GetNode(targetID); target != nil {
-				target.AddDependent(node.ID)
-			}
 			node.SetInput("target", route.Function())
 			node.SetInput("targetType", "function")
 		}
 
-		// Check rules form
+		// Check rules form for target info
 		for _, rule := range route.Rules() {
 			for _, backend := range rule.BackendRefs() {
 				if backend.Service() != "" {
-					targetID := fmt.Sprintf("%s/service/%s", componentName, backend.Service())
-					node.AddDependency(targetID)
-					if target := b.graph.GetNode(targetID); target != nil {
-						target.AddDependent(node.ID)
-					}
+					node.SetInput("target", backend.Service())
+					node.SetInput("targetType", "service")
 				}
 				if backend.Function() != "" {
-					targetID := fmt.Sprintf("%s/function/%s", componentName, backend.Function())
-					node.AddDependency(targetID)
-					if target := b.graph.GetNode(targetID); target != nil {
-						target.AddDependent(node.ID)
-					}
+					node.SetInput("target", backend.Function())
+					node.SetInput("targetType", "function")
 				}
 			}
 		}
@@ -273,35 +267,85 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 			_ = b.graph.AddNode(buildNode)
 		}
 
-		// Parse environment for dependencies
-		for _, value := range cron.Environment() {
-			deps := extractDependencies(value)
-			for _, dep := range deps {
-				depNodeID := b.resolveDepReference(componentName, dep)
-				if depNodeID != "" {
-					node.AddDependency(depNodeID)
-				}
-			}
-		}
-
 		_ = b.graph.AddNode(node)
+	}
+
+	// Second pass: Parse environment variables and other expression-capable fields for dependencies.
+	// This must happen AFTER all nodes are added so we can set up bidirectional relationships.
+	for _, deploy := range comp.Deployments() {
+		nodeID := fmt.Sprintf("%s/%s/%s", componentName, NodeTypeDeployment, deploy.Name())
+		node := b.graph.GetNode(nodeID)
+		if node == nil {
+			continue
+		}
+		for _, value := range deploy.Environment() {
+			b.addEnvDependencies(componentName, node, value)
+		}
+		// Scan image field for expressions like ${{ builds.api.image }}
+		if deploy.Image() != "" {
+			b.addEnvDependencies(componentName, node, deploy.Image())
+		}
+	}
+
+	for _, fn := range comp.Functions() {
+		nodeID := fmt.Sprintf("%s/%s/%s", componentName, NodeTypeFunction, fn.Name())
+		node := b.graph.GetNode(nodeID)
+		if node == nil {
+			continue
+		}
+		for _, value := range fn.Environment() {
+			b.addEnvDependencies(componentName, node, value)
+		}
+	}
+
+	for _, cron := range comp.Cronjobs() {
+		nodeID := fmt.Sprintf("%s/%s/%s", componentName, NodeTypeCronjob, cron.Name())
+		node := b.graph.GetNode(nodeID)
+		if node == nil {
+			continue
+		}
+		for _, value := range cron.Environment() {
+			b.addEnvDependencies(componentName, node, value)
+		}
 	}
 
 	return nil
 }
 
+// addEnvDependencies parses an environment variable value and adds dependencies
+// with proper bidirectional relationships.
+func (b *Builder) addEnvDependencies(componentName string, node *Node, value string) {
+	deps := extractDependencies(value)
+	for _, dep := range deps {
+		depNodeID := b.resolveDepReference(componentName, dep)
+		if depNodeID == "" {
+			continue
+		}
+		// Only add dependency if target node exists
+		depNode := b.graph.GetNode(depNodeID)
+		if depNode == nil {
+			continue
+		}
+		// Add bidirectional relationship
+		node.AddDependency(depNodeID)
+		depNode.AddDependent(node.ID)
+
+		// Also depend on any task nodes that depend on this resource.
+		// This ensures tasks (e.g., database migrations) complete before
+		// workloads that consume the same resource start.
+		for _, dependentID := range depNode.DependedOnBy {
+			taskNode := b.graph.GetNode(dependentID)
+			if taskNode != nil && taskNode.Type == NodeTypeTask {
+				node.AddDependency(dependentID)
+				taskNode.AddDependent(node.ID)
+			}
+		}
+	}
+}
+
 // Build returns the completed graph.
 func (b *Builder) Build() *Graph {
 	return b.graph
-}
-
-// extractVersion extracts version from type string like "postgres:^15"
-func extractVersion(typeStr string) string {
-	parts := strings.Split(typeStr, ":")
-	if len(parts) > 1 {
-		return strings.TrimPrefix(parts[1], "^")
-	}
-	return ""
 }
 
 // extractDependencies finds ${{ }} references in a string
@@ -340,6 +384,8 @@ func (b *Builder) resolveDepReference(componentName, ref string) string {
 		nodeType = NodeTypeRoute
 	case "functions":
 		nodeType = NodeTypeFunction
+	case "builds":
+		nodeType = NodeTypeDockerBuild
 	default:
 		return ""
 	}

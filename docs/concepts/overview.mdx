@@ -28,7 +28,7 @@ Components are **developer-focused application bundles**. They describe what you
 A component declares:
 - **Databases** - Data storage requirements (PostgreSQL, Redis, etc.)
 - **Buckets** - Object storage needs (S3-compatible)
-- **Deployments** - Long-running workloads (APIs, workers)
+- **Deployments** - Long-running workloads (containers, VMs, or processes)
 - **Functions** - Serverless compute (Next.js, Lambda handlers)
 - **Services** - Internal networking between workloads
 - **Routes** - External traffic ingress (HTTP, gRPC)
@@ -38,14 +38,17 @@ A component declares:
 
 ```yaml
 # architect.yml - Developer writes this
+builds:
+  api:
+    context: ./api
+
 databases:
   main:
     type: postgres:^15
 
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
 ```
@@ -72,7 +75,7 @@ variable "region" {
 
 environment {
   database {
-    when = node.inputs.databaseType == "postgres"
+    when = element(split(":", node.inputs.type), 0) == "postgres"
 
     module "rds" {
       build = "./modules/rds-postgres"

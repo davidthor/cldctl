@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -78,6 +80,12 @@ func (p *Plugin) Apply(ctx context.Context, opts iac.RunOptions) (*iac.ApplyResu
 	}
 
 	for name, resource := range module.Resources {
+		// Check for context cancellation before each resource
+		if ctx.Err() != nil {
+			p.rollback(ctx, state)
+			return nil, ctx.Err()
+		}
+
 		resourceState, err := p.applyResource(ctx, name, resource, evalCtx, existingState)
 		if err != nil {
 			// Rollback on failure
@@ -128,7 +136,9 @@ func (p *Plugin) Destroy(ctx context.Context, opts iac.RunOptions) error {
 	for name, rs := range state.Resources {
 		if destroyErr := p.destroyResource(ctx, name, rs); destroyErr != nil {
 			// Log but continue destroying other resources
-			fmt.Fprintf(opts.Stderr, "warning: failed to destroy %s: %v\n", name, destroyErr)
+			if opts.Stderr != nil {
+				fmt.Fprintf(opts.Stderr, "warning: failed to destroy %s: %v\n", name, destroyErr)
+			}
 		}
 	}
 
@@ -186,6 +196,8 @@ func (p *Plugin) applyResource(ctx context.Context, name string, resource Resour
 		return p.applyDockerNetwork(ctx, name, props, existing)
 	case "docker:volume":
 		return p.applyDockerVolume(ctx, name, props, existing)
+	case "docker:build":
+		return p.applyDockerBuild(ctx, name, props, existing)
 	case "process":
 		return p.applyProcess(ctx, name, props, existing)
 	case "exec":
@@ -209,6 +221,12 @@ func (p *Plugin) destroyResource(ctx context.Context, name string, rs *ResourceS
 		if id, ok := rs.ID.(string); ok {
 			return p.docker.RemoveVolume(ctx, id)
 		}
+	case "docker:build":
+		// Optionally remove the built image
+		if imageID, ok := rs.ID.(string); ok && imageID != "" {
+			_ = p.docker.RemoveImage(ctx, imageID, false)
+		}
+		return nil
 	case "process":
 		if processName, ok := rs.ID.(string); ok {
 			return p.process.StopProcess(processName, 10*time.Second)
@@ -226,25 +244,13 @@ func (p *Plugin) rollback(ctx context.Context, state *State) {
 }
 
 func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props map[string]interface{}, existing *State) (*ResourceState, error) {
-	// Check if container already exists and is running
-	if existing != nil {
-		if rs, ok := existing.Resources[name]; ok {
-			if containerID, ok := rs.ID.(string); ok {
-				running, err := p.docker.IsContainerRunning(ctx, containerID)
-				if err == nil && running {
-					// Container still running, reuse it
-					return rs, nil
-				}
-				// Container stopped or missing, remove it
-				_ = p.docker.RemoveContainer(ctx, containerID)
-			}
-		}
-	}
+	containerName := getString(props, "name")
+	desiredImage := getString(props, "image")
 
-	// Create and start container
+	// Build desired options for comparison
 	opts := ContainerOptions{
-		Image:       getString(props, "image"),
-		Name:        getString(props, "name"),
+		Image:       desiredImage,
+		Name:        containerName,
 		Command:     getStringSlice(props, "command"),
 		Entrypoint:  getStringSlice(props, "entrypoint"),
 		Environment: getStringMap(props, "environment"),
@@ -254,6 +260,50 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 		Restart:     getString(props, "restart"),
 	}
 
+	// Check if container already exists and is running (from state)
+	if existing != nil {
+		if rs, ok := existing.Resources[name]; ok {
+			if containerID, ok := rs.ID.(string); ok {
+				running, err := p.docker.IsContainerRunning(ctx, containerID)
+				if err == nil && running {
+					// Check if container config matches what we want
+					if p.docker.ContainerMatchesConfig(ctx, containerID, opts) {
+						// Container still running with same config, reuse it
+						return rs, nil
+					}
+				}
+				// Container stopped, missing, or config changed - remove it
+				_ = p.docker.RemoveContainer(ctx, containerID)
+			}
+		}
+	}
+
+	// Also check by container name in case state was lost but container exists
+	// This handles orphaned containers from failed previous runs
+	if containerName != "" {
+		if existingID, _ := p.docker.GetContainerByName(ctx, containerName); existingID != "" {
+			running, _ := p.docker.IsContainerRunning(ctx, existingID)
+			if running && p.docker.ContainerMatchesConfig(ctx, existingID, opts) {
+				// Existing container matches config, reuse it
+				info, err := p.docker.InspectContainer(ctx, existingID)
+				if err == nil {
+					return &ResourceState{
+						Type:       "docker:container",
+						ID:         existingID,
+						Properties: props,
+						Outputs: map[string]interface{}{
+							"container_id": existingID,
+							"ports":        info.Ports,
+						},
+					}, nil
+				}
+			}
+			// Config changed or container not running, remove it
+			_ = p.docker.RemoveContainer(ctx, existingID)
+		}
+	}
+
+	// Create and start container
 	containerID, err := p.docker.RunContainer(ctx, opts)
 	if err != nil {
 		return nil, err
@@ -273,6 +323,8 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 		Outputs: map[string]interface{}{
 			"container_id": containerID,
 			"ports":        info.Ports,
+			"environment":  opts.Environment, // Include environment for dependent resources
+			"name":         containerName,
 		},
 	}, nil
 }
@@ -339,12 +391,139 @@ func (p *Plugin) applyDockerVolume(ctx context.Context, name string, props map[s
 	}, nil
 }
 
+func (p *Plugin) applyDockerBuild(ctx context.Context, name string, props map[string]interface{}, existing *State) (*ResourceState, error) {
+	buildContext := getString(props, "context")
+	dockerfile := getString(props, "dockerfile")
+	target := getString(props, "target")
+
+	// Make dockerfile path relative to build context if it's absolute
+	if dockerfile != "" && filepath.IsAbs(dockerfile) && buildContext != "" {
+		absContext, err := filepath.Abs(buildContext)
+		if err == nil {
+			if relPath, err := filepath.Rel(absContext, dockerfile); err == nil {
+				dockerfile = relPath
+			}
+		}
+	}
+
+	// Get tags
+	var tags []string
+	if tagsVal, ok := props["tags"]; ok {
+		if tagsSlice, ok := tagsVal.([]interface{}); ok {
+			for _, t := range tagsSlice {
+				if tagStr, ok := t.(string); ok {
+					tags = append(tags, tagStr)
+				}
+			}
+		} else if tagStr, ok := tagsVal.(string); ok {
+			tags = append(tags, tagStr)
+		}
+	}
+
+	// Get build args
+	buildArgs := make(map[string]string)
+	if argsVal, ok := props["args"]; ok {
+		if argsMap, ok := argsVal.(map[string]interface{}); ok {
+			for k, v := range argsMap {
+				if vStr, ok := v.(string); ok {
+					buildArgs[k] = vStr
+				}
+			}
+		}
+	}
+
+	// Check cache setting
+	noCache := false
+	if cacheVal, ok := props["cache"]; ok {
+		if cacheBool, ok := cacheVal.(bool); ok {
+			noCache = !cacheBool
+		}
+	}
+
+	// Build the image using the existing BuildOptions type
+	opts := BuildOptions{
+		Context:    buildContext,
+		Dockerfile: dockerfile,
+		Target:     target,
+		Tags:       tags,
+		BuildArgs:  buildArgs,
+		NoCache:    noCache,
+	}
+
+	// Stream build output in debug mode
+	if os.Getenv("ARCCTL_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "[debug] Building image: context=%s, dockerfile=%s, tags=%v\n", buildContext, dockerfile, tags)
+		opts.Stderr = os.Stderr
+	}
+
+	// Add timeout for builds (10 minutes default, configurable via env)
+	buildTimeout := 10 * time.Minute
+	if timeoutStr := os.Getenv("ARCCTL_BUILD_TIMEOUT"); timeoutStr != "" {
+		if d, err := time.ParseDuration(timeoutStr); err == nil {
+			buildTimeout = d
+		}
+	}
+
+	buildCtx, cancel := context.WithTimeout(ctx, buildTimeout)
+	defer cancel()
+
+	buildResult, err := p.docker.BuildImage(buildCtx, opts)
+	if err != nil {
+		if buildCtx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("build timed out after %v", buildTimeout)
+		}
+		if os.Getenv("ARCCTL_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "[debug] Build failed: %v\n", err)
+		}
+		return nil, err
+	}
+
+	if os.Getenv("ARCCTL_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "[debug] Build succeeded: imageID=%s\n", buildResult.ImageID)
+	}
+
+	// Determine the primary tag for output
+	primaryTag := ""
+	if len(tags) > 0 {
+		primaryTag = tags[0]
+	}
+
+	return &ResourceState{
+		Type:       "docker:build",
+		ID:         buildResult.ImageID,
+		Properties: props,
+		Outputs: map[string]interface{}{
+			"id":    buildResult.ImageID,
+			"image": primaryTag,
+			"tags":  tags,
+		},
+	}, nil
+}
+
 func (p *Plugin) applyExec(ctx context.Context, name string, props map[string]interface{}) (*ResourceState, error) {
 	command := getStringSlice(props, "command")
 	workDir := getString(props, "working_dir")
 	env := getStringMap(props, "environment")
+	imageName := getString(props, "image")
+	networkName := getString(props, "network")
 
-	output, err := p.docker.Exec(ctx, command, workDir, env)
+	var output string
+	var err error
+
+	if imageName != "" {
+		// Run in a Docker container
+		output, err = p.docker.RunOneShot(ctx, RunOneShotOptions{
+			Image:       imageName,
+			Command:     command,
+			Environment: env,
+			Network:     networkName,
+			WorkDir:     workDir,
+		})
+	} else {
+		// Run on host
+		output, err = p.docker.Exec(ctx, command, workDir, env)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -438,12 +617,20 @@ func getString(props map[string]interface{}, key string) string {
 
 func getStringSlice(props map[string]interface{}, key string) []string {
 	if v, ok := props[key]; ok {
-		if arr, ok := v.([]interface{}); ok {
-			result := make([]string, len(arr))
-			for i, item := range arr {
+		switch val := v.(type) {
+		case []interface{}:
+			result := make([]string, len(val))
+			for i, item := range val {
 				result[i], _ = item.(string)
 			}
 			return result
+		case []string:
+			return val
+		case string:
+			// Handle string commands by splitting on spaces (e.g., "pnpm dev --filter=app")
+			if val != "" {
+				return strings.Fields(val)
+			}
 		}
 	}
 	return nil

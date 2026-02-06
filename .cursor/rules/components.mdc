@@ -13,6 +13,10 @@ Components are developer-focused application bundles in `architect.yml` files th
 ```yaml
 # Component name comes from the OCI tag at build time
 # README.md (if present) is bundled into the artifact for documentation
+# Use `extends: ./base.yml` to inherit from another component file
+
+# Build artifacts (optional)
+builds: map<string, Build>         # Docker image build configs
 
 # Resources
 databases: map<string, Database>
@@ -44,6 +48,7 @@ environment:
 
 | Expression | Description |
 |------------|-------------|
+| `builds.<name>.image` | Built Docker image tag |
 | `databases.<name>.url` | Database connection URL |
 | `databases.<name>.host` | Database host |
 | `databases.<name>.port` | Database port |
@@ -110,13 +115,22 @@ databases:
       command: ["npm", "run", "migrate"]
 ```
 
-### Deployment with Health Check
+### Top-level Builds
+
+Docker builds are defined at the top level. Deployments reference them via expressions:
 
 ```yaml
+builds:
+  api:
+    context: ./api
+    dockerfile: Dockerfile    # optional, defaults to "Dockerfile"
+    target: production        # optional multi-stage target
+    args:                     # optional build args
+      NODE_ENV: production
+
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
     cpu: "0.5"
@@ -125,6 +139,70 @@ deployments:
     liveness_probe:
       path: /health
       port: 8080
+```
+
+### Process-based Deployment (Dev Mode)
+
+Deployments without `image` run as host processes (no Docker required):
+
+```yaml
+deployments:
+  api:
+    command: ["npm", "run", "dev"]
+    workingDirectory: ./backend  # optional, defaults to architect.yml dir
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+```
+
+### VM-based Deployment with Runtime
+
+Use `runtime` for deployments that run on VMs (EC2, Droplets, GCE).
+Supports string shorthand (`runtime: node:20`) or full object:
+
+```yaml
+deployments:
+  worker:
+    runtime:
+      language: node:20          # Required. Language and version
+      os: linux                  # Optional (linux, windows)
+      arch: amd64                # Optional (amd64, arm64)
+      packages:                  # Optional. System-level dependencies
+        - ffmpeg
+      setup:                     # Optional. Provisioning commands
+        - npm ci --production
+    command: ["node", "dist/worker.js"]
+    cpu: "2"
+    memory: "4Gi"
+    replicas: 5
+```
+
+Datacenters route deployments with `runtime` (and no `image`) to VM provisioning hooks.
+
+### Component Extends (Dev/Prod Pattern)
+
+Use `extends` to inherit from a base component and override specific fields:
+
+```yaml
+# architect.yml (dev base - process-based)
+deployments:
+  api:
+    command: ["npm", "run", "dev"]
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+```
+
+```yaml
+# architect.prod.yml (production - extends dev)
+extends: ./architect.yml
+
+builds:
+  api:
+    context: .
+
+deployments:
+  api:
+    image: ${{ builds.api.image }}
+    command: ["npm", "start"]
 ```
 
 ### Service with Route

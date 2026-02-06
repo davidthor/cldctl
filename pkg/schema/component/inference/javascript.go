@@ -15,6 +15,7 @@ type PackageJSON struct {
 	Scripts         map[string]string `json:"scripts"`
 	Dependencies    map[string]string `json:"dependencies"`
 	DevDependencies map[string]string `json:"devDependencies"`
+	PackageManager  string            `json:"packageManager"` // e.g., "pnpm@8.0.0"
 	Engines         struct {
 		Node string `json:"node"`
 	} `json:"engines"`
@@ -84,8 +85,8 @@ func (i *JavaScriptInferrer) Infer(projectPath string) (*ProjectInfo, error) {
 		info.Language = "javascript"
 	}
 
-	// Detect package manager
-	info.PackageManager = detectJSPackageManager(projectPath)
+	// Detect package manager (pass pkg to check packageManager field first)
+	info.PackageManager = detectJSPackageManager(projectPath, pkg)
 	info.InstallCommand = getInstallCommand(info.PackageManager)
 
 	// Extract commands from scripts
@@ -135,7 +136,28 @@ func parsePackageJSON(path string) (*PackageJSON, error) {
 }
 
 // detectJSPackageManager detects which JS package manager is used.
-func detectJSPackageManager(projectPath string) string {
+// It checks in order of priority:
+// 1. packageManager field in package.json (Corepack standard)
+// 2. Lock files (pnpm-lock.yaml, yarn.lock, bun.lockb, package-lock.json)
+// 3. Default to npm
+func detectJSPackageManager(projectPath string, pkg *PackageJSON) string {
+	// First, check the packageManager field in package.json
+	// Format is typically "pnpm@8.0.0", "yarn@4.0.0", etc.
+	if pkg != nil && pkg.PackageManager != "" {
+		pm := strings.ToLower(pkg.PackageManager)
+		switch {
+		case strings.HasPrefix(pm, "pnpm"):
+			return "pnpm"
+		case strings.HasPrefix(pm, "yarn"):
+			return "yarn"
+		case strings.HasPrefix(pm, "bun"):
+			return "bun"
+		case strings.HasPrefix(pm, "npm"):
+			return "npm"
+		}
+	}
+
+	// Fall back to lock file detection
 	switch {
 	case FileExistsInProject(projectPath, "pnpm-lock.yaml"):
 		return "pnpm"

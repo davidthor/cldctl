@@ -94,21 +94,34 @@ The datacenter supports **two deployment modes** depending on your component con
 
 **Example**:
 ```yaml
-# architect.yml - Built from source
+# architect.yml - Process-based local development
 deployments:
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    # Command extracted from Dockerfile CMD automatically
-    # Or override: command: ["npm", "run", "dev"]
+    command: ["npm", "run", "dev"]
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+```
+
+Or with a Docker build for production:
+```yaml
+# architect.prod.yml - Extends dev base with Docker builds
+extends: architect.yml
+
+builds:
+  api:
+    context: .
+    dockerfile: Dockerfile
+
+deployments:
+  api:
+    image: ${{ builds.api.image }}
+    command: ["npm", "start"]
 ```
 
 The datacenter will:
-1. Use `./` as working directory
-2. Extract `CMD` from `Dockerfile` (e.g., `["npm", "start"]`)
-3. Run the command directly as a local process
-4. Auto-assign a PORT environment variable
+1. Use the component directory as the working directory (or `workingDirectory` if set)
+2. Run the command directly as a local process
+3. Auto-assign a PORT environment variable
 
 #### 2. Image-Based Deployments (Pre-Built Images)
 

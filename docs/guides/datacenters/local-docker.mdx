@@ -15,8 +15,8 @@ Example source: `examples/datacenters/local-docker/`
 
 This datacenter provides:
 - **Native Plugin**: Built-in execution without Terraform/Pulumi overhead
-- **Docker-based**: Databases and deployments run as containers
-- **Process-based Functions**: Run dev servers as local processes
+- **Docker-based**: Databases and image-based deployments run as containers
+- **Process-based**: Functions and runtime/bare deployments run as local processes
 - **Fast Startup**: No IaC tool initialization or state refresh
 
 ## Why a Local Datacenter?
@@ -116,14 +116,14 @@ module "network" {
 environment {
   # PostgreSQL using Docker
   database {
-    when = node.inputs.databaseType == "postgres"
+    when = element(split(":", node.inputs.type), 0) == "postgres"
     
     module "postgres" {
       plugin = "native"
       build  = "./modules/docker-postgres"
       inputs = {
         name     = "${environment.name}-${node.name}"
-        version  = node.inputs.databaseVersion
+        version  = try(element(split(":", node.inputs.type), 1), null)
         network  = variable.network_name
       }
     }
@@ -151,8 +151,10 @@ environment {
     }
   }
   
-  # Deployments run as Docker containers
+  # Container-based deployments run as Docker containers
   deployment {
+    when = node.inputs.image != null
+
     module "container" {
       plugin = "native"
       build  = "./modules/docker-deployment"
@@ -164,6 +166,27 @@ environment {
     
     outputs = {
       id = module.container.container_id
+    }
+  }
+
+  # Runtime and process-based deployments run as local processes
+  # (handles both `runtime` workloads and bare process deployments)
+  deployment {
+    when = node.inputs.image == null
+
+    module "process" {
+      plugin = "native"
+      build  = "./modules/process-deployment"
+      inputs = {
+        name             = "${environment.name}-${node.component}-${node.name}"
+        command          = node.inputs.command
+        environment      = node.inputs.environment
+        workingDirectory = node.inputs.workingDirectory
+      }
+    }
+    
+    outputs = {
+      id = module.process.id
     }
   }
 }
@@ -314,7 +337,7 @@ Then add to `datacenter.hcl`:
 
 ```hcl
 database {
-  when = node.inputs.databaseType == "mongodb"
+  when = element(split(":", node.inputs.type), 0) == "mongodb"
   
   module "mongodb" {
     plugin = "native"

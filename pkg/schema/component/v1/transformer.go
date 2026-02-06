@@ -21,6 +21,12 @@ func (t *Transformer) Transform(v1 *SchemaV1) (*internal.InternalComponent, erro
 		SourceVersion: "v1",
 	}
 
+	// Transform builds
+	for name, build := range v1.Builds {
+		ib := t.transformComponentBuild(name, build)
+		ic.Builds = append(ic.Builds, ib)
+	}
+
 	// Transform databases
 	for name, db := range v1.Databases {
 		idb, err := t.transformDatabase(name, db)
@@ -181,18 +187,20 @@ func (t *Transformer) transformSMTP(name string, s SMTPV1) internal.InternalSMTP
 
 func (t *Transformer) transformDeployment(name string, dep DeploymentV1) (internal.InternalDeployment, error) {
 	idep := internal.InternalDeployment{
-		Name:       name,
-		Image:      dep.Image,
-		Command:    dep.Command,
-		Entrypoint: dep.Entrypoint,
-		CPU:        dep.CPU,
-		Memory:     dep.Memory,
-		Replicas:   defaultInt(dep.Replicas, 1),
-		Labels:     dep.Labels,
+		Name:             name,
+		Image:            dep.Image,
+		Command:          dep.Command,
+		Entrypoint:       dep.Entrypoint,
+		WorkingDirectory: dep.WorkingDirectory,
+		CPU:              dep.CPU,
+		Memory:           dep.Memory,
+		Replicas:         defaultInt(dep.Replicas, 1),
+		Labels:           dep.Labels,
 	}
 
-	if dep.Build != nil {
-		idep.Build = t.transformBuild(dep.Build)
+	// Transform runtime
+	if dep.Runtime != nil {
+		idep.Runtime = t.transformRuntime(dep.Runtime)
 	}
 
 	// Transform environment with expression detection
@@ -474,6 +482,16 @@ func (t *Transformer) transformOutput(name string, o OutputV1) internal.Internal
 	}
 }
 
+func (t *Transformer) transformComponentBuild(name string, b BuildV1) internal.InternalComponentBuild {
+	return internal.InternalComponentBuild{
+		Name:       name,
+		Context:    b.Context,
+		Dockerfile: defaultString(b.Dockerfile, "Dockerfile"),
+		Target:     b.Target,
+		Args:       b.Args,
+	}
+}
+
 func (t *Transformer) transformBuild(b *BuildV1) *internal.InternalBuild {
 	return &internal.InternalBuild{
 		Context:    b.Context,
@@ -494,6 +512,16 @@ func (t *Transformer) transformProbe(p *ProbeV1) *internal.InternalProbe {
 		TimeoutSeconds:      p.TimeoutSeconds,
 		SuccessThreshold:    p.SuccessThreshold,
 		FailureThreshold:    p.FailureThreshold,
+	}
+}
+
+func (t *Transformer) transformRuntime(rt *RuntimeV1) *internal.InternalRuntime {
+	return &internal.InternalRuntime{
+		Language: rt.Language,
+		OS:       rt.OS,
+		Arch:     rt.Arch,
+		Packages: rt.Packages,
+		Setup:    rt.Setup,
 	}
 }
 

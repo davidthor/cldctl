@@ -84,10 +84,15 @@ dependencies:
   stripe:
     component: ghcr.io/myorg/stripe:v1
 
+builds:
+  api:
+    context: ./api
+  webhook-handler:
+    context: ./webhooks
+
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       # Access Stripe configuration via dependency outputs
       STRIPE_PUBLISHABLE_KEY: ${{ dependencies.stripe.outputs.publishable_key }}
@@ -96,8 +101,7 @@ deployments:
       STRIPE_API_VERSION: ${{ dependencies.stripe.outputs.api_version }}
 
   webhook-handler:
-    build:
-      context: ./webhooks
+    image: ${{ builds.webhook-handler.image }}
     environment:
       STRIPE_SECRET_KEY: ${{ dependencies.stripe.outputs.secret_key }}
       STRIPE_WEBHOOK_SECRET: ${{ dependencies.stripe.outputs.webhook_secret }}

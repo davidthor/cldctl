@@ -74,8 +74,7 @@ variables:
 
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       LOG_LEVEL: ${{ variables.log_level }}
       API_KEY: ${{ variables.api_key }}
@@ -223,10 +222,13 @@ variables:
     description: "Maximum file upload size in megabytes"
     default: 10
 
+builds:
+  api:
+    context: ./api
+
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       NODE_ENV: ${{ variables.environment }}
       LOG_LEVEL: ${{ variables.log_level }}

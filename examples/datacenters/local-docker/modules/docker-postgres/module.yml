@@ -19,6 +19,10 @@ inputs:
     type: string
     required: true
     description: Docker network to join
+  port:
+    type: number
+    default: 5432
+    description: Host port to expose PostgreSQL on
 
 resources:
   volume:
@@ -36,10 +40,10 @@ resources:
       environment:
         POSTGRES_DB: "${inputs.database}"
         POSTGRES_USER: "app"
-        POSTGRES_PASSWORD: "${random_password(16)}"
+        POSTGRES_PASSWORD: "localdevpassword"
       ports:
         - container: 5432
-          host: auto
+          host: "${inputs.port}"
       volumes:
         - name: "${inputs.name}-data"
           path: /var/lib/postgresql/data
@@ -55,7 +59,7 @@ outputs:
     value: "localhost"
     description: Database host
   port:
-    value: "${resources.container.ports[0].host}"
+    value: "${inputs.port}"
     description: Database port on host
   database:
     value: "${inputs.database}"
@@ -64,11 +68,11 @@ outputs:
     value: "app"
     description: Database username
   password:
-    value: "${resources.container.environment.POSTGRES_PASSWORD}"
+    value: "localdevpassword"
     sensitive: true
     description: Database password
   url:
-    value: "postgres://app:${resources.container.environment.POSTGRES_PASSWORD}@localhost:${resources.container.ports[0].host}/${inputs.database}"
+    value: "postgres://app:localdevpassword@localhost:${inputs.port}/${inputs.database}"
     sensitive: true
     description: Full connection URL
   container_id:

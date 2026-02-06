@@ -80,7 +80,7 @@ Use `when` to conditionally invoke hooks:
 
 ```hcl
 database {
-  when = node.inputs.databaseType == "postgres"
+  when = element(split(":", node.inputs.type), 0) == "postgres"
   
   module "postgres" {
     build = "./modules/postgres"
@@ -88,11 +88,35 @@ database {
 }
 
 database {
-  when = node.inputs.databaseType == "mysql"
+  when = element(split(":", node.inputs.type), 0) == "mysql"
   
   module "mysql" {
     build = "./modules/mysql"
   }
+}
+```
+
+### Routing Deployments by Type
+
+Use `when` to route deployments based on `image` and `runtime`:
+
+```hcl
+# Container-based deployments
+deployment {
+  when = node.inputs.image != null
+  module "container" { ... }
+}
+
+# VM-based deployments (runtime without image)
+deployment {
+  when = node.inputs.runtime != null && node.inputs.image == null
+  module "vm" { ... }
+}
+
+# Process-based deployments (neither image nor runtime)
+deployment {
+  when = node.inputs.image == null && node.inputs.runtime == null
+  module "process" { ... }
 }
 ```
 
@@ -104,7 +128,7 @@ Check if a list contains a value:
 
 ```hcl
 module "postgres_cluster" {
-  when = contains(environment.nodes.*.inputs.databaseType, "postgres")
+  when = anytrue([for n in environment.nodes : element(split(":", n.inputs.type), 0) == "postgres" if n.type == "database"])
 }
 ```
 
@@ -154,7 +178,7 @@ Look up a value in a map with a default:
 ```hcl
 module "database" {
   inputs = {
-    instance_type = lookup(var.instance_types, node.inputs.databaseType, "db.t3.micro")
+    instance_type = lookup(var.instance_types, element(split(":", node.inputs.type), 0), "db.t3.micro")
   }
 }
 ```
@@ -165,7 +189,7 @@ module "database" {
 
 ```hcl
 # Equality
-when = node.inputs.databaseType == "postgres"
+when = element(split(":", node.inputs.type), 0) == "postgres"
 when = node.inputs.replicas != 0
 
 # Numeric comparison
@@ -177,10 +201,10 @@ when = length(environment.resources.routes) >= 1
 
 ```hcl
 # AND
-when = node.inputs.databaseType == "postgres" && node.inputs.migrations != null
+when = element(split(":", node.inputs.type), 0) == "postgres" && node.inputs.migrations != null
 
 # OR
-when = node.inputs.databaseType == "postgres" || node.inputs.databaseType == "mysql"
+when = element(split(":", node.inputs.type), 0) == "postgres" || element(split(":", node.inputs.type), 0) == "mysql"
 
 # NOT
 when = !node.inputs.internal
@@ -194,10 +218,10 @@ Get a property from all items in a list:
 
 ```hcl
 # Get all database types in the environment
-environment.nodes.*.inputs.databaseType
+[for n in environment.nodes : element(split(":", n.inputs.type), 0) if n.type == "database"]
 
 # Check if any node needs postgres
-contains(environment.nodes.*.inputs.databaseType, "postgres")
+anytrue([for n in environment.nodes : element(split(":", n.inputs.type), 0) == "postgres" if n.type == "database"])
 ```
 
 ### For Expression

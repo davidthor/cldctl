@@ -214,8 +214,7 @@ buckets:
 ```yaml
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       S3_ENDPOINT: ${{ buckets.uploads.endpoint }}
       S3_BUCKET: ${{ buckets.uploads.bucket }}
@@ -293,8 +292,7 @@ encryptionKeys:
 
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       # RSA key for webhook signatures (base64-encoded for env var safety)
       RSA_PRIVATE_KEY: ${{ encryptionKeys.rsa-key.privateKeyBase64 }}
@@ -338,8 +336,7 @@ smtp:
 
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       SMTP_HOST: ${{ smtp.notifications.host }}
       SMTP_PORT: ${{ smtp.notifications.port }}
@@ -352,14 +349,21 @@ deployments:
 Define long-running application workloads (e.g., backend APIs, monolithic applications, microservices).
 
 ```yaml
+# Top-level builds define Docker image build instructions
+builds:
+  api:
+    context: ./api # Build context directory
+    dockerfile: Dockerfile # Optional. Defaults to "Dockerfile"
+    target: production # Optional. Multi-stage build target
+    args: # Optional. Build arguments
+      NODE_ENV: production
+
 deployments:
   api:
-    image: node:18 # Image to run (mutually exclusive with build)
-    build: # Build configuration (mutually exclusive with image)
-      context: ./api # Build context directory
-      dockerfile: Dockerfile # Optional. Defaults to "Dockerfile"
+    image: ${{ builds.api.image }} # Reference a top-level build, or use a pre-built image like node:18
     command: ["npm", "start"] # Optional. Override container command
     entrypoint: ["/bin/sh"] # Optional. Override container entrypoint
+    workingDirectory: ./api # Optional. Working directory for process-based execution
     environment: # Environment variables
       DATABASE_URL: ${{ databases.main.url }}
       LOG_LEVEL: ${{ variables.log_level }}
@@ -721,6 +725,12 @@ databases:
   cache:
     type: redis
 
+builds:
+  api:
+    context: ./api
+  worker:
+    context: ./worker
+
 buckets:
   uploads:
     type: s3
@@ -728,8 +738,7 @@ buckets:
 
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
       REDIS_URL: ${{ databases.cache.url }}
@@ -746,8 +755,7 @@ deployments:
       port: 8080
 
   worker:
-    build:
-      context: ./worker
+    image: ${{ builds.worker.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
       REDIS_URL: ${{ databases.cache.url }}
@@ -1023,14 +1031,14 @@ outputs:
 ```hcl
 environment {
   database {
-    when = node.inputs.databaseType == "postgres"
+    when = element(split(":", node.inputs.type), 0) == "postgres"
     
     module "postgres" {
       plugin = "native"
       build  = "./modules/docker-postgres"
       inputs = {
         name     = "${environment.name}-${node.name}"
-        version  = node.inputs.databaseVersion
+        version  = try(element(split(":", node.inputs.type), 1), null)
         database = node.name
       }
     }
@@ -1106,7 +1114,7 @@ environment {
 
   module "postgres_cluster" {
     build = "./modules/postgres"
-    when  = contains(environment.nodes.*.inputs.databaseType, "postgres")
+    when  = anytrue([for t in environment.nodes.*.inputs.type : element(split(":", t), 0) == "postgres"])
     inputs = {
       namespace = environment.name
     }
@@ -1156,14 +1164,14 @@ Hooks define how each resource type from components gets fulfilled. Each hook ha
 ```hcl
 environment {
   database {
-    when = node.inputs.databaseType == "postgres"
+    when = element(split(":", node.inputs.type), 0) == "postgres"
 
     module "db_cluster" {
       build = "./modules/database"
       inputs = {
         name    = node.name
-        type    = node.inputs.databaseType
-        version = node.inputs.databaseVersion
+        type    = element(split(":", node.inputs.type), 0)
+        version = try(element(split(":", node.inputs.type), 1), null)
       }
     }
 
@@ -1181,8 +1189,7 @@ environment {
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | string | Resource identifier |
-| `databaseType` | string | Database type (postgres, mysql, etc.) |
-| `databaseVersion` | string | Requested version |
+| `type` | string | Database type and version (e.g., `postgres:^16`) |
 | `migrations` | object | Optional migration/seeding configuration (see below) |
 
 **Migration inputs (available via `node.inputs.migrations`):**
@@ -1200,35 +1207,30 @@ environment {
 | `database` | string | Database name |
 | `url` | string | Full connection URL |
 
-##### Database Migration Hook
+##### Task Hook
 
-When a database has migrations configured, the datacenter receives a `databaseMigration` resource after the database is provisioned. This hook is responsible for running the migration container.
+The `task` hook handles one-shot jobs that run once during deployment and are discarded (similar to Kubernetes Jobs). The primary use case is database migrations, but the hook is general-purpose for any one-time execution need.
+
+When a database has migrations configured, the system generates a task node that runs after the database is provisioned and before any workloads that depend on the database.
 
 ```hcl
 environment {
-  databaseMigration {
-    module "migration_job" {
+  task {
+    module "task_job" {
       build = "./modules/k8s-job"
       inputs = {
-        name        = "${node.component}--${node.name}--migration"
+        name        = "${node.component}--${node.name}"
         namespace   = module.namespace.id
         kubeconfig  = module.k8s.kubeconfig
         image       = node.inputs.image
         command     = node.inputs.command
-        environment = merge(node.inputs.environment, {
-          DATABASE_URL      = node.inputs.databaseUrl
-          DATABASE_HOST     = node.inputs.databaseHost
-          DATABASE_PORT     = node.inputs.databasePort
-          DATABASE_NAME     = node.inputs.databaseName
-          DATABASE_USER     = node.inputs.databaseUser
-          DATABASE_PASSWORD = node.inputs.databasePassword
-        })
+        environment = node.inputs.environment
       }
     }
 
     outputs = {
-      id     = module.migration_job.job_id
-      status = module.migration_job.status
+      id     = module.task_job.job_id
+      status = module.task_job.status
     }
   }
 }
@@ -1237,22 +1239,15 @@ environment {
 **Inputs (available via `node.inputs`):**
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | string | Migration job name |
-| `image` | string | Built migration container image |
-| `command` | string[] | Command to run migrations |
-| `environment` | map | Additional environment variables from component |
-| `databaseUrl` | string | Full database connection URL |
-| `databaseHost` | string | Database hostname |
-| `databasePort` | number | Database port |
-| `databaseName` | string | Database name |
-| `databaseUser` | string | Database username |
-| `databasePassword` | string | Database password |
+| `image` | string | Container image to run |
+| `command` | string[] | Command to execute |
+| `environment` | map | Environment variables |
+| `database` | string | (for migration tasks) Associated database name |
 
 **Required Outputs:**
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Unique migration job identifier |
-| `status` | string | Job completion status (success, failed) |
+| `id` | string | Unique task identifier |
 
 **Notes:**
 
@@ -1432,7 +1427,7 @@ Generated automatically when multiple applications access the same database.
 ```hcl
 environment {
   databaseUser {
-    when = node.inputs.databaseType == "postgres"
+    when = element(split(":", node.inputs.type), 0) == "postgres"
 
     module "pg_user" {
       build = "./modules/db-user"
@@ -1984,7 +1979,7 @@ Datacenter expressions use HCL interpolation syntax and have access to:
 name = "${datacenter.name}-cluster"
 
 # Conditional expressions
-when = node.inputs.databaseType == "postgres"
+when = element(split(":", node.inputs.type), 0) == "postgres"
 
 # Contains function for array checking
 when = contains(environment.nodes.*.type, "database")
@@ -2068,7 +2063,7 @@ environment {
   }
 
   module "postgres_cluster" {
-    when  = contains(environment.nodes.*.type, "database") && contains(environment.nodes.*.inputs.databaseType, "postgres")
+    when  = contains(environment.nodes.*.type, "database") && anytrue([for t in environment.nodes.*.inputs.type : element(split(":", t), 0) == "postgres"])
     build = "./modules/rds-postgres"
     inputs = {
       name                 = "${datacenter.name}-database"
@@ -2081,14 +2076,14 @@ environment {
 
   # Resource hooks
   database {
-    when = node.inputs.databaseType == "postgres"
+    when = element(split(":", node.inputs.type), 0) == "postgres"
 
     module "db_cluster" {
       build = "./modules/rds-database"
       inputs = {
         name    = node.name
-        type    = node.inputs.databaseType
-        version = node.inputs.databaseVersion
+        type    = element(split(":", node.inputs.type), 0)
+        version = try(element(split(":", node.inputs.type), 1), null)
       }
     }
 
@@ -4140,6 +4135,11 @@ When a component or datacenter is built, source references (`build:` blocks) are
 ```yaml
 name: my-app
 
+builds:
+  api:
+    context: ./api
+    dockerfile: Dockerfile
+
 databases:
   main:
     type: postgres:^15
@@ -4151,9 +4151,7 @@ databases:
 
 deployments:
   api:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
 ```

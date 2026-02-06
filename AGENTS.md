@@ -116,11 +116,14 @@ routes:
 ### Traditional Deployment Pattern
 
 ```yaml
-# architect.yml - For long-running services
+# architect.yml - For long-running services with Docker builds
+builds:
+  api:
+    context: ./api
+
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
 
@@ -130,7 +133,66 @@ services:
     port: 8080
 ```
 
+### Dev/Prod with Extends
+
+```yaml
+# architect.yml (dev base - process-based, no Docker)
+deployments:
+  api:
+    command: ["npm", "run", "dev"]
+    workingDirectory: ./backend  # optional, defaults to architect.yml dir
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+```
+
+```yaml
+# architect.prod.yml (production - extends dev, adds Docker build)
+extends: ./architect.yml
+
+builds:
+  api:
+    context: .
+
+deployments:
+  api:
+    image: ${{ builds.api.image }}
+    command: ["npm", "start"]
+```
+
+### VM-based Deployment with Runtime
+
+Use `runtime` to declare language and system requirements for VM-based deployments.
+Datacenters handle provisioning the actual VM (EC2, Droplet, GCE, etc.).
+
+```yaml
+# String shorthand
+deployments:
+  worker:
+    runtime: node:20
+    command: ["node", "dist/worker.js"]
+```
+
+```yaml
+# Full object form with system dependencies
+deployments:
+  worker:
+    runtime:
+      language: node:20          # Required. Language and version
+      os: linux                  # Optional. Default: linux (linux, windows)
+      arch: amd64                # Optional. Default: datacenter's choice (amd64, arm64)
+      packages:                  # Optional. System-level dependencies
+        - ffmpeg
+        - imagemagick
+      setup:                     # Optional. Provisioning commands
+        - npm ci --production
+    command: ["node", "dist/worker.js"]
+    cpu: "2"
+    memory: "4Gi"
+    replicas: 5
+```
+
 ### Available Expression References
+- `builds.<name>.image` (built Docker image)
 - `databases.<name>.url|host|port|username|password|database`
 - `buckets.<name>.endpoint|bucket|accessKeyId|secretAccessKey`
 - `encryptionKeys.<name>.privateKey|publicKey|privateKeyBase64|publicKeyBase64|key|keyBase64`
@@ -152,7 +214,7 @@ variable "region" {
 
 environment {
   database {
-    when = node.inputs.databaseType == "postgres"
+    when = element(split(":", node.inputs.type), 0) == "postgres"
     
     module "postgres" {
       plugin = "native"

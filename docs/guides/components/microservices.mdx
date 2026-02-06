@@ -59,6 +59,10 @@ variables:
   jwt_expiry:
     default: "24h"
 
+builds:
+  api:
+    context: .
+
 databases:
   users:
     type: postgres:^16
@@ -67,8 +71,7 @@ databases:
 
 deployments:
   api:
-    build:
-      context: .
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.users.url }}
       REDIS_URL: ${{ databases.sessions.url }}
@@ -100,6 +103,10 @@ dependencies:
     variables:
       jwt_expiry: "24h"
 
+builds:
+  api:
+    context: .
+
 databases:
   orders:
     type: postgres:^16
@@ -108,8 +115,7 @@ databases:
 
 deployments:
   api:
-    build:
-      context: .
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.orders.url }}
       REDIS_URL: ${{ databases.queue.url }}
@@ -135,6 +141,10 @@ dependencies:
     variables:
       jwt_expiry: "24h"
 
+builds:
+  api:
+    context: .
+
 databases:
   products:
     type: postgres:^16
@@ -147,8 +157,7 @@ buckets:
 
 deployments:
   api:
-    build:
-      context: .
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.products.url }}
       REDIS_URL: ${{ databases.cache.url }}
@@ -177,10 +186,13 @@ dependencies:
   products:
     component: ../products
 
+builds:
+  gateway:
+    context: .
+
 deployments:
   gateway:
-    build:
-      context: .
+    image: ${{ builds.gateway.image }}
     environment:
       AUTH_URL: ${{ dependencies.auth.services.api.url }}
       ORDERS_URL: ${{ dependencies.orders.services.api.url }}

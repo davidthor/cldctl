@@ -223,6 +223,39 @@ func (pm *ProcessManager) IsProcessRunning(name string) bool {
 	return err == nil
 }
 
+// StopAllWithPrefix stops all processes whose names start with the given prefix.
+// This is used for environment cleanup to stop all processes for an environment.
+func (pm *ProcessManager) StopAllWithPrefix(prefix string, timeout time.Duration) {
+	pm.mu.Lock()
+	// Collect process names to stop (can't modify map while iterating)
+	var toStop []string
+	for name := range pm.processes {
+		if strings.HasPrefix(name, prefix) {
+			toStop = append(toStop, name)
+		}
+	}
+	pm.mu.Unlock()
+
+	// Stop each process
+	for _, name := range toStop {
+		_ = pm.StopProcess(name, timeout)
+	}
+}
+
+// StopAll stops all managed processes.
+func (pm *ProcessManager) StopAll(timeout time.Duration) {
+	pm.mu.Lock()
+	var toStop []string
+	for name := range pm.processes {
+		toStop = append(toStop, name)
+	}
+	pm.mu.Unlock()
+
+	for _, name := range toStop {
+		_ = pm.StopProcess(name, timeout)
+	}
+}
+
 // waitForReady waits for the process to become ready.
 func (pm *ProcessManager) waitForReady(ctx context.Context, readiness *ReadinessCheck) error {
 	if readiness.Type != "http" {

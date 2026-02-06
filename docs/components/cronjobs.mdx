@@ -115,6 +115,10 @@ cronjobs:
 ```yaml
 name: my-app
 
+builds:
+  api:
+    context: ./api
+
 databases:
   main:
     type: postgres:^15
@@ -127,8 +131,7 @@ variables:
 
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
 

@@ -96,7 +96,7 @@ Use `when` to conditionally invoke modules:
 ```hcl
 module "postgres_cluster" {
   build = "./modules/postgres"
-  when  = contains(environment.nodes.*.inputs.databaseType, "postgres")
+  when  = anytrue([for n in environment.nodes : element(split(":", n.inputs.type), 0) == "postgres" if n.type == "database"])
   
   inputs = {
     namespace = environment.name
@@ -105,7 +105,7 @@ module "postgres_cluster" {
 
 module "redis_cluster" {
   build = "./modules/redis"
-  when  = contains(environment.nodes.*.inputs.databaseType, "redis")
+  when  = anytrue([for n in environment.nodes : element(split(":", n.inputs.type), 0) == "redis" if n.type == "database"])
   
   inputs = {
     namespace = environment.name

@@ -95,8 +95,7 @@ Access service connection information in other resources:
 ```yaml
 deployments:
   frontend:
-    build:
-      context: ./frontend
+    image: ${{ builds.frontend.image }}
     environment:
       API_URL: ${{ services.api.url }}
       AUTH_SERVICE: ${{ services.auth.url }}
@@ -107,16 +106,20 @@ deployments:
 Services within a component can reference each other:
 
 ```yaml
+builds:
+  api:
+    context: ./api
+  worker:
+    context: ./worker
+
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       WORKER_URL: ${{ services.worker.url }}
 
   worker:
-    build:
-      context: ./worker
+    image: ${{ builds.worker.image }}
 
 services:
   api:
@@ -131,21 +134,26 @@ services:
 ## Complete Example
 
 ```yaml
+builds:
+  api:
+    context: ./api
+  auth:
+    context: ./auth
+  worker:
+    context: ./worker
+
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       AUTH_SERVICE_URL: ${{ services.auth.url }}
       WORKER_URL: ${{ services.worker.url }}
 
   auth:
-    build:
-      context: ./auth
+    image: ${{ builds.auth.image }}
 
   worker:
-    build:
-      context: ./worker
+    image: ${{ builds.worker.image }}
 
 functions:
   web:

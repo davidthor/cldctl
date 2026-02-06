@@ -1,0 +1,29 @@
+# Component with top-level builds section
+builds:
+  api:
+    context: .
+    dockerfile: Dockerfile
+    target: production
+    args:
+      NODE_ENV: production
+
+databases:
+  main:
+    type: postgres:^16
+
+deployments:
+  api:
+    image: ${{ builds.api.image }}
+    command: ["npm", "start"]
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+
+services:
+  api:
+    deployment: api
+    port: 3000
+
+routes:
+  main:
+    type: http
+    service: api

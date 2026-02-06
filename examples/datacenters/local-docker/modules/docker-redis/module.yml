@@ -15,6 +15,10 @@ inputs:
     type: string
     required: true
     description: Docker network to join
+  port:
+    type: number
+    default: 6379
+    description: Host port to expose Redis on
 
 resources:
   volume:
@@ -32,7 +36,7 @@ resources:
       command: ["redis-server", "--appendonly", "yes"]
       ports:
         - container: 6379
-          host: auto
+          host: "${inputs.port}"
       volumes:
         - name: "${inputs.name}-data"
           path: /data
@@ -48,10 +52,10 @@ outputs:
     value: "localhost"
     description: Redis host
   port:
-    value: "${resources.container.ports[0].host}"
+    value: "${inputs.port}"
     description: Redis port on host
   url:
-    value: "redis://localhost:${resources.container.ports[0].host}"
+    value: "redis://localhost:${inputs.port}"
     description: Full connection URL
   container_id:
     value: "${resources.container.id}"

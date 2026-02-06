@@ -75,7 +75,7 @@ environment {
 
   # Create a logical database in the shared cluster for this environment
   module "postgres_database" {
-    when  = contains(environment.nodes.*.inputs.databaseType, "postgres")
+    when  = anytrue([for n in environment.nodes : element(split(":", n.inputs.type), 0) == "postgres" if n.type == "database"])
     build = "./modules/postgres-logical-db"
     inputs = {
       host           = variable.shared_postgres_host
@@ -88,7 +88,7 @@ environment {
 
   # Create a Redis key prefix for this environment (logical isolation)
   module "redis_namespace" {
-    when  = contains(environment.nodes.*.inputs.databaseType, "redis")
+    when  = anytrue([for n in environment.nodes : element(split(":", n.inputs.type), 0) == "redis" if n.type == "database"])
     build = "./modules/redis-namespace"
     inputs = {
       host       = variable.shared_redis_host
@@ -103,7 +103,7 @@ environment {
       build = "./modules/shared-database"
       inputs = {
         name        = node.name
-        type        = node.inputs.databaseType
+        type        = element(split(":", node.inputs.type), 0)
         environment = environment.name
         # For postgres, use the shared cluster with environment-specific database
         postgres_host           = variable.shared_postgres_host
@@ -131,7 +131,7 @@ environment {
     module "shared_db_user" {
       build = "./modules/shared-db-user"
       inputs = {
-        database_type           = node.inputs.databaseType
+        database_type           = element(split(":", node.inputs.type), 0)
         database                = node.inputs.database
         username                = "${environment.name}_${node.inputs.username}"
         postgres_host           = variable.shared_postgres_host

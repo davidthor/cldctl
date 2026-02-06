@@ -27,6 +27,9 @@ func NewValidator() *Validator {
 func (v *Validator) Validate(schema *SchemaV1) []ValidationError {
 	var errs []ValidationError
 
+	// Validate builds
+	errs = append(errs, v.validateBuilds(schema.Builds)...)
+
 	// Validate databases
 	errs = append(errs, v.validateDatabases(schema.Databases)...)
 
@@ -231,33 +234,57 @@ func (v *Validator) validateSMTP(smtp map[string]SMTPV1) []ValidationError {
 	return nil
 }
 
-func (v *Validator) validateDeployments(deployments map[string]DeploymentV1) []ValidationError {
+func (v *Validator) validateBuilds(builds map[string]BuildV1) []ValidationError {
 	var errs []ValidationError
 
-	for name, dep := range deployments {
-		if dep.Image == "" && dep.Build == nil {
+	for name, build := range builds {
+		if build.Context == "" {
 			errs = append(errs, ValidationError{
-				Field:   fmt.Sprintf("deployments.%s", name),
-				Message: "either image or build is required",
-			})
-		}
-		if dep.Image != "" && dep.Build != nil {
-			errs = append(errs, ValidationError{
-				Field:   fmt.Sprintf("deployments.%s", name),
-				Message: "image and build are mutually exclusive",
-			})
-		}
-		if dep.Build != nil && dep.Build.Context == "" {
-			errs = append(errs, ValidationError{
-				Field:   fmt.Sprintf("deployments.%s.build.context", name),
+				Field:   fmt.Sprintf("builds.%s.context", name),
 				Message: "context is required for build",
 			})
 		}
+	}
+
+	return errs
+}
+
+func (v *Validator) validateDeployments(deployments map[string]DeploymentV1) []ValidationError {
+	var errs []ValidationError
+
+	validOS := []string{"linux", "windows"}
+	validArch := []string{"amd64", "arm64"}
+
+	for name, dep := range deployments {
+		// Image is optional. When absent, the datacenter decides how to
+		// execute (e.g., as a host process for local development).
 		if dep.Replicas < 0 {
 			errs = append(errs, ValidationError{
 				Field:   fmt.Sprintf("deployments.%s.replicas", name),
 				Message: "replicas must be non-negative",
 			})
+		}
+
+		// Validate runtime
+		if dep.Runtime != nil {
+			if dep.Runtime.Language == "" {
+				errs = append(errs, ValidationError{
+					Field:   fmt.Sprintf("deployments.%s.runtime.language", name),
+					Message: "language is required when runtime is specified",
+				})
+			}
+			if dep.Runtime.OS != "" && !contains(validOS, dep.Runtime.OS) {
+				errs = append(errs, ValidationError{
+					Field:   fmt.Sprintf("deployments.%s.runtime.os", name),
+					Message: fmt.Sprintf("invalid os %q, must be one of: %v", dep.Runtime.OS, validOS),
+				})
+			}
+			if dep.Runtime.Arch != "" && !contains(validArch, dep.Runtime.Arch) {
+				errs = append(errs, ValidationError{
+					Field:   fmt.Sprintf("deployments.%s.runtime.arch", name),
+					Message: fmt.Sprintf("invalid arch %q, must be one of: %v", dep.Runtime.Arch, validArch),
+				})
+			}
 		}
 	}
 

@@ -10,16 +10,23 @@ variables:
     description: "Number of concurrent jobs per worker"
     default: "5"
 
+builds:
+  api:
+    context: .
+    dockerfile: Dockerfile
+    target: api
+  worker:
+    context: .
+    dockerfile: Dockerfile
+    target: worker
+
 databases:
   queue:
     type: redis:^7
 
 deployments:
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: api
+    image: ${{ builds.api.image }}
     environment:
       REDIS_URL: ${{ databases.queue.url }}
       LOG_LEVEL: ${{ variables.log_level }}
@@ -34,10 +41,7 @@ deployments:
       port: 3000
 
   worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: worker
+    image: ${{ builds.worker.image }}
     environment:
       REDIS_URL: ${{ databases.queue.url }}
       LOG_LEVEL: ${{ variables.log_level }}

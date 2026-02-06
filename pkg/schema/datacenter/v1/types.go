@@ -50,7 +50,7 @@ type VolumeBlockV1 struct {
 type EnvironmentBlockV1 struct {
 	Modules                []ModuleBlockV1 `hcl:"module,block"`
 	DatabaseHooks          []HookBlockV1   `hcl:"database,block"`
-	DatabaseMigrationHooks []HookBlockV1   `hcl:"databaseMigration,block"`
+	TaskHooks              []HookBlockV1   `hcl:"task,block"`
 	BucketHooks            []HookBlockV1   `hcl:"bucket,block"`
 	EncryptionKeyHooks     []HookBlockV1   `hcl:"encryptionKey,block"`
 	SMTPHooks              []HookBlockV1   `hcl:"smtp,block"`

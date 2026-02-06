@@ -70,10 +70,10 @@ func TestGetStringSlice(t *testing.T) {
 		t.Errorf("expected nil, got %v", result)
 	}
 
-	// Test non-array value
+	// Test string value (should be split into fields)
 	result = getStringSlice(props, "notArray")
-	if result != nil {
-		t.Errorf("expected nil for non-array, got %v", result)
+	if len(result) != 1 || result[0] != "string" {
+		t.Errorf("expected [string] for string value, got %v", result)
 	}
 }
 

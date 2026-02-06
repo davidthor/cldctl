@@ -11,14 +11,17 @@ variables:
     required: true
     sensitive: true
 
+builds:
+  api:
+    context: ./api
+
 databases:
   main:
     type: postgres:^16
 
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
       JWT_SECRET: ${{ variables.jwt_secret }}

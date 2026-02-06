@@ -64,10 +64,13 @@ dependencies:
   clerk:
     component: clerk
 
+builds:
+  api:
+    context: ./api
+
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       CLERK_SECRET_KEY: ${{ dependencies.clerk.outputs.secret_key }}
       CLERK_WEBHOOK_SECRET: ${{ dependencies.clerk.outputs.webhook_secret }}

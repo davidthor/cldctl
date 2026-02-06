@@ -76,13 +76,22 @@ func NewDockerClient() (*DockerClient, error) {
 
 // RunContainer creates and starts a container.
 func (d *DockerClient) RunContainer(ctx context.Context, opts ContainerOptions) (string, error) {
-	// Pull image first
-	reader, err := d.client.ImagePull(ctx, opts.Image, image.PullOptions{})
-	if err != nil {
-		return "", fmt.Errorf("failed to pull image %s: %w", opts.Image, err)
+	// Check if image exists locally first
+	imageExists := false
+	_, _, err := d.client.ImageInspectWithRaw(ctx, opts.Image)
+	if err == nil {
+		imageExists = true
 	}
-	_, _ = io.Copy(io.Discard, reader)
-	reader.Close()
+
+	// Only pull if image doesn't exist locally
+	if !imageExists {
+		reader, err := d.client.ImagePull(ctx, opts.Image, image.PullOptions{})
+		if err != nil {
+			return "", fmt.Errorf("failed to pull image %s: %w", opts.Image, err)
+		}
+		_, _ = io.Copy(io.Discard, reader)
+		reader.Close()
+	}
 
 	// Build environment slice
 	env := make([]string, 0, len(opts.Environment))
@@ -188,6 +197,81 @@ func (d *DockerClient) IsContainerRunning(ctx context.Context, containerID strin
 		return false, err
 	}
 	return info.State.Running, nil
+}
+
+// GetContainerByName finds a container by name and returns its ID.
+// Returns empty string if not found.
+func (d *DockerClient) GetContainerByName(ctx context.Context, name string) (string, error) {
+	containers, err := d.client.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Filters: filters.NewArgs(filters.Arg("name", "^/"+name+"$")),
+	})
+	if err != nil {
+		return "", err
+	}
+	for _, c := range containers {
+		for _, n := range c.Names {
+			if n == "/"+name || n == name {
+				return c.ID, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// ContainerMatchesConfig checks if a running container matches the desired configuration.
+// Returns true if the container can be reused (image matches, etc.).
+func (d *DockerClient) ContainerMatchesConfig(ctx context.Context, containerID string, opts ContainerOptions) bool {
+	info, err := d.client.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return false
+	}
+
+	// Check if image matches (compare by image ID for accuracy)
+	// The container stores the full image ID, we need to resolve the desired image
+	desiredImageInfo, _, err := d.client.ImageInspectWithRaw(ctx, opts.Image)
+	if err != nil {
+		// Can't inspect desired image, assume mismatch
+		return false
+	}
+
+	if info.Image != desiredImageInfo.ID {
+		// Image has changed
+		return false
+	}
+
+	// Check environment variables
+	currentEnv := make(map[string]string)
+	for _, e := range info.Config.Env {
+		parts := strings.SplitN(e, "=", 2)
+		if len(parts) == 2 {
+			currentEnv[parts[0]] = parts[1]
+		}
+	}
+	for k, v := range opts.Environment {
+		if currentEnv[k] != v {
+			return false
+		}
+	}
+
+	// Check network
+	if opts.Network != "" {
+		found := false
+		for netName := range info.NetworkSettings.Networks {
+			if netName == opts.Network {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	// Note: We don't check ports here because auto-assigned ports would always differ.
+	// The image and env check is usually sufficient for local development.
+
+	return true
 }
 
 // RemoveContainer stops and removes a container.
@@ -302,6 +386,116 @@ func (d *DockerClient) Exec(ctx context.Context, command []string, workDir strin
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(output), fmt.Errorf("command failed: %w", err)
+	}
+
+	return string(output), nil
+}
+
+// RunOneShotOptions defines options for a one-shot container.
+type RunOneShotOptions struct {
+	Image       string
+	Command     []string
+	Environment map[string]string
+	Network     string
+	WorkDir     string
+}
+
+// RunOneShot runs a command in a temporary Docker container and returns the output.
+func (d *DockerClient) RunOneShot(ctx context.Context, opts RunOneShotOptions) (string, error) {
+	if opts.Image == "" {
+		return "", fmt.Errorf("image is required")
+	}
+
+	// Pull image first
+	reader, err := d.client.ImagePull(ctx, opts.Image, image.PullOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to pull image: %w", err)
+	}
+	defer reader.Close()
+	_, _ = io.Copy(io.Discard, reader)
+
+	// Build environment variables
+	var envList []string
+	for k, v := range opts.Environment {
+		envList = append(envList, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	// Create container config
+	config := &container.Config{
+		Image: opts.Image,
+		Cmd:   opts.Command,
+		Env:   envList,
+	}
+	if opts.WorkDir != "" {
+		config.WorkingDir = opts.WorkDir
+	}
+
+	// Create host config
+	hostConfig := &container.HostConfig{}
+
+	// Create network config
+	var networkConfig *network.NetworkingConfig
+	if opts.Network != "" {
+		networkConfig = &network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				opts.Network: {},
+			},
+		}
+	}
+
+	// Create container
+	resp, err := d.client.ContainerCreate(ctx, config, hostConfig, networkConfig, nil, "")
+	if err != nil {
+		return "", fmt.Errorf("failed to create container: %w", err)
+	}
+	containerID := resp.ID
+
+	// Ensure cleanup
+	defer func() {
+		_ = d.client.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+	}()
+
+	// Start container
+	if err := d.client.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+		return "", fmt.Errorf("failed to start container: %w", err)
+	}
+
+	// Wait for container to finish
+	statusCh, errCh := d.client.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+	select {
+	case err := <-errCh:
+		if err != nil {
+			return "", fmt.Errorf("error waiting for container: %w", err)
+		}
+	case status := <-statusCh:
+		if status.StatusCode != 0 {
+			// Get logs for error message
+			logs, _ := d.client.ContainerLogs(ctx, containerID, container.LogsOptions{
+				ShowStdout: true,
+				ShowStderr: true,
+			})
+			if logs != nil {
+				output, _ := io.ReadAll(logs)
+				logs.Close()
+				return string(output), fmt.Errorf("container exited with code %d: %s", status.StatusCode, string(output))
+			}
+			return "", fmt.Errorf("container exited with code %d", status.StatusCode)
+		}
+	}
+
+	// Get logs
+	logs, err := d.client.ContainerLogs(ctx, containerID, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to get logs: %w", err)
+	}
+	defer logs.Close()
+
+	output, err := io.ReadAll(logs)
+	if err != nil {
+		return "", fmt.Errorf("failed to read logs: %w", err)
 	}
 
 	return string(output), nil

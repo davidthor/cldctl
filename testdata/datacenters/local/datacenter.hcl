@@ -22,14 +22,14 @@ environment {
   }
 
   database {
-    when = node.inputs.databaseType == "postgres"
+    when = element(split(":", node.inputs.type), 0) == "postgres"
 
     module "postgres" {
       plugin = "native"
       build  = "./modules/docker-postgres"
       inputs = {
         name     = "${environment.name}-${node.component}--${node.name}"
-        version  = node.inputs.databaseVersion
+        version  = try(element(split(":", node.inputs.type), 1), null)
         database = node.name
         network  = module.namespace.network_id
       }
@@ -46,7 +46,7 @@ environment {
   }
 
   database {
-    when = node.inputs.databaseType == "redis"
+    when = element(split(":", node.inputs.type), 0) == "redis"
 
     module "redis" {
       plugin = "native"

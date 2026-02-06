@@ -1,0 +1,29 @@
+databases:
+  queue:
+    type: redis:^7
+
+deployments:
+  # String shorthand runtime
+  worker:
+    runtime: node:20
+    command: ["node", "dist/worker.js"]
+    environment:
+      REDIS_URL: ${{ databases.queue.url }}
+
+  # Full object runtime
+  processor:
+    runtime:
+      language: python:^3.12
+      os: linux
+      arch: amd64
+      packages:
+        - ffmpeg
+        - imagemagick
+      setup:
+        - pip install -r requirements.txt
+    command: ["python", "processor.py"]
+    cpu: "2"
+    memory: "4Gi"
+    replicas: 3
+    environment:
+      REDIS_URL: ${{ databases.queue.url }}

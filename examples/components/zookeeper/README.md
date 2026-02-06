@@ -46,10 +46,13 @@ dependencies:
     variables:
       max_client_connections: "100"
 
+builds:
+  app:
+    context: ./app
+
 deployments:
   app:
-    build:
-      context: ./app
+    image: ${{ builds.app.image }}
     environment:
       ZOOKEEPER_HOST: ${{ dependencies.zookeeper.services.zookeeper.host }}
       ZOOKEEPER_PORT: ${{ dependencies.zookeeper.services.zookeeper.port }}

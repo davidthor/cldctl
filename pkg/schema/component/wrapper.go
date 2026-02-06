@@ -21,6 +21,14 @@ func (c *componentWrapper) SchemaVersion() string { return c.ic.SourceVersion }
 func (c *componentWrapper) SourcePath() string   { return c.ic.SourcePath }
 func (c *componentWrapper) Internal() *internal.InternalComponent { return c.ic }
 
+func (c *componentWrapper) Builds() []ComponentBuild {
+	result := make([]ComponentBuild, len(c.ic.Builds))
+	for i := range c.ic.Builds {
+		result[i] = &componentBuildWrapper{b: &c.ic.Builds[i]}
+	}
+	return result
+}
+
 func (c *componentWrapper) Databases() []Database {
 	result := make([]Database, len(c.ic.Databases))
 	for i := range c.ic.Databases {
@@ -167,6 +175,17 @@ func (b *buildWrapper) Dockerfile() string         { return b.b.Dockerfile }
 func (b *buildWrapper) Target() string             { return b.b.Target }
 func (b *buildWrapper) Args() map[string]string    { return b.b.Args }
 
+// ComponentBuild wrapper
+type componentBuildWrapper struct {
+	b *internal.InternalComponentBuild
+}
+
+func (cb *componentBuildWrapper) Name() string             { return cb.b.Name }
+func (cb *componentBuildWrapper) Context() string          { return cb.b.Context }
+func (cb *componentBuildWrapper) Dockerfile() string       { return cb.b.Dockerfile }
+func (cb *componentBuildWrapper) Target() string           { return cb.b.Target }
+func (cb *componentBuildWrapper) Args() map[string]string  { return cb.b.Args }
+
 // Bucket wrapper
 type bucketWrapper struct {
 	b *internal.InternalBucket
@@ -201,20 +220,32 @@ type deploymentWrapper struct {
 	dep *internal.InternalDeployment
 }
 
-func (d *deploymentWrapper) Name() string       { return d.dep.Name }
-func (d *deploymentWrapper) Image() string      { return d.dep.Image }
-func (d *deploymentWrapper) Command() []string  { return d.dep.Command }
-func (d *deploymentWrapper) Entrypoint() []string { return d.dep.Entrypoint }
-func (d *deploymentWrapper) CPU() string        { return d.dep.CPU }
-func (d *deploymentWrapper) Memory() string     { return d.dep.Memory }
-func (d *deploymentWrapper) Replicas() int      { return d.dep.Replicas }
+func (d *deploymentWrapper) Name() string             { return d.dep.Name }
+func (d *deploymentWrapper) Image() string            { return d.dep.Image }
+func (d *deploymentWrapper) Command() []string        { return d.dep.Command }
+func (d *deploymentWrapper) Entrypoint() []string     { return d.dep.Entrypoint }
+func (d *deploymentWrapper) WorkingDirectory() string { return d.dep.WorkingDirectory }
+func (d *deploymentWrapper) CPU() string              { return d.dep.CPU }
+func (d *deploymentWrapper) Memory() string           { return d.dep.Memory }
+func (d *deploymentWrapper) Replicas() int            { return d.dep.Replicas }
 
-func (d *deploymentWrapper) Build() Build {
-	if d.dep.Build == nil {
+func (d *deploymentWrapper) Runtime() Runtime {
+	if d.dep.Runtime == nil {
 		return nil
 	}
-	return &buildWrapper{b: d.dep.Build}
+	return &runtimeWrapper{rt: d.dep.Runtime}
 }
+
+// Runtime wrapper
+type runtimeWrapper struct {
+	rt *internal.InternalRuntime
+}
+
+func (r *runtimeWrapper) Language() string   { return r.rt.Language }
+func (r *runtimeWrapper) OS() string         { return r.rt.OS }
+func (r *runtimeWrapper) Arch() string       { return r.rt.Arch }
+func (r *runtimeWrapper) Packages() []string { return r.rt.Packages }
+func (r *runtimeWrapper) Setup() []string    { return r.rt.Setup }
 
 func (d *deploymentWrapper) Environment() map[string]string {
 	result := make(map[string]string)

@@ -47,7 +47,7 @@ Each hook handles a component resource type:
 | Hook | Purpose | Required Outputs |
 |------|---------|-----------------|
 | `database` | Provision databases | `host`, `port`, `url`, `username`, `password` |
-| `databaseMigration` | Run migrations | `id`, `status` |
+| `task` | One-shot jobs (e.g., migrations) | `id` |
 | `bucket` | Object storage | `endpoint`, `bucket`, `accessKeyId`, `secretAccessKey` |
 | `encryptionKey` | Encryption keys | RSA/ECDSA: `privateKey`, `publicKey`, `privateKeyBase64`, `publicKeyBase64`; Symmetric: `key`, `keyBase64` |
 | `smtp` | Email sending | `host`, `port`, `username`, `password` |
@@ -74,14 +74,14 @@ Each hook handles a component resource type:
 ```hcl
 database {
   # Conditional - which database types this hook handles
-  when = node.inputs.databaseType == "postgres"
+  when = element(split(":", node.inputs.type), 0) == "postgres"
   
   module "postgres" {
     plugin = "native"
     build  = "./modules/docker-postgres"
     inputs = {
       name     = "${environment.name}-${node.component}-${node.name}"
-      version  = coalesce(node.inputs.databaseVersion, "16")
+      version  = coalesce(try(element(split(":", node.inputs.type), 1), null), "16")
       database = node.name
     }
   }
@@ -96,6 +96,36 @@ database {
   }
 }
 ```
+
+## Deployment Routing Pattern
+
+Deployments support three modes via `when` conditions:
+
+```hcl
+# Container-based (image present)
+deployment {
+  when = node.inputs.image != null
+  module "container" { ... }
+}
+
+# VM-based (runtime present, no image)
+deployment {
+  when = node.inputs.runtime != null && node.inputs.image == null
+  module "vm" {
+    plugin = "opentofu"
+    build  = "./modules/ec2-vm"     # or do-droplet, gce-instance
+    inputs = merge(node.inputs, { ... })
+  }
+}
+
+# Process-based (no image, no runtime - local dev)
+deployment {
+  when = node.inputs.image == null && node.inputs.runtime == null
+  module "process" { ... }
+}
+```
+
+The `node.inputs.runtime` object contains: `language`, `os`, `arch`, `packages`, `setup`.
 
 ## IaC Plugins
 

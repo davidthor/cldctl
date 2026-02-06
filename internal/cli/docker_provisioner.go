@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -422,26 +423,120 @@ func (p *DockerProvisioner) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-// CleanupByEnvName removes all containers for a given environment.
+// CleanupByEnvName removes all containers, volumes, networks, and processes for a given environment.
 func CleanupByEnvName(ctx context.Context, envName string) error {
 	// List all containers with the environment prefix
 	prefix := fmt.Sprintf("%s-", envName)
 	cmd := exec.CommandContext(ctx, "docker", "ps", "-a", "--filter", fmt.Sprintf("name=%s", prefix), "-q")
 	output, err := cmd.Output()
-	if err != nil {
-		return nil // No containers found
+	if err == nil {
+		containerIDs := strings.Fields(string(output))
+		for _, id := range containerIDs {
+			_ = exec.CommandContext(ctx, "docker", "rm", "-f", id).Run()
+		}
 	}
 
-	containerIDs := strings.Fields(string(output))
-	for _, id := range containerIDs {
-		_ = exec.CommandContext(ctx, "docker", "rm", "-f", id).Run()
+	// List and remove all volumes with the environment prefix
+	cmd = exec.CommandContext(ctx, "docker", "volume", "ls", "--filter", fmt.Sprintf("name=%s", prefix), "-q")
+	output, err = cmd.Output()
+	if err == nil {
+		volumeIDs := strings.Fields(string(output))
+		for _, id := range volumeIDs {
+			_ = exec.CommandContext(ctx, "docker", "volume", "rm", "-f", id).Run()
+		}
 	}
 
 	// Remove network
 	networkName := fmt.Sprintf("arcctl-%s", envName)
 	_ = exec.CommandContext(ctx, "docker", "network", "rm", networkName).Run()
 
+	// Kill any orphaned local processes for this environment
+	// This handles cases where arcctl was force-killed and processes weren't cleaned up
+	KillProcessesByNamePattern(ctx, prefix)
+
 	return nil
+}
+
+// KillProcessesByNamePattern kills processes whose command line contains the given pattern.
+// This is used to clean up orphaned processes from previous runs.
+func KillProcessesByNamePattern(ctx context.Context, pattern string) {
+	// Use pgrep to find processes by pattern (works on macOS and Linux)
+	cmd := exec.CommandContext(ctx, "pgrep", "-f", pattern)
+	output, err := cmd.Output()
+	if err != nil {
+		return // No matching processes
+	}
+
+	pids := strings.Fields(string(output))
+	for _, pidStr := range pids {
+		pid, err := strconv.Atoi(pidStr)
+		if err != nil {
+			continue
+		}
+		// Don't kill ourselves
+		if pid == os.Getpid() {
+			continue
+		}
+		// Send SIGTERM first
+		_ = exec.CommandContext(ctx, "kill", "-TERM", pidStr).Run()
+	}
+
+	// Give processes a moment to exit gracefully
+	time.Sleep(500 * time.Millisecond)
+
+	// Force kill any remaining processes
+	cmd = exec.CommandContext(ctx, "pgrep", "-f", pattern)
+	output, _ = cmd.Output()
+	pids = strings.Fields(string(output))
+	for _, pidStr := range pids {
+		pid, err := strconv.Atoi(pidStr)
+		if err != nil || pid == os.Getpid() {
+			continue
+		}
+		_ = exec.CommandContext(ctx, "kill", "-9", pidStr).Run()
+	}
+}
+
+// KillProcessesOnPorts kills any process listening on the specified ports.
+// This is useful for cleaning up orphaned processes that are blocking ports.
+func KillProcessesOnPorts(ctx context.Context, ports ...int) {
+	for _, port := range ports {
+		// Use lsof to find the process (works on macOS and Linux)
+		cmd := exec.CommandContext(ctx, "lsof", "-ti", fmt.Sprintf("tcp:%d", port))
+		output, err := cmd.Output()
+		if err != nil {
+			continue // No process on this port
+		}
+
+		pids := strings.Fields(string(output))
+		for _, pidStr := range pids {
+			pid, err := strconv.Atoi(pidStr)
+			if err != nil || pid == os.Getpid() {
+				continue
+			}
+			// Send SIGTERM
+			_ = exec.CommandContext(ctx, "kill", "-TERM", pidStr).Run()
+		}
+	}
+
+	// Give processes a moment to exit
+	if len(ports) > 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Force kill any remaining
+	for _, port := range ports {
+		cmd := exec.CommandContext(ctx, "lsof", "-ti", fmt.Sprintf("tcp:%d", port))
+		output, _ := cmd.Output()
+		pids := strings.Fields(string(output))
+		for _, pidStr := range pids {
+			pid, err := strconv.Atoi(pidStr)
+			if err != nil || pid == os.Getpid() {
+				continue
+			}
+			_ = exec.CommandContext(ctx, "kill", "-9", pidStr).Run()
+		}
+	}
 }
 
 func (p *DockerProvisioner) waitForHealthy(ctx context.Context, containerName string, timeout time.Duration) error {

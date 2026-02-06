@@ -124,10 +124,13 @@ encryptionKeys:
     type: salt
     bytes: 32
 
+builds:
+  api:
+    context: ./api
+
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       # RSA key - base64 encoded for safe env var transport
       RSA_PRIVATE_KEY: ${{ encryptionKeys.webhook-key.privateKeyBase64 }}

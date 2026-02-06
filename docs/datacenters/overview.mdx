@@ -64,7 +64,7 @@ Hooks define how each resource type from components gets fulfilled:
     Provision databases (PostgreSQL, MySQL, Redis)
   </Card>
   <Card title="Deployment Hook" icon="server" href="/datacenters/deployment-hook">
-    Create container deployments
+    Create container, VM, or process deployments
   </Card>
   <Card title="Function Hook" icon="bolt" href="/datacenters/function-hook">
     Deploy serverless functions
@@ -139,7 +139,7 @@ environment {
   }
 
   database {
-    when = node.inputs.databaseType == "postgres"
+    when = element(split(":", node.inputs.type), 0) == "postgres"
     
     module "rds" {
       build = "./modules/rds-postgres"

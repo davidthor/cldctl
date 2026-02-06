@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/architect-io/arcctl/pkg/graph"
 	"github.com/architect-io/arcctl/pkg/iac"
 	"github.com/architect-io/arcctl/pkg/schema/component"
+	"github.com/architect-io/arcctl/pkg/schema/datacenter"
 	"github.com/architect-io/arcctl/pkg/schema/environment"
 	"github.com/architect-io/arcctl/pkg/state"
 )
@@ -23,6 +26,7 @@ type Engine struct {
 	iacRegistry  *iac.Registry
 	compLoader   component.Loader
 	envLoader    environment.Loader
+	dcLoader     datacenter.Loader
 }
 
 // NewEngine creates a new deployment engine.
@@ -32,6 +36,7 @@ func NewEngine(stateManager state.Manager, iacRegistry *iac.Registry) *Engine {
 		iacRegistry:  iacRegistry,
 		compLoader:   component.NewLoader(),
 		envLoader:    environment.NewLoader(),
+		dcLoader:     datacenter.NewLoader(),
 	}
 }
 
@@ -79,6 +84,25 @@ func (e *Engine) Deploy(ctx context.Context, opts DeployOptions) (*DeployResult,
 
 	result := &DeployResult{}
 
+	// Load datacenter configuration
+	dcState, err := e.stateManager.GetDatacenter(ctx, opts.Datacenter)
+	if err != nil {
+		return nil, fmt.Errorf("datacenter %q not found: %w", opts.Datacenter, err)
+	}
+
+	// Load the datacenter schema from the stored path
+	// The Version field contains the source path or OCI reference
+	dcPath := dcState.Version
+	if dcPath == "" {
+		return nil, fmt.Errorf("datacenter %q has no source path configured", opts.Datacenter)
+	}
+
+	// Load the datacenter configuration
+	dc, err := e.loadDatacenterConfig(dcPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load datacenter configuration: %w", err)
+	}
+
 	// Build dependency graph
 	builder := graph.NewBuilder(opts.Environment, opts.Datacenter)
 
@@ -121,13 +145,21 @@ func (e *Engine) Deploy(ctx context.Context, opts DeployOptions) (*DeployResult,
 		return result, nil
 	}
 
+	// Build datacenter variables map
+	dcVars := make(map[string]interface{})
+	for k, v := range dcState.Variables {
+		dcVars[k] = v
+	}
+
 	// Execute plan
 	execOpts := executor.Options{
-		Parallelism: opts.Parallelism,
-		Output:      opts.Output,
-		DryRun:      false,
-		StopOnError: true,
-		OnProgress:  opts.OnProgress,
+		Parallelism:         opts.Parallelism,
+		Output:              opts.Output,
+		DryRun:              false,
+		StopOnError:         true,
+		OnProgress:          opts.OnProgress,
+		Datacenter:          dc,
+		DatacenterVariables: dcVars,
 	}
 
 	exec := executor.NewExecutor(e.stateManager, e.iacRegistry, execOpts)
@@ -148,6 +180,44 @@ func (e *Engine) Deploy(ctx context.Context, opts DeployOptions) (*DeployResult,
 	result.Duration = time.Since(startTime)
 
 	return result, nil
+}
+
+// loadDatacenterConfig loads a datacenter configuration from a path or OCI reference.
+func (e *Engine) loadDatacenterConfig(ref string) (datacenter.Datacenter, error) {
+	// Check if this is a local path
+	isLocalPath := !strings.Contains(ref, ":") || strings.HasPrefix(ref, "./") || strings.HasPrefix(ref, "/") || strings.HasPrefix(ref, "../")
+
+	if isLocalPath {
+		// Resolve to absolute path
+		absPath := ref
+		if !filepath.IsAbs(ref) {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get working directory: %w", err)
+			}
+			absPath = filepath.Join(cwd, ref)
+		}
+
+		// Check if it's a directory
+		info, err := os.Stat(absPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to access datacenter path: %w", err)
+		}
+
+		dcFile := absPath
+		if info.IsDir() {
+			// Look for datacenter file in directory
+			dcFile = filepath.Join(absPath, "datacenter.dc")
+			if _, err := os.Stat(dcFile); os.IsNotExist(err) {
+				dcFile = filepath.Join(absPath, "datacenter.hcl")
+			}
+		}
+
+		return e.dcLoader.Load(dcFile)
+	}
+
+	// TODO: Load from OCI reference
+	return nil, fmt.Errorf("OCI datacenter references not yet supported: %s", ref)
 }
 
 // DestroyOptions configures a destroy operation.

@@ -68,12 +68,20 @@ type BuildResult struct {
 
 // BuildImage builds a Docker image from a Dockerfile.
 func (d *DockerClient) BuildImage(ctx context.Context, opts BuildOptions) (*BuildResult, error) {
+	if os.Getenv("ARCCTL_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "[debug] BuildImage: creating build context for %s\n", opts.Context)
+	}
+
 	// Create build context tar
 	contextTar, err := d.createBuildContext(opts.Context, opts.Dockerfile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create build context: %w", err)
 	}
 	defer contextTar.Close()
+
+	if os.Getenv("ARCCTL_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "[debug] BuildImage: build context created, starting Docker build\n")
+	}
 
 	// Prepare build options
 	dockerfile := opts.Dockerfile
@@ -178,6 +186,7 @@ func (d *DockerClient) createBuildContext(contextPath, dockerfile string) (io.Re
 // processBuildOutput reads the build output and extracts the image ID.
 func (d *DockerClient) processBuildOutput(reader io.Reader, stdout, stderr io.Writer) (string, error) {
 	var imageID string
+	var lastStep string
 	decoder := json.NewDecoder(reader)
 
 	for {
@@ -206,10 +215,23 @@ func (d *DockerClient) processBuildOutput(reader io.Reader, stdout, stderr io.Wr
 			if msg.ErrorDetail.Message != "" {
 				errMsg = msg.ErrorDetail.Message
 			}
+			// Include last step for context
+			if lastStep != "" && stderr != nil {
+				fmt.Fprintf(stderr, "[build] Failed at: %s\n", lastStep)
+			}
 			return "", fmt.Errorf("%s", errMsg)
 		}
 
-		// Write stream output
+		// Track build steps (lines starting with "Step X/Y")
+		if strings.HasPrefix(msg.Stream, "Step ") {
+			lastStep = strings.TrimSpace(msg.Stream)
+			// Show step progress in debug mode
+			if stderr != nil && os.Getenv("ARCCTL_DEBUG") != "" {
+				fmt.Fprintf(stderr, "[build] %s", msg.Stream)
+			}
+		}
+
+		// Write stream output (full output in verbose mode)
 		if msg.Stream != "" && stdout != nil {
 			stdout.Write([]byte(msg.Stream))
 		}

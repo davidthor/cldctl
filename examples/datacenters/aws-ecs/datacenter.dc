@@ -99,8 +99,8 @@ environment {
       build = "./modules/rds-database"
       inputs = {
         name              = "${environment.name}-${node.name}"
-        type              = node.inputs.databaseType
-        version           = node.inputs.databaseVersion
+        type              = element(split(":", node.inputs.type), 0)
+        version           = try(element(split(":", node.inputs.type), 1), null)
         region            = variable.aws_region
         vpc_id            = variable.vpc_id
         instance_class    = "db.t3.micro"
@@ -117,27 +117,20 @@ environment {
     }
   }
 
-  # Run database migrations using ECS Tasks (Fargate)
-  # Waits for task completion before continuing deployment
-  databaseMigration {
-    module "migration_task" {
+  # Task hook - run one-time containers (e.g., database migrations)
+  # Uses ECS Tasks (Fargate) for one-time execution
+  task {
+    module "run_task" {
       build = "./modules/ecs-task"
       inputs = {
-        name              = "${node.component}--${node.name}--migration"
+        name              = "${node.component}--${node.name}"
         cluster           = variable.cluster_name
         vpc_id            = variable.vpc_id
         security_group_id = module.security_group.id
         log_group         = module.log_group.name
         image             = node.inputs.image
         command           = node.inputs.command
-        environment = merge(node.inputs.environment, {
-          DATABASE_URL      = node.inputs.databaseUrl
-          DATABASE_HOST     = node.inputs.databaseHost
-          DATABASE_PORT     = node.inputs.databasePort
-          DATABASE_NAME     = node.inputs.databaseName
-          DATABASE_USER     = node.inputs.databaseUser
-          DATABASE_PASSWORD = node.inputs.databasePassword
-        })
+        environment       = node.inputs.environment
         # Use Fargate SPOT for cost-effective one-time tasks
         capacity_provider = "FARGATE_SPOT"
         cpu               = "256"
@@ -146,8 +139,8 @@ environment {
     }
 
     outputs = {
-      id     = module.migration_task.task_arn
-      status = module.migration_task.status
+      id     = module.run_task.task_arn
+      status = module.run_task.status
     }
   }
 
@@ -171,7 +164,10 @@ environment {
     }
   }
 
+  # Deployment hook - container-based (image present)
   deployment {
+    when = node.inputs.image != null
+
     module "ecs_service" {
       build = "./modules/ecs-service"
       inputs = merge(node.inputs, {
@@ -184,6 +180,26 @@ environment {
 
     outputs = {
       id = module.ecs_service.service_id
+    }
+  }
+
+  # Deployment hook - VM-based (runtime present, no image)
+  # Provisions EC2 instances for workloads using the runtime property
+  deployment {
+    when = node.inputs.runtime != null && node.inputs.image == null
+
+    module "ec2_vm" {
+      plugin = "opentofu"
+      build  = "./modules/ec2-vm"
+      inputs = merge(node.inputs, {
+        name           = "${environment.name}-${node.component}-${node.name}"
+        subnet_id      = module.security_group.subnet_id
+        security_group = module.security_group.id
+      })
+    }
+
+    outputs = {
+      id = module.ec2_vm.instance_id
     }
   }
 

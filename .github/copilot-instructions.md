@@ -109,10 +109,13 @@ routes:
 
 ```yaml
 # For long-running services like workers or APIs
+builds:
+  api:
+    context: ./api
+
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
       LOG_LEVEL: ${{ variables.log_level }}
@@ -141,7 +144,56 @@ variables:
     default: "info"
 ```
 
+### Dev/Prod with Extends
+
+```yaml
+# architect.yml (dev base - runs as a local process)
+deployments:
+  api:
+    command: ["npm", "run", "dev"]
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+```
+
+```yaml
+# architect.prod.yml (production - adds Docker build)
+extends: architect.yml
+
+builds:
+  api:
+    context: ./api
+
+deployments:
+  api:
+    image: ${{ builds.api.image }}
+    command: ["npm", "start"]
+```
+
+### VM-based Deployment with Runtime
+
+Use `runtime` to deploy on VMs (EC2, Droplets, GCE). Supports string shorthand or full object:
+
+```yaml
+deployments:
+  worker:
+    runtime: node:20                    # String shorthand
+    command: ["node", "dist/worker.js"]
+```
+
+```yaml
+deployments:
+  worker:
+    runtime:
+      language: node:20          # Required
+      os: linux                  # Optional (linux, windows)
+      arch: amd64                # Optional (amd64, arm64)
+      packages: [ffmpeg]         # Optional system deps
+      setup: [npm ci --production] # Optional provisioning commands
+    command: ["node", "dist/worker.js"]
+```
+
 ### Expression References
+- `builds.<name>.image`
 - `databases.<name>.url|host|port|username|password`
 - `buckets.<name>.endpoint|bucket|accessKeyId|secretAccessKey`
 - `services.<name>.url|host|port`
@@ -168,14 +220,14 @@ module "network" {
 
 environment {
   database {
-    when = node.inputs.databaseType == "postgres"
+    when = element(split(":", node.inputs.type), 0) == "postgres"
     
     module "postgres" {
       plugin = "native"
       build  = "./modules/docker-postgres"
       inputs = {
         name    = "${environment.name}-${node.component}-${node.name}"
-        version = coalesce(node.inputs.databaseVersion, "16")
+        version = coalesce(try(element(split(":", node.inputs.type), 1), null), "16")
       }
     }
     
@@ -207,7 +259,7 @@ environment {
 
 ### Hook Types
 - `database` - Databases (postgres, mysql, redis)
-- `databaseMigration` - Migration runners
+- `task` - One-shot jobs (e.g., migrations)
 - `bucket` - Object storage
 - `deployment` - Container workloads
 - `function` - Serverless functions

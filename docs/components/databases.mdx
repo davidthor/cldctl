@@ -150,10 +150,13 @@ databases:
   analytics:
     type: postgres:^15
 
+builds:
+  api:
+    context: ./api
+
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       DATABASE_URL: ${{ databases.main.url }}
       REDIS_URL: ${{ databases.cache.url }}

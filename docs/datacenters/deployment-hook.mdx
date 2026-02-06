@@ -1,11 +1,11 @@
 ---
 title: "Deployment Hook"
-description: "Create container deployments for components"
+description: "Create container, VM, or process deployments for components"
 ---
 
 # Deployment Hook
 
-The deployment hook creates long-running container workloads when components declare deployments. It receives the deployment specification and creates the appropriate infrastructure.
+The deployment hook creates long-running workloads when components declare deployments. It receives the deployment specification and creates the appropriate infrastructure. Datacenters can use `when` conditions to route deployments to different backends based on the presence of `image`, `runtime`, or neither.
 
 ## Basic Usage
 
@@ -33,15 +33,86 @@ The following inputs are available via `node.inputs`:
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | string | Deployment name |
-| `image` | string | Container image |
-| `command` | string[] | Container command |
+| `image` | string | Container image (optional) |
+| `runtime` | object | Runtime specification for VM-based deployments (optional) |
+| `runtime.language` | string | Language and version (e.g., `node:20`, `python:^3.12`) |
+| `runtime.os` | string | Target OS (`linux`, `windows`) |
+| `runtime.arch` | string | Target architecture (`amd64`, `arm64`) |
+| `runtime.packages` | string[] | System-level dependencies |
+| `runtime.setup` | string[] | Provisioning commands |
+| `command` | string[] | Container/process command |
 | `entrypoint` | string[] | Container entrypoint |
 | `environment` | map | Environment variables |
+| `workingDirectory` | string | Working directory for process-based execution |
 | `cpu` | string | CPU allocation |
 | `memory` | string | Memory allocation |
 | `replicas` | number | Replica count |
 | `liveness_probe` | object | Liveness configuration |
 | `readiness_probe` | object | Readiness configuration |
+
+## Three-Way Routing Model
+
+Datacenters can use `when` conditions to route deployments to different backends:
+
+- **`image` present** -- container-based (Docker, Kubernetes, ECS)
+- **`runtime` present, no `image`** -- VM-based (EC2, Droplets, GCE)
+- **Neither** -- process-based local execution
+
+```hcl
+# Container-based deployments
+deployment {
+  when = node.inputs.image != null
+
+  module "container" {
+    build = "./modules/k8s-deployment"
+    inputs = merge(node.inputs, {
+      namespace  = environment.name
+      kubeconfig = module.k8s.kubeconfig
+    })
+  }
+
+  outputs = {
+    id = module.container.deployment_id
+  }
+}
+
+# VM-based deployments (runtime without image)
+deployment {
+  when = node.inputs.runtime != null && node.inputs.image == null
+
+  module "vm" {
+    plugin = "opentofu"
+    build  = "./modules/ec2-vm"
+    inputs = merge(node.inputs, {
+      name           = "${environment.name}-${node.component}-${node.name}"
+      subnet_id      = module.network.subnet_id
+      security_group = module.sg.id
+      key_pair       = variable.ssh_key_pair
+    })
+  }
+
+  outputs = {
+    id = module.vm.instance_id
+  }
+}
+
+# Process-based deployments (no image, no runtime)
+deployment {
+  when = node.inputs.image == null && node.inputs.runtime == null
+
+  module "process" {
+    plugin = "native"
+    build  = "./modules/process-deployment"
+    inputs = merge(node.inputs, {
+      name = "${environment.name}-${node.component}-${node.name}"
+    })
+  }
+
+  outputs = {
+    id = module.process.id
+  }
+}
+```
 
 ## Required Outputs
 
@@ -221,10 +292,12 @@ deployment {
 
 ## AWS ECS Example
 
-For ECS-based datacenters:
+For ECS-based datacenters (container deployments):
 
 ```hcl
 deployment {
+  when = node.inputs.image != null
+
   module "ecs_service" {
     build = "./modules/ecs-service"
     inputs = {
@@ -240,6 +313,61 @@ deployment {
 
   outputs = {
     id = module.ecs_service.service_arn
+  }
+}
+```
+
+## AWS EC2 VM Example
+
+For VM-based deployments using the `runtime` property:
+
+```hcl
+deployment {
+  when = node.inputs.runtime != null && node.inputs.image == null
+
+  module "ec2_vm" {
+    plugin = "opentofu"
+    build  = "./modules/ec2-vm"
+    inputs = merge(node.inputs, {
+      name           = "${environment.name}-${node.component}-${node.name}"
+      subnet_id      = module.network.subnet_id
+      security_group = module.sg.id
+      key_pair       = variable.ssh_key_pair
+    })
+  }
+
+  outputs = {
+    id = module.ec2_vm.instance_id
+  }
+}
+```
+
+The Terraform module receives the `runtime` object and uses it to:
+1. Select an appropriate base AMI
+2. Install the language runtime (e.g., Node.js, Python, Go)
+3. Install system packages from `runtime.packages`
+4. Run setup commands from `runtime.setup`
+5. Create a systemd service with the deployment command
+
+## DigitalOcean Droplet Example
+
+```hcl
+deployment {
+  when = node.inputs.runtime != null && node.inputs.image == null
+
+  module "droplet" {
+    plugin = "opentofu"
+    build  = "./modules/do-droplet"
+    inputs = merge(node.inputs, {
+      name                = "${environment.name}-${node.component}-${node.name}"
+      region              = variable.region
+      do_token            = variable.do_token
+      ssh_key_fingerprint = variable.ssh_key_fingerprint
+    })
+  }
+
+  outputs = {
+    id = module.droplet.droplet_id
   }
 }
 ```

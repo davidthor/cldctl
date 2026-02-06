@@ -64,7 +64,7 @@ type Environment interface {
 // Hooks provides access to resource hooks.
 type Hooks interface {
 	Database() []Hook
-	DatabaseMigration() []Hook
+	Task() []Hook
 	Bucket() []Hook
 	EncryptionKey() []Hook
 	SMTP() []Hook

@@ -256,10 +256,13 @@ routes:
 ## Complete Example
 
 ```yaml
+builds:
+  api:
+    context: ./api
+
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
 
 functions:
   web:

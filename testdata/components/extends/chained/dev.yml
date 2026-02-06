@@ -1,0 +1,8 @@
+# Dev config: extends base, overrides command
+extends: ./base.yml
+
+deployments:
+  api:
+    command: ["npm", "run", "dev"]
+    environment:
+      NODE_ENV: development

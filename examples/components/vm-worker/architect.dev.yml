@@ -1,0 +1,10 @@
+# Dev variant - runs locally with hot-reloading
+# Usage: arcctl up -c architect.dev.yml
+
+extends: architect.yml
+
+deployments:
+  worker:
+    runtime: node:20
+    command: ["npx", "tsx", "watch", "src/worker.ts"]
+    replicas: 1

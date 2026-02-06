@@ -98,10 +98,13 @@ buckets:
     type: s3
     versioning: true
 
+builds:
+  api:
+    context: ./api
+
 deployments:
   api:
-    build:
-      context: ./api
+    image: ${{ builds.api.image }}
     environment:
       # User uploads bucket
       UPLOADS_ENDPOINT: ${{ buckets.uploads.endpoint }}

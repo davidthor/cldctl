@@ -92,14 +92,14 @@ Handle database provisioning for components:
 environment {
   database {
     # Match PostgreSQL requests
-    when = node.inputs.databaseType == "postgres"
+    when = element(split(":", node.inputs.type), 0) == "postgres"
 
     module "rds" {
       build = "./modules/rds-postgres"
       inputs = {
         name            = "${environment.name}-${node.component}-${node.name}"
         instance_class  = "db.t3.micro"    # Can be made configurable
-        engine_version  = node.inputs.databaseVersion
+        engine_version  = try(element(split(":", node.inputs.type), 1), null)
         region          = variable.region
         vpc_id          = module.vpc.id
         subnet_ids      = module.vpc.private_subnet_ids
@@ -118,7 +118,7 @@ environment {
 
   # Handle Redis separately
   database {
-    when = node.inputs.databaseType == "redis"
+    when = element(split(":", node.inputs.type), 0) == "redis"
 
     module "elasticache" {
       build = "./modules/elasticache-redis"
@@ -139,11 +139,14 @@ environment {
 
 ### Deployment Hook
 
-Handle container deployments:
+Handle container deployments. Use `when` conditions to route deployments based on `image` and `runtime`:
 
 ```hcl
 environment {
+  # Container-based deployments (image present)
   deployment {
+    when = node.inputs.image != null
+
     module "k8s_deployment" {
       build = "./modules/k8s-deployment"
       inputs = merge(node.inputs, {
@@ -168,6 +171,25 @@ environment {
 
     outputs = {
       id = module.k8s_deployment.deployment_id
+    }
+  }
+
+  # VM-based deployments (runtime present, no image)
+  deployment {
+    when = node.inputs.runtime != null && node.inputs.image == null
+
+    module "vm" {
+      plugin = "opentofu"
+      build  = "./modules/ec2-vm"
+      inputs = merge(node.inputs, {
+        name           = "${environment.name}-${node.component}-${node.name}"
+        subnet_id      = module.network.subnet_id
+        security_group = module.sg.id
+      })
+    }
+
+    outputs = {
+      id = module.vm.instance_id
     }
   }
 }

@@ -1,10 +1,14 @@
 // Package v1 implements the v1 component schema.
 package v1
 
+import "fmt"
+
 // SchemaV1 represents the v1 component schema.
 type SchemaV1 struct {
 	Version string `yaml:"version,omitempty" json:"version,omitempty"`
+	Extends string `yaml:"extends,omitempty" json:"extends,omitempty"`
 
+	Builds         map[string]BuildV1         `yaml:"builds,omitempty" json:"builds,omitempty"`
 	Databases      map[string]DatabaseV1      `yaml:"databases,omitempty" json:"databases,omitempty"`
 	Buckets        map[string]BucketV1        `yaml:"buckets,omitempty" json:"buckets,omitempty"`
 	EncryptionKeys map[string]EncryptionKeyV1 `yaml:"encryptionKeys,omitempty" json:"encryptionKeys,omitempty"`
@@ -65,19 +69,52 @@ type SMTPV1 struct {
 }
 
 // DeploymentV1 represents a deployment in the v1 schema.
+// Both image and build are optional. When neither is set, the datacenter decides
+// how to execute the workload (e.g., as a host process for local development).
 type DeploymentV1 struct {
-	Image          string            `yaml:"image,omitempty" json:"image,omitempty"`
-	Build          *BuildV1          `yaml:"build,omitempty" json:"build,omitempty"`
-	Command        []string          `yaml:"command,omitempty" json:"command,omitempty"`
-	Entrypoint     []string          `yaml:"entrypoint,omitempty" json:"entrypoint,omitempty"`
-	Environment    map[string]string `yaml:"environment,omitempty" json:"environment,omitempty"`
-	CPU            string            `yaml:"cpu,omitempty" json:"cpu,omitempty"`
-	Memory         string            `yaml:"memory,omitempty" json:"memory,omitempty"`
-	Replicas       int               `yaml:"replicas,omitempty" json:"replicas,omitempty"`
-	Volumes        []VolumeV1        `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	LivenessProbe  *ProbeV1          `yaml:"liveness_probe,omitempty" json:"liveness_probe,omitempty"`
-	ReadinessProbe *ProbeV1          `yaml:"readiness_probe,omitempty" json:"readiness_probe,omitempty"`
-	Labels         map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Image            string            `yaml:"image,omitempty" json:"image,omitempty"`
+	Runtime          *RuntimeV1        `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	Command          []string          `yaml:"command,omitempty" json:"command,omitempty"`
+	Entrypoint       []string          `yaml:"entrypoint,omitempty" json:"entrypoint,omitempty"`
+	Environment      map[string]string `yaml:"environment,omitempty" json:"environment,omitempty"`
+	WorkingDirectory string            `yaml:"workingDirectory,omitempty" json:"workingDirectory,omitempty"`
+	CPU              string            `yaml:"cpu,omitempty" json:"cpu,omitempty"`
+	Memory           string            `yaml:"memory,omitempty" json:"memory,omitempty"`
+	Replicas         int               `yaml:"replicas,omitempty" json:"replicas,omitempty"`
+	Volumes          []VolumeV1        `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	LivenessProbe    *ProbeV1          `yaml:"liveness_probe,omitempty" json:"liveness_probe,omitempty"`
+	ReadinessProbe   *ProbeV1          `yaml:"readiness_probe,omitempty" json:"readiness_probe,omitempty"`
+	Labels           map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+}
+
+// RuntimeV1 describes the runtime environment for a deployment.
+// Supports both a string shorthand ("node:20") and a full object form.
+// When present without an image, the datacenter can provision a VM or managed runtime.
+type RuntimeV1 struct {
+	Language string   `yaml:"language" json:"language"`                       // Required: language and version (e.g., "node:20", "python:^3.12")
+	OS       string   `yaml:"os,omitempty" json:"os,omitempty"`               // Optional: target OS (default: linux)
+	Arch     string   `yaml:"arch,omitempty" json:"arch,omitempty"`           // Optional: target architecture (default: datacenter's choice)
+	Packages []string `yaml:"packages,omitempty" json:"packages,omitempty"`   // Optional: system-level dependencies
+	Setup    []string `yaml:"setup,omitempty" json:"setup,omitempty"`         // Optional: provisioning commands
+}
+
+// UnmarshalYAML supports both string shorthand ("node:20") and full object form.
+func (r *RuntimeV1) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	// Try string shorthand first
+	var s string
+	if err := unmarshal(&s); err == nil {
+		r.Language = s
+		return nil
+	}
+
+	// Fall back to full object form
+	type rawRuntime RuntimeV1
+	var raw rawRuntime
+	if err := unmarshal(&raw); err != nil {
+		return fmt.Errorf("runtime must be a string (e.g., \"node:20\") or an object with a language field: %w", err)
+	}
+	*r = RuntimeV1(raw)
+	return nil
 }
 
 // FunctionV1 represents a function in the v1 schema.

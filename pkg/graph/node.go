@@ -20,7 +20,7 @@ const (
 	NodeTypeCronjob       NodeType = "cronjob"
 	NodeTypeSecret        NodeType = "secret"
 	NodeTypeDockerBuild   NodeType = "dockerBuild"
-	NodeTypeMigration     NodeType = "migration"
+	NodeTypeTask          NodeType = "task"
 )
 
 // Node represents a resource in the dependency graph.
