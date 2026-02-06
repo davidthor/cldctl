@@ -104,8 +104,9 @@ func collectAllModules(dc datacenter.Datacenter, dcPath string) map[string]modul
 			}
 		}
 
-		// Collect modules from hooks
+		// Collect modules from all hook types
 		collectHookModules(env.Hooks().Database(), modules, dcPath)
+		collectHookModules(env.Hooks().DatabaseUser(), modules, dcPath)
 		collectHookModules(env.Hooks().Task(), modules, dcPath)
 		collectHookModules(env.Hooks().Bucket(), modules, dcPath)
 		collectHookModules(env.Hooks().EncryptionKey(), modules, dcPath)
@@ -117,6 +118,7 @@ func collectAllModules(dc datacenter.Datacenter, dcPath string) map[string]modul
 		collectHookModules(env.Hooks().Cronjob(), modules, dcPath)
 		collectHookModules(env.Hooks().Secret(), modules, dcPath)
 		collectHookModules(env.Hooks().DockerBuild(), modules, dcPath)
+		collectHookModules(env.Hooks().Observability(), modules, dcPath)
 	}
 
 	return modules

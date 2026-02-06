@@ -367,8 +367,9 @@ When building a datacenter, arcctl bundles all IaC modules:
 				path = args[0]
 			}
 
-			// Determine datacenter file location
+			// Determine datacenter file location and normalize path to directory
 			dcFile := file
+			dcDir := path
 			if dcFile == "" {
 				// Check if path is a file or directory
 				info, err := os.Stat(path)
@@ -383,8 +384,13 @@ When building a datacenter, arcctl bundles all IaC modules:
 						dcFile = filepath.Join(path, "datacenter.hcl")
 					}
 				} else {
+					// Path is a file; derive directory from it
 					dcFile = path
+					dcDir = filepath.Dir(path)
 				}
+			} else {
+				// Explicit file provided; derive directory from it
+				dcDir = filepath.Dir(dcFile)
 			}
 
 			// Load and validate the datacenter
@@ -394,24 +400,25 @@ When building a datacenter, arcctl bundles all IaC modules:
 				return fmt.Errorf("failed to load datacenter: %w", err)
 			}
 
-			fmt.Printf("Building datacenter: %s\n\n", filepath.Base(path))
+			fmt.Printf("Building datacenter: %s\n\n", filepath.Base(dcDir))
 
-			// Determine module artifacts
+			// Collect all modules from datacenter, environment, and hooks
+			allModules := collectAllModules(dc, dcDir)
+
+			// Build the module artifact reference map from discovered modules
 			moduleArtifacts := make(map[string]string)
-			baseRef := strings.TrimSuffix(tag, filepath.Ext(tag))
+			baseRef := tag
 			tagPart := ""
 			if idx := strings.LastIndex(tag, ":"); idx != -1 {
 				baseRef = tag[:idx]
 				tagPart = tag[idx:]
 			}
 
-			// Process modules
-			for _, mod := range dc.Modules() {
-				if mod.Source() != "" && !strings.HasPrefix(mod.Source(), "oci://") {
-					// Local module, needs to be built
-					modRef := fmt.Sprintf("%s-module-%s%s", baseRef, mod.Name(), tagPart)
-					moduleArtifacts[fmt.Sprintf("module/%s", mod.Name())] = modRef
-				}
+			for modulePath := range allModules {
+				// Generate OCI reference for this module (e.g., repo-module-name:tag)
+				modName := strings.TrimPrefix(modulePath, "module/")
+				modRef := fmt.Sprintf("%s-module-%s%s", baseRef, modName, tagPart)
+				moduleArtifacts[modulePath] = modRef
 			}
 
 			// Apply module tag overrides
@@ -424,7 +431,7 @@ When building a datacenter, arcctl bundles all IaC modules:
 
 			// Display module artifacts if any
 			if len(moduleArtifacts) > 0 {
-				fmt.Println("Module artifacts to build:")
+				fmt.Printf("Module artifacts to build (%d):\n", len(moduleArtifacts))
 				for module, ref := range moduleArtifacts {
 					fmt.Printf("  %-24s → %s\n", module, ref)
 				}
@@ -436,8 +443,6 @@ When building a datacenter, arcctl bundles all IaC modules:
 				return nil
 			}
 
-			// Build module artifacts
-			fmt.Println()
 			ctx := context.Background()
 
 			// Create module builder
@@ -447,18 +452,10 @@ When building a datacenter, arcctl bundles all IaC modules:
 			}
 			defer moduleBuilder.Close()
 
-			// Collect all modules from datacenter and hooks
-			allModules := collectAllModules(dc, path)
-
+			// Build (and optionally push) each module
 			for modulePath, ref := range moduleArtifacts {
+				modInfo := allModules[modulePath]
 				fmt.Printf("[build] Building %s...\n", modulePath)
-
-				// Find the module source directory
-				modInfo, ok := allModules[modulePath]
-				if !ok {
-					fmt.Printf("[warn] Module %s not found, skipping\n", modulePath)
-					continue
-				}
 
 				// Build the module container image
 				buildResult, err := moduleBuilder.Build(ctx, modInfo.sourceDir, modInfo.plugin, ref)
@@ -468,7 +465,7 @@ When building a datacenter, arcctl bundles all IaC modules:
 
 				fmt.Printf("[success] Built %s (%s)\n", ref, buildResult.ModuleType)
 
-				// Push module image if --push flag is set
+				// Push module image if --push flag is set (native modules are local-only)
 				if push && buildResult.ModuleType != "native" {
 					fmt.Printf("[push] Pushing module %s...\n", ref)
 					if err := moduleBuilder.Push(ctx, ref); err != nil {
@@ -485,13 +482,13 @@ When building a datacenter, arcctl bundles all IaC modules:
 			// Create artifact config
 			config := &oci.DatacenterConfig{
 				SchemaVersion:   "v1",
-				Name:            filepath.Base(path),
+				Name:            filepath.Base(dcDir),
 				ModuleArtifacts: moduleArtifacts,
 				BuildTime:       time.Now().UTC().Format(time.RFC3339),
 			}
 
 			// Build artifact from datacenter directory
-			artifact, err := client.BuildFromDirectory(ctx, path, oci.ArtifactTypeDatacenter, config)
+			artifact, err := client.BuildFromDirectory(ctx, dcDir, oci.ArtifactTypeDatacenter, config)
 			if err != nil {
 				return fmt.Errorf("failed to build artifact: %w", err)
 			}
