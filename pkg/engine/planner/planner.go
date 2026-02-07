@@ -67,12 +67,26 @@ func (p *Plan) IsEmpty() bool {
 	return p.ToCreate == 0 && p.ToUpdate == 0 && p.ToDelete == 0
 }
 
+// PlanOptions configures planning behavior.
+type PlanOptions struct {
+	// ForceUpdate converts Noop actions to Update, used when datacenter config
+	// changes and all resources need re-evaluation against new hooks.
+	ForceUpdate bool
+}
+
 // Planner generates execution plans.
-type Planner struct{}
+type Planner struct {
+	options PlanOptions
+}
 
 // NewPlanner creates a new planner.
 func NewPlanner() *Planner {
 	return &Planner{}
+}
+
+// NewPlannerWithOptions creates a new planner with options.
+func NewPlannerWithOptions(opts PlanOptions) *Planner {
+	return &Planner{options: opts}
 }
 
 // Plan creates an execution plan by comparing desired state (graph) with current state.
@@ -204,6 +218,13 @@ func (p *Planner) planNodeChange(node *graph.Node, existingResources map[string]
 		change.Action = ActionUpdate
 		change.PropertyChanges = changes
 		change.Reason = "resource configuration changed"
+		return change
+	}
+
+	// No input changes detected, but ForceUpdate converts noop to update
+	if p.options.ForceUpdate {
+		change.Action = ActionUpdate
+		change.Reason = "force update (datacenter configuration changed)"
 		return change
 	}
 

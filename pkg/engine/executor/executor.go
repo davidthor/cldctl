@@ -83,6 +83,14 @@ type Options struct {
 
 	// DatacenterVariables are the resolved datacenter variables
 	DatacenterVariables map[string]interface{}
+
+	// ComponentSources maps component name to its source path/OCI reference.
+	// Used to populate ComponentState.Source for re-deploy reconstruction.
+	ComponentSources map[string]string
+
+	// ComponentVariables maps component name to its deployment variables.
+	// Used to populate ComponentState.Variables for re-deploy reconstruction.
+	ComponentVariables map[string]map[string]interface{}
 }
 
 // DefaultOptions returns default executor options.
@@ -95,11 +103,21 @@ func DefaultOptions() Options {
 
 // Executor runs execution plans.
 type Executor struct {
-	stateManager state.Manager
-	iacRegistry  *iac.Registry
-	options      Options
-	graph        *graph.Graph // Store reference to graph for service port lookups
-	stateMu      sync.Mutex   // Protects concurrent access to environment state
+	stateManager   state.Manager
+	iacRegistry    *iac.Registry
+	options        Options
+	graph          *graph.Graph // Store reference to graph for service port lookups
+	stateMu        sync.Mutex   // Protects concurrent access to environment state
+	datacenterName string       // Set at execution start for incremental state saves
+}
+
+// saveStateLocked flushes the in-memory environment state to the backend so that
+// other processes (e.g., `arcctl inspect`) can observe progress in real time.
+// MUST be called while holding e.stateMu. Uses a background context so that
+// saves complete even when the deployment context has been cancelled.
+func (e *Executor) saveStateLocked(envState *types.EnvironmentState) {
+	saveCtx := context.Background()
+	_ = e.stateManager.SaveEnvironment(saveCtx, e.datacenterName, envState)
 }
 
 // NewExecutor creates a new executor.
@@ -114,11 +132,69 @@ func NewExecutor(stateManager state.Manager, iacRegistry *iac.Registry, options 
 	}
 }
 
+// newComponentState creates a new ComponentState for a component, populating
+// metadata from executor options (source, variables) and graph (dependencies).
+func (e *Executor) newComponentState(componentName string) *types.ComponentState {
+	cs := &types.ComponentState{
+		Name:      componentName,
+		Resources: make(map[string]*types.ResourceState),
+		Status:    types.ResourceStatusProvisioning,
+		UpdatedAt: time.Now(),
+	}
+	if e.graph != nil && e.graph.ComponentDependencies != nil {
+		cs.Dependencies = e.graph.ComponentDependencies[componentName]
+	}
+	if e.options.ComponentSources != nil {
+		cs.Source = e.options.ComponentSources[componentName]
+	}
+	if e.options.ComponentVariables != nil {
+		if vars, ok := e.options.ComponentVariables[componentName]; ok {
+			strVars := make(map[string]string, len(vars))
+			for k, v := range vars {
+				strVars[k] = fmt.Sprintf("%v", v)
+			}
+			cs.Variables = strVars
+		}
+	}
+	return cs
+}
+
 // resourceKey returns the type-qualified key for storing a resource in state.
 // Format: "type.name" (e.g., "deployment.api", "database.main").
 // This prevents collisions when different resource types share the same name.
 func resourceKey(node *graph.Node) string {
 	return string(node.Type) + "." + node.Name
+}
+
+// computeComponentStatuses derives each component's status from its child resources.
+// Call this before the final state save so that component-level status is accurate.
+func computeComponentStatuses(envState *types.EnvironmentState) {
+	for _, comp := range envState.Components {
+		if len(comp.Resources) == 0 {
+			continue
+		}
+		allReady := true
+		anyFailed := false
+		for _, res := range comp.Resources {
+			switch res.Status {
+			case types.ResourceStatusFailed:
+				anyFailed = true
+				allReady = false
+			case types.ResourceStatusReady:
+				// still potentially allReady
+			default:
+				allReady = false
+			}
+		}
+		if anyFailed {
+			comp.Status = types.ResourceStatusFailed
+		} else if allReady {
+			comp.Status = types.ResourceStatusReady
+		} else {
+			comp.Status = types.ResourceStatusProvisioning
+		}
+		comp.UpdatedAt = time.Now()
+	}
 }
 
 // Execute runs an execution plan.
@@ -127,6 +203,7 @@ func (e *Executor) Execute(ctx context.Context, plan *planner.Plan, g *graph.Gra
 
 	// Store graph reference for service port lookups
 	e.graph = g
+	e.datacenterName = plan.Datacenter
 
 	result := &ExecutionResult{
 		Success:     true,
@@ -156,6 +233,11 @@ func (e *Executor) Execute(ctx context.Context, plan *planner.Plan, g *graph.Gra
 		envState.Components = make(map[string]*types.ComponentState)
 	}
 
+	// Mark as provisioning and flush so that inspect can see progress immediately
+	envState.Status = types.EnvironmentStatusProvisioning
+	envState.UpdatedAt = time.Now()
+	_ = e.stateManager.SaveEnvironment(ctx, plan.Datacenter, envState)
+
 	// Execute changes in order
 	for _, change := range plan.Changes {
 		if ctx.Err() != nil {
@@ -166,15 +248,52 @@ func (e *Executor) Execute(ctx context.Context, plan *planner.Plan, g *graph.Gra
 
 		// Check if dependencies are satisfied
 		if change.Node != nil && !e.areDependenciesSatisfied(change.Node, g, result) {
+			depErr := fmt.Errorf("dependencies not satisfied")
 			nodeResult := &NodeResult{
 				NodeID:  change.Node.ID,
 				Action:  change.Action,
 				Success: false,
-				Error:   fmt.Errorf("dependencies not satisfied"),
+				Error:   depErr,
 			}
 			result.NodeResults[change.Node.ID] = nodeResult
 			result.Failed++
 			result.Success = false
+
+			// Persist the dependency failure to state so `arcctl inspect` shows it
+			e.stateMu.Lock()
+			if envState.Components == nil {
+				envState.Components = make(map[string]*types.ComponentState)
+			}
+			compState := envState.Components[change.Node.Component]
+			if compState == nil {
+				compState = e.newComponentState(change.Node.Component)
+				envState.Components[change.Node.Component] = compState
+			}
+			if compState.Resources == nil {
+				compState.Resources = make(map[string]*types.ResourceState)
+			}
+			compState.Resources[resourceKey(change.Node)] = &types.ResourceState{
+				Component: change.Node.Component,
+				Name:      change.Node.Name,
+				Type:      string(change.Node.Type),
+				Status:    types.ResourceStatusFailed,
+				Inputs:    change.Node.Inputs,
+				UpdatedAt: time.Now(),
+			}
+			e.saveStateLocked(envState)
+			e.stateMu.Unlock()
+
+			// Fire progress event for the dependency failure
+			if e.options.OnProgress != nil {
+				e.options.OnProgress(ProgressEvent{
+					NodeID:   change.Node.ID,
+					NodeName: change.Node.Name,
+					NodeType: string(change.Node.Type),
+					Status:   "failed",
+					Message:  depErr.Error(),
+					Error:    depErr,
+				})
+			}
 
 			if e.options.StopOnError {
 				break
@@ -230,6 +349,9 @@ func (e *Executor) Execute(ctx context.Context, plan *planner.Plan, g *graph.Gra
 			change.Node.State = graph.NodeStateFailed
 		}
 	}
+
+	// Compute component statuses from child resources
+	computeComponentStatuses(envState)
 
 	// Update environment status
 	if result.Success {
@@ -330,6 +452,11 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 		Action: change.Action,
 	}
 
+	// Resolve ${{ }} component expressions in node inputs (e.g., ${{ builds.api.image }},
+	// ${{ dependencies.*.outputs.* }}, ${{ variables.* }}) BEFORE saving state so that
+	// inspect shows resolved values even while the resource is still provisioning.
+	e.resolveComponentExpressions(change.Node, envState)
+
 	// Lock for state initialization
 	e.stateMu.Lock()
 
@@ -341,16 +468,7 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 	// Get or create component state
 	compState := envState.Components[change.Node.Component]
 	if compState == nil {
-		compState = &types.ComponentState{
-			Name:      change.Node.Component,
-			Resources: make(map[string]*types.ResourceState),
-			Status:    types.ResourceStatusProvisioning,
-			UpdatedAt: time.Now(),
-		}
-		// Record inter-component dependencies from the graph
-		if e.graph != nil && e.graph.ComponentDependencies != nil {
-			compState.Dependencies = e.graph.ComponentDependencies[change.Node.Component]
-		}
+		compState = e.newComponentState(change.Node.Component)
 		envState.Components[change.Node.Component] = compState
 	}
 
@@ -359,11 +477,20 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 		compState.Resources = make(map[string]*types.ResourceState)
 	}
 
-	e.stateMu.Unlock()
+	// Save a "provisioning" entry immediately so that `arcctl inspect` can see
+	// in-progress resources before plugin.Apply returns (which may block for a
+	// long time, e.g. readiness checks on dev-server processes).
+	compState.Resources[resourceKey(change.Node)] = &types.ResourceState{
+		Component: change.Node.Component,
+		Name:      change.Node.Name,
+		Type:      string(change.Node.Type),
+		Status:    types.ResourceStatusProvisioning,
+		Inputs:    change.Node.Inputs,
+		UpdatedAt: time.Now(),
+	}
+	e.saveStateLocked(envState)
 
-	// Resolve ${{ }} component expressions in node inputs (e.g., ${{ builds.api.image }})
-	// by looking at completed dependency nodes' outputs.
-	e.resolveComponentExpressions(change.Node)
+	e.stateMu.Unlock()
 
 	// Find the matching hook from datacenter
 	modulePath, moduleInputs, pluginName, err := e.findMatchingHook(change.Node, envState.Name)
@@ -407,6 +534,7 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 			Inputs:    change.Node.Inputs,
 			UpdatedAt: time.Now(),
 		}
+		e.saveStateLocked(envState)
 		e.stateMu.Unlock()
 
 		return result
@@ -432,6 +560,7 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 		IaCState:  applyResult.State, // Store IaC state for destroy
 		UpdatedAt: time.Now(),
 	}
+	e.saveStateLocked(envState)
 	e.stateMu.Unlock()
 
 	return result
@@ -1153,9 +1282,18 @@ func hashCode(s string) int {
 //   - ${{ observability.endpoint }} → observability node output
 //
 // Also recurses into nested maps (e.g., environment map) to resolve expressions there.
-func (e *Executor) resolveComponentExpressions(node *graph.Node) {
+// envState is used to look up cross-component dependency outputs (dependencies.<name>.outputs.<key>).
+func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types.EnvironmentState) {
 	if e.graph == nil {
 		return
+	}
+
+	// Resolve component variables from executor options
+	compVars := make(map[string]interface{})
+	if e.options.ComponentVariables != nil {
+		if vars, ok := e.options.ComponentVariables[node.Component]; ok {
+			compVars = vars
+		}
 	}
 
 	exprPattern := regexp.MustCompile(`\$\{\{\s*([^}]+)\s*\}\}`)
@@ -1254,11 +1392,58 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node) {
 				return "" // Unknown property resolves to empty
 
 			case "variables":
+				// Resolve from component deployment variables
 				if len(parts) < 2 {
 					return match
 				}
-				if val, ok := node.Inputs["variables_"+parts[1]]; ok {
+				varName := parts[1]
+				if val, ok := compVars[varName]; ok {
 					return fmt.Sprintf("%v", val)
+				}
+				// Fallback: check if stored as variables_<name> in node inputs
+				if val, ok := node.Inputs["variables_"+varName]; ok {
+					return fmt.Sprintf("%v", val)
+				}
+
+			case "dependencies":
+				// Resolve cross-component dependency outputs.
+				// Format: dependencies.<depName>.outputs.<outputKey>
+				// or:     dependencies.<depName>.<outputKey>
+				if len(parts) < 3 {
+					return match
+				}
+				depName := parts[1]
+
+				// Determine the output key (handle both with and without "outputs" segment)
+				var outputKey string
+				if len(parts) >= 4 && parts[2] == "outputs" {
+					outputKey = parts[3]
+				} else {
+					outputKey = parts[2]
+				}
+
+				// First try: look up the dependency component's outputs from the graph
+				// (for components deployed in the same session)
+				for _, graphNode := range e.graph.Nodes {
+					if graphNode.Component == depName && graphNode.Outputs != nil {
+						if val, ok := graphNode.Outputs[outputKey]; ok {
+							return fmt.Sprintf("%v", val)
+						}
+					}
+				}
+
+				// Second try: look up from environment state
+				// (for components deployed in a previous session)
+				if envState != nil {
+					if depComp, ok := envState.Components[depName]; ok {
+						for _, res := range depComp.Resources {
+							if res.Outputs != nil {
+								if val, ok := res.Outputs[outputKey]; ok {
+									return fmt.Sprintf("%v", val)
+								}
+							}
+						}
+					}
 				}
 			}
 
@@ -1714,6 +1899,7 @@ func (e *Executor) executeDestroy(ctx context.Context, change *planner.ResourceC
 		delete(envState.Components, change.Node.Component)
 	}
 
+	e.saveStateLocked(envState)
 	e.stateMu.Unlock()
 
 	return result
@@ -1729,6 +1915,7 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 
 	// Store graph reference for service port lookups
 	e.graph = g
+	e.datacenterName = plan.Datacenter
 
 	result := &ExecutionResult{
 		Success:     true,
@@ -1756,6 +1943,11 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 	if envState.Components == nil {
 		envState.Components = make(map[string]*types.ComponentState)
 	}
+
+	// Mark as provisioning and flush so that inspect can see progress immediately
+	envState.Status = types.EnvironmentStatusProvisioning
+	envState.UpdatedAt = time.Now()
+	_ = e.stateManager.SaveEnvironment(ctx, plan.Datacenter, envState)
 
 	// Concurrency control
 	var mu sync.Mutex
@@ -1819,6 +2011,30 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 						delete(pending, id)
 						failed[id] = true
 						cascaded = true
+
+						// Persist the cascaded failure to state so `arcctl inspect` shows it
+						e.stateMu.Lock()
+						if envState.Components == nil {
+							envState.Components = make(map[string]*types.ComponentState)
+						}
+						compState := envState.Components[change.Node.Component]
+						if compState == nil {
+							compState = e.newComponentState(change.Node.Component)
+							envState.Components[change.Node.Component] = compState
+						}
+						if compState.Resources == nil {
+							compState.Resources = make(map[string]*types.ResourceState)
+						}
+						compState.Resources[resourceKey(change.Node)] = &types.ResourceState{
+							Component: change.Node.Component,
+							Name:      change.Node.Name,
+							Type:      string(change.Node.Type),
+							Status:    types.ResourceStatusFailed,
+							Inputs:    change.Node.Inputs,
+							UpdatedAt: time.Now(),
+						}
+						e.saveStateLocked(envState)
+						e.stateMu.Unlock()
 
 						// Notify progress callback about the failure
 						if e.options.OnProgress != nil {
@@ -1980,6 +2196,7 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 		mu.Unlock()
 
 		// Still save state and return
+		computeComponentStatuses(envState)
 		envState.Status = types.EnvironmentStatusFailed
 		envState.UpdatedAt = time.Now()
 		_ = e.stateManager.SaveEnvironment(ctx, plan.Datacenter, envState)
@@ -2012,6 +2229,9 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 		}
 	}
 	mu.Unlock()
+
+	// Compute component statuses from child resources
+	computeComponentStatuses(envState)
 
 	// Update environment status
 	if result.Success {

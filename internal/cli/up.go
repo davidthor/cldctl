@@ -152,6 +152,72 @@ Examples:
 				return fmt.Errorf("datacenter %q not found: %w\nDeploy a datacenter first with: arcctl deploy datacenter <name> <path>", dc, err)
 			}
 
+			// Create the engine early for dependency resolution
+			eng := createEngine(mgr)
+
+			// Convert vars to interface{} map
+			varsInterface := make(map[string]interface{})
+			for k, v := range vars {
+				varsInterface[k] = v
+			}
+
+			// Build initial component and variable maps
+			componentsMap := map[string]string{componentName: componentFile}
+			variablesMap := map[string]map[string]interface{}{componentName: varsInterface}
+
+			// Resolve dependencies that are not yet deployed in the environment
+			deps, err := eng.ResolveDependencies(ctx, engine.DeployOptions{
+				Environment: envName,
+				Datacenter:  dc,
+				Components:  componentsMap,
+				Variables:   variablesMap,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to resolve dependencies: %w", err)
+			}
+
+			// Handle dependency variables - prompt or error
+			for i := range deps {
+				dep := &deps[i]
+				if len(dep.MissingVariables) > 0 {
+					if !isInteractive() {
+						var names []string
+						for _, v := range dep.MissingVariables {
+							names = append(names, v.Name())
+						}
+						return fmt.Errorf("cannot auto-deploy dependency %q: missing required variables: %s\nProvide values with --var or deploy the dependency manually first",
+							dep.Name, strings.Join(names, ", "))
+					}
+
+					// Prompt for dependency variables
+					fmt.Printf("Dependency %q requires the following variables:\n", dep.Name)
+					fmt.Println()
+
+					depVars := make(map[string]interface{})
+					for _, v := range dep.MissingVariables {
+						value, err := promptForVariable(v)
+						if err != nil {
+							return fmt.Errorf("failed to read variable %q for dependency %q: %w", v.Name(), dep.Name, err)
+						}
+						depVars[v.Name()] = value
+					}
+					fmt.Println()
+					variablesMap[dep.Name] = depVars
+				}
+
+				// Add dependency to the components map
+				componentsMap[dep.Name] = dep.LocalPath
+			}
+
+			// Display auto-deployed dependencies
+			if len(deps) > 0 {
+				fmt.Println("Dependencies to deploy:")
+				for _, dep := range deps {
+					fmt.Printf("  %s (%s)\n", dep.Name, dep.OCIRef)
+				}
+				fmt.Println()
+			}
+
 			// Track if we've started provisioning (for cleanup purposes)
 			provisioningStarted := false
 
@@ -168,8 +234,8 @@ Examples:
 				cleanupCtx := context.Background()
 
 				// Use the engine to destroy the environment
-				eng := createEngine(mgr)
-				_, err := eng.Destroy(cleanupCtx, engine.DestroyOptions{
+				cleanupEng := createEngine(mgr)
+				_, err := cleanupEng.Destroy(cleanupCtx, engine.DestroyOptions{
 					Environment: envName,
 					Datacenter:  dc,
 					Output:      os.Stdout,
@@ -232,68 +298,13 @@ Examples:
 			// Create progress table
 			progress := NewProgressTable(os.Stdout)
 
-			// Build dependency lists for progress tracking
-			var dbDeps []string
-			for _, db := range comp.Databases() {
-				id := resourceID(componentName, "database", db.Name())
-				progress.AddResource(id, db.Name(), "database", componentName, nil)
-				dbDeps = append(dbDeps, id)
+			// Add dependency component resources to progress table first
+			for _, dep := range deps {
+				addComponentToProgressTable(progress, dep.Name, dep.Component)
 			}
 
-			// Buckets have no dependencies
-			for _, bucket := range comp.Buckets() {
-				id := resourceID(componentName, "bucket", bucket.Name())
-				progress.AddResource(id, bucket.Name(), "bucket", componentName, nil)
-			}
-
-			// Functions depend on databases (and their own builds if they have one)
-			for _, fn := range comp.Functions() {
-				fnDeps := dbDeps
-				// Add build dependency if function has a container with build
-				if fn.IsContainerBased() && fn.Container() != nil && fn.Container().Build() != nil {
-					buildID := resourceID(componentName, "dockerBuild", fn.Name()+"-build")
-					progress.AddResource(buildID, fn.Name()+"-build", "build", componentName, nil)
-					fnDeps = append(fnDeps, buildID)
-				}
-				id := resourceID(componentName, "function", fn.Name())
-				progress.AddResource(id, fn.Name(), "function", componentName, fnDeps)
-			}
-
-			// Add top-level build resources
-			buildIDs := make(map[string]string)
-			for _, build := range comp.Builds() {
-				buildID := resourceID(componentName, "dockerBuild", build.Name())
-				progress.AddResource(buildID, build.Name(), "build", componentName, nil)
-				buildIDs[build.Name()] = buildID
-			}
-
-			// Deployments depend on databases (and any builds they reference via expressions)
-			for _, depl := range comp.Deployments() {
-				deplDeps := dbDeps
-				// If deployment image references a build, add it as a dependency
-				for buildName, buildID := range buildIDs {
-					if strings.Contains(depl.Image(), fmt.Sprintf("builds.%s.", buildName)) {
-						deplDeps = append(deplDeps, buildID)
-					}
-				}
-				id := resourceID(componentName, "deployment", depl.Name())
-				progress.AddResource(id, depl.Name(), "deployment", componentName, deplDeps)
-			}
-
-			// Services have no dependencies - they can be created in parallel with deployments
-			// (In Kubernetes and similar platforms, a Service is a networking abstraction
-			// that doesn't require the underlying pods to exist yet)
-			for _, svc := range comp.Services() {
-				id := resourceID(componentName, "service", svc.Name())
-				progress.AddResource(id, svc.Name(), "service", componentName, nil)
-			}
-
-			// Routes have no dependencies - they can be created in parallel with everything
-			// (Routes are external routing configuration that can exist before backends are ready)
-			for _, route := range comp.Routes() {
-				id := resourceID(componentName, "route", route.Name())
-				progress.AddResource(id, route.Name(), "route", componentName, nil)
-			}
+			// Add primary component resources to progress table
+			addComponentToProgressTable(progress, componentName, comp)
 
 			// Print initial progress table
 			progress.PrintInitial()
@@ -322,23 +333,14 @@ Examples:
 				progress.PrintUpdate(event.NodeID)
 			}
 
-			// Create the engine
-			eng := createEngine(mgr)
-
-			// Convert vars to interface{} map
-			varsInterface := make(map[string]interface{})
-			for k, v := range vars {
-				varsInterface[k] = v
-			}
-
 			// Execute deployment using the engine with parallelism
 			// Note: We pass nil for Output to suppress the plan summary which would
 			// interfere with the progress table's ANSI cursor management
 			result, err := eng.Deploy(ctx, engine.DeployOptions{
 				Environment: envName,
 				Datacenter:  dc,
-				Components:  map[string]string{componentName: componentFile},
-				Variables:   map[string]map[string]interface{}{componentName: varsInterface},
+				Components:  componentsMap,
+				Variables:   variablesMap,
 				Output:      nil, // Suppress plan summary - progress table handles display
 				DryRun:      false,
 				AutoApprove: true,
@@ -347,12 +349,20 @@ Examples:
 			})
 
 			if err != nil {
-				cleanupEnvironment("deployment failed")
+				fmt.Fprintln(os.Stderr)
+				fmt.Fprintln(os.Stderr, "Some resources may have been provisioned before the failure.")
+				fmt.Fprintf(os.Stderr, "Inspect the current state with:\n  arcctl inspect %s\n\n", envName)
+				fmt.Fprintf(os.Stderr, "Clean up with:\n  arcctl destroy environment %s\n\n", envName)
 				return fmt.Errorf("deployment failed: %w", err)
 			}
 
 			if !result.Success {
-				cleanupEnvironment("deployment failed")
+				// Don't clean up on failure — preserve state so the user
+				// can inspect what succeeded and what failed.
+				fmt.Fprintln(os.Stderr)
+				fmt.Fprintln(os.Stderr, "Some resources failed to deploy. Successful resources are still running.")
+				fmt.Fprintf(os.Stderr, "Inspect the current state with:\n  arcctl inspect %s\n\n", envName)
+				fmt.Fprintf(os.Stderr, "Clean up with:\n  arcctl destroy environment %s\n\n", envName)
 				if result.Execution != nil && len(result.Execution.Errors) > 0 {
 					return fmt.Errorf("deployment failed: %v", result.Execution.Errors[0])
 				}

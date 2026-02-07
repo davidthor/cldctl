@@ -1,0 +1,45 @@
+# Example: Apollo.io Sales Intelligence Configuration
+# A configuration passthrough component for centralizing Apollo.io settings.
+#
+# Apollo.io provides sales intelligence and engagement tools.
+# This component centralizes Apollo credentials so dependent applications can:
+#   - Access API keys and config via dependencies.<name>.outputs.<field>
+#   - Share consistent Apollo configuration across the environment
+#
+# Usage:
+#   1. Deploy this component once per environment
+#   2. Have your applications depend on it
+#   3. Access values via ${{ dependencies.apollo.outputs.api_key }}
+
+variables:
+  api_key:
+    description: "Apollo.io API key for backend enrichment and engagement"
+    required: true
+    sensitive: true
+
+  app_id:
+    description: "Apollo.io tracking snippet app ID for frontend analytics"
+    required: false
+
+  contact_label_names:
+    description: "Comma-separated list of Apollo contact label names for categorization"
+    required: false
+
+# Outputs expose values to dependent components
+# Access via: ${{ dependencies.apollo.outputs.<name> }}
+outputs:
+  api_key:
+    description: "Apollo.io API key for backend usage"
+    value: ${{ variables.api_key }}
+    sensitive: true
+
+  app_id:
+    description: "Apollo.io tracking snippet app ID for frontend"
+    value: ${{ variables.app_id }}
+
+  contact_label_names:
+    description: "Apollo contact label names"
+    value: ${{ variables.contact_label_names }}
+
+# This component doesn't deploy any infrastructure.
+# It serves as a configuration hub for Apollo.io settings across your environment.

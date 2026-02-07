@@ -63,6 +63,19 @@ variables:
     description: "Whether using test mode keys"
     default: "false"
 
+  # Optional: Product-specific price IDs
+  credits_price_base:
+    description: "Stripe Price ID for base-tier credits (price_...)"
+    required: false
+
+  credits_price_20:
+    description: "Stripe Price ID for 20+ credits tier (price_...)"
+    required: false
+
+  credits_price_50:
+    description: "Stripe Price ID for 50+ credits tier (price_...)"
+    required: false
+
 # Outputs expose values to dependent components
 # Access via: ${{ dependencies.stripe.outputs.<name> }}
 outputs:
@@ -100,6 +113,18 @@ outputs:
   test_mode:
     description: "Whether using test mode"
     value: ${{ variables.test_mode }}
+
+  credits_price_base:
+    description: "Stripe Price ID for base-tier credits"
+    value: ${{ variables.credits_price_base }}
+
+  credits_price_20:
+    description: "Stripe Price ID for 20+ credits tier"
+    value: ${{ variables.credits_price_20 }}
+
+  credits_price_50:
+    description: "Stripe Price ID for 50+ credits tier"
+    value: ${{ variables.credits_price_50 }}
 
 # This component doesn't deploy any infrastructure.
 # It serves as a configuration hub for Stripe settings across your environment.

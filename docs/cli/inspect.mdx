@@ -1,0 +1,171 @@
+---
+title: "arcctl inspect"
+description: "Inspect deployed state or visualize component topology"
+---
+
+# arcctl inspect
+
+Inspect deployed state by providing a slash-separated path, or visualize a component's topology.
+
+## State Inspection
+
+```bash
+arcctl inspect <environment>                          # Show environment details
+arcctl inspect <environment>/<component>              # Show component details
+arcctl inspect <environment>/<component>/<resource>   # Show resource details
+```
+
+Drill into deployed state at any level — environment, component, or individual resource.
+This is especially useful for debugging to see exactly what environment variables, inputs,
+and outputs a deployment or function received after expression resolution.
+
+### Inspect an Environment
+
+```bash
+arcctl inspect staging
+```
+
+Shows environment status, variables, a table of deployed components, and any route URLs.
+
+**Example output:**
+
+```
+Environment: staging
+Datacenter:  my-dc
+Status:      ready
+Created:     2026-01-15 10:00:00
+Updated:     2026-01-16 14:30:00
+
+Components:
+  NAME                 SOURCE                                   STATUS       RESOURCES
+  my-app               ghcr.io/org/my-app:v1                    ready        4
+  shared-db            ghcr.io/org/shared-db:v1                 ready        2
+
+URLs:
+  my-app/main: https://my-app.example.com
+```
+
+### Inspect a Component
+
+```bash
+arcctl inspect staging/my-app
+```
+
+Shows component metadata, variables, dependencies, and a table of all resources
+with their type, status, and summary details.
+
+**Example output:**
+
+```
+Component:   my-app
+Environment: staging
+Datacenter:  my-dc
+Source:      ghcr.io/org/my-app:v1
+Status:      ready
+Deployed:    2026-01-15 10:30:00
+
+Resources:
+  TYPE             NAME                 STATUS       DETAILS
+  database         main                 ready
+  deployment       api                  ready
+  route            main                 ready        https://my-app.example.com
+  service          api                  ready        api.internal:8080
+```
+
+### Inspect a Resource
+
+```bash
+arcctl inspect staging/my-app/api
+```
+
+Shows full resource details including inputs, resolved environment variables, and outputs.
+This is the best way to verify what configuration a deployment or function actually received.
+
+**Example output:**
+
+```
+Resource:    api
+Type:        deployment
+Component:   my-app
+Environment: staging
+Datacenter:  my-dc
+Status:      ready
+Hook:        deployment
+Module:      ecs-service
+Created:     2026-01-15 10:30:00
+Updated:     2026-01-16 14:30:00
+
+Inputs:
+  image:                     123456.dkr.ecr.us-east-1.amazonaws.com/my-app:abc123
+  cpu:                       512m
+  memory:                    1024Mi
+
+Environment Variables:
+  DATABASE_URL               = postgres://user:pass@host:5432/db
+  NODE_ENV                   = production
+  PORT                       = 8080
+  OTEL_EXPORTER_OTLP_ENDPOINT = http://otel-collector:4318
+
+Outputs:
+  id:                        arn:aws:ecs:us-east-1:123456:service/my-app-api
+```
+
+### Disambiguating Resources
+
+If two resources share the same name but have different types (e.g., a `deployment`
+and a `service` both named `api`), qualify the resource with its type:
+
+```bash
+arcctl inspect staging/my-app/deployment/api
+arcctl inspect staging/my-app/service/api
+```
+
+## Component Topology
+
+To visualize a component's resource graph (without deployed state), use the `component` subcommand:
+
+```bash
+arcctl inspect component ./my-app
+arcctl inspect component ghcr.io/myorg/app:v1
+arcctl inspect component ./my-app --expand   # Include dependency graphs
+```
+
+## Flags
+
+| Flag | Shorthand | Description |
+|------|-----------|-------------|
+| `--datacenter` | `-d` | Target datacenter (uses default if not set) |
+| `--output` | `-o` | Output format: `table` (default), `json`, `yaml` |
+| `--backend` | | State backend type |
+| `--backend-config` | | Backend configuration (`key=value`, repeatable) |
+
+## JSON/YAML Output
+
+Use `-o json` or `-o yaml` for machine-readable output, useful for scripting:
+
+```bash
+# Get resource env vars as JSON
+arcctl inspect staging/my-app/api -o json | jq '.inputs.environment'
+
+# Get all component resources as YAML
+arcctl inspect staging/my-app -o yaml
+```
+
+## Examples
+
+```bash
+# Inspect environment in default datacenter
+arcctl inspect production
+
+# Inspect component in a specific datacenter
+arcctl inspect staging/my-app -d my-dc
+
+# Inspect a function's configuration
+arcctl inspect production/frontend/web
+
+# Check what env vars a deployment received
+arcctl inspect staging/my-app/api -o json | jq '.inputs.environment'
+
+# Disambiguate resources with same name
+arcctl inspect staging/my-app/deployment/api
+```

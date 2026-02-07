@@ -1,0 +1,29 @@
+# Example: Loops Email Marketing Configuration
+# A configuration passthrough component for centralizing Loops.so settings.
+#
+# Loops is an email marketing platform for SaaS companies.
+# This component centralizes Loops credentials so dependent applications can:
+#   - Access the API key via dependencies.<name>.outputs.api_key
+#   - Share consistent email marketing configuration across the environment
+#
+# Usage:
+#   1. Deploy this component once per environment
+#   2. Have your applications depend on it
+#   3. Access values via ${{ dependencies.loops.outputs.api_key }}
+
+variables:
+  api_key:
+    description: "Loops API key"
+    required: true
+    sensitive: true
+
+# Outputs expose values to dependent components
+# Access via: ${{ dependencies.loops.outputs.<name> }}
+outputs:
+  api_key:
+    description: "Loops API key for email marketing"
+    value: ${{ variables.api_key }}
+    sensitive: true
+
+# This component doesn't deploy any infrastructure.
+# It serves as a configuration hub for Loops settings across your environment.

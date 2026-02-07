@@ -138,6 +138,39 @@ Plan: 4 to create, 0 to update, 0 to destroy
 Proceed with deployment? [Y/n]:
 ```
 
+## Automatic Dependency Deployment
+
+When a component declares dependencies on other components (via the `dependencies` field in `architect.yml`), arcctl will automatically deploy any dependencies that are not already present in the target environment. Dependencies are resolved transitively -- if dependency A depends on dependency B, both will be deployed.
+
+```
+$ arcctl deploy component ./my-app -e staging
+
+Dependencies to deploy:
+  shared-db (ghcr.io/myorg/shared-db:v1)
+  auth-service (ghcr.io/myorg/auth:v2)
+
+Component:   my-app
+Environment: staging
+...
+```
+
+If a dependency has required variables without defaults, arcctl will prompt you for values in interactive mode:
+
+```
+Dependency "shared-db" requires the following variables:
+
+  admin_password (Database admin password) [required]: ********
+```
+
+In CI/CD or `--auto-approve` mode, missing dependency variables will cause the command to fail:
+
+```
+Error: cannot auto-deploy dependency "shared-db": missing required variables: admin_password
+Provide values with --var or deploy the dependency manually first
+```
+
+Dependencies that are already deployed in the environment are skipped -- they are not updated automatically. To update a dependency, deploy it explicitly.
+
 ## CI/CD Usage
 
 In CI/CD pipelines, use `--auto-approve` and provide all required variables via `--var` or `--var-file`:

@@ -67,6 +67,17 @@ arcctl validate component ./my-app
 arcctl validate datacenter ./dc
 arcctl validate environment ./env.yml
 
+# Inspect deployed state
+arcctl inspect staging                               # Environment details
+arcctl inspect staging/my-app                        # Component details
+arcctl inspect staging/my-app/api                    # Resource details (inputs, env vars, outputs)
+arcctl inspect staging/my-app/deployment/api         # Disambiguate by type
+arcctl inspect staging/my-app/api -o json            # JSON output
+
+# Inspect component topology (not deployed state)
+arcctl inspect component ./my-app                    # Visualize resource graph
+arcctl inspect component ./my-app --expand           # Include dependencies
+
 # Logs and observability
 arcctl logs -e staging -d my-datacenter           # All logs in the environment
 arcctl logs -e staging my-app                     # Logs from one component (uses default DC)
@@ -92,6 +103,19 @@ arcctl deploy datacenter my-dc ./datacenter  # auto-sets default_datacenter
 arcctl create environment staging            # uses my-dc from config
 arcctl deploy component ./my-app -e staging  # uses my-dc from config
 ```
+
+### Automatic Dependency Deployment
+
+When deploying a component that declares `dependencies` in its `architect.yml`, arcctl automatically resolves and deploys any dependency components not already present in the target environment. This applies to both `deploy component` and `up` commands.
+
+- Dependencies are resolved **transitively** (dependency of a dependency is also deployed).
+- Dependencies already deployed in the environment are **skipped** (not updated).
+- If a dependency has required variables without defaults:
+  - **Interactive mode**: the user is prompted for values.
+  - **CI / `--auto-approve`**: the command errors with a message listing the missing variables.
+- Circular dependencies are detected and produce an error.
+- Dependency components are pulled from their OCI registry references, cached locally, and registered in the unified artifact registry.
+- Destroy protection prevents destroying a component that other deployed components depend on (use `--force` to override).
 
 ### Key Directories
 | Path | Purpose |

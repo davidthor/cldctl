@@ -1,0 +1,39 @@
+# Example: Inngest Background Jobs Configuration
+# A configuration passthrough component for centralizing Inngest event-driven job settings.
+#
+# Inngest is a platform for building reliable background jobs and workflows.
+# This component centralizes Inngest credentials so dependent applications can:
+#   - Access event and signing keys via dependencies.<name>.outputs.<field>
+#   - Share consistent job configuration across the environment
+#
+# Usage:
+#   1. Deploy this component once per environment
+#   2. Have your applications depend on it
+#   3. Access values via ${{ dependencies.inngest.outputs.event_key }}
+
+variables:
+  event_key:
+    description: "Inngest event key for sending events"
+    required: true
+    sensitive: true
+
+  signing_key:
+    description: "Inngest signing key for verifying webhook payloads"
+    required: true
+    sensitive: true
+
+# Outputs expose values to dependent components
+# Access via: ${{ dependencies.inngest.outputs.<name> }}
+outputs:
+  event_key:
+    description: "Inngest event key for sending events"
+    value: ${{ variables.event_key }}
+    sensitive: true
+
+  signing_key:
+    description: "Inngest signing key for webhook verification"
+    value: ${{ variables.signing_key }}
+    sensitive: true
+
+# This component doesn't deploy any infrastructure.
+# It serves as a configuration hub for Inngest settings across your environment.

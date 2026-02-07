@@ -56,7 +56,7 @@ arcctl <action> <resource> [arguments] [flags]
 
 | Command | Description |
 |---------|-------------|
-| [`arcctl deploy component`](/cli/deploy/component) | Deploy a component to an environment |
+| [`arcctl deploy component`](/cli/deploy/component) | Deploy a component to an environment (auto-deploys missing dependencies) |
 | [`arcctl deploy datacenter`](/cli/deploy/datacenter) | Deploy/update a datacenter |
 
 ### Destroy Commands
@@ -89,6 +89,13 @@ arcctl <action> <resource> [arguments] [flags]
 | [`arcctl get component`](/cli/get/component) | Get component details |
 | [`arcctl get datacenter`](/cli/get/datacenter) | Get datacenter details |
 | [`arcctl get environment`](/cli/get/environment) | Get environment details |
+
+### Inspect Commands
+
+| Command | Description |
+|---------|-------------|
+| [`arcctl inspect`](/cli/inspect) | Inspect deployed state (environment, component, or resource) |
+| [`arcctl inspect component`](/cli/inspect) | Visualize a component's resource topology |
 
 ### Create Commands
 

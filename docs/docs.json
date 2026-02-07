@@ -228,6 +228,12 @@
             ]
           },
           {
+            "group": "inspect",
+            "pages": [
+              "cli/inspect"
+            ]
+          },
+          {
             "group": "create",
             "pages": [
               "cli/create/environment"

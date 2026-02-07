@@ -1,0 +1,48 @@
+# Example: Intercom Customer Messaging Configuration
+# A configuration passthrough component for centralizing Intercom settings.
+#
+# Intercom provides customer messaging, support, and engagement tools.
+# This component centralizes Intercom credentials so dependent applications can:
+#   - Access API keys and app IDs via dependencies.<name>.outputs.<field>
+#   - Share consistent Intercom configuration across the environment
+#
+# Usage:
+#   1. Deploy this component once per environment
+#   2. Have your applications depend on it
+#   3. Access values via ${{ dependencies.intercom.outputs.app_id }}
+
+variables:
+  app_id:
+    description: "Intercom app ID for the frontend Messenger widget"
+    required: true
+
+  secret_key:
+    description: "Intercom API secret key for backend operations"
+    required: true
+    sensitive: true
+
+  # Optional: Identity verification
+  identity_verification_secret:
+    description: "Intercom identity verification secret for secure mode"
+    required: false
+    sensitive: true
+
+# Outputs expose values to dependent components
+# Access via: ${{ dependencies.intercom.outputs.<name> }}
+outputs:
+  app_id:
+    description: "Intercom app ID for Messenger widget"
+    value: ${{ variables.app_id }}
+
+  secret_key:
+    description: "Intercom API secret key"
+    value: ${{ variables.secret_key }}
+    sensitive: true
+
+  identity_verification_secret:
+    description: "Intercom identity verification secret"
+    value: ${{ variables.identity_verification_secret }}
+    sensitive: true
+
+# This component doesn't deploy any infrastructure.
+# It serves as a configuration hub for Intercom settings across your environment.

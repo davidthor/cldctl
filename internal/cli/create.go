@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
+	"github.com/architect-io/arcctl/pkg/engine"
 	"github.com/architect-io/arcctl/pkg/state/types"
 	"github.com/spf13/cobra"
 )
@@ -89,6 +91,21 @@ Examples:
 
 			if err := mgr.SaveEnvironment(ctx, dc, envState); err != nil {
 				return fmt.Errorf("failed to save environment state: %w", err)
+			}
+
+			// Execute environment-scoped modules (namespaces, security groups, etc.)
+			eng := createEngine(mgr)
+			envResult, err := eng.DeployEnvironment(ctx, engine.DeployEnvironmentOptions{
+				Datacenter:  dc,
+				Environment: envName,
+				Output:      os.Stdout,
+				Parallelism: defaultParallelism,
+			})
+			if err != nil {
+				fmt.Printf("[warning] Failed to provision environment modules: %v\n", err)
+				fmt.Printf("Environment was created but some infrastructure may not be ready.\n")
+			} else if envResult.Success && len(envResult.ModuleOutputs) > 0 {
+				fmt.Printf("[success] %d environment module(s) provisioned\n", len(envResult.ModuleOutputs))
 			}
 
 			fmt.Printf("[success] Environment created successfully\n")

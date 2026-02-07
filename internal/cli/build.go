@@ -345,6 +345,16 @@ If no tag is provided, the artifact is identified by its content digest
 				return fmt.Errorf("failed to compute cache path: %w", err)
 			}
 
+			// Cache the component source so dependency resolution can load it
+			// from the local registry without needing a remote OCI pull.
+			os.RemoveAll(cachePath)
+			if err := os.MkdirAll(cachePath, 0755); err != nil {
+				return fmt.Errorf("failed to create cache directory: %w", err)
+			}
+			if err := copyDirectory(path, cachePath); err != nil {
+				return fmt.Errorf("failed to cache component: %w", err)
+			}
+
 			entry := registry.ArtifactEntry{
 				Reference:  ref,
 				Repository: repo,

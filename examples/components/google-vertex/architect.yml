@@ -1,0 +1,39 @@
+# Example: Google Vertex AI Configuration
+# A configuration passthrough component for centralizing Google Vertex AI access.
+#
+# Google Vertex AI provides access to Google's AI models (Gemini, PaLM, etc.)
+# via a project-scoped API. This component centralizes the project and location
+# settings so dependent applications can:
+#   - Access project/location via dependencies.<name>.outputs.<field>
+#   - Share consistent Vertex AI configuration across the environment
+#
+# Note: Authentication is typically handled via workload identity or service
+# account keys mounted separately. This component manages the project-level config.
+#
+# Usage:
+#   1. Deploy this component once per environment
+#   2. Have your applications depend on it
+#   3. Access values via ${{ dependencies.google-vertex.outputs.project_id }}
+
+variables:
+  project_id:
+    description: "Google Cloud project ID containing the Vertex AI resources"
+    required: true
+
+  location:
+    description: "Google Cloud region for Vertex AI (e.g., us-central1, europe-west4)"
+    default: "us-central1"
+
+# Outputs expose values to dependent components
+# Access via: ${{ dependencies.google-vertex.outputs.<name> }}
+outputs:
+  project_id:
+    description: "Google Cloud project ID for Vertex AI"
+    value: ${{ variables.project_id }}
+
+  location:
+    description: "Google Cloud region for Vertex AI"
+    value: ${{ variables.location }}
+
+# This component doesn't deploy any infrastructure.
+# It serves as a configuration hub for Vertex AI settings across your environment.

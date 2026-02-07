@@ -171,7 +171,7 @@ func TestResolveComponentExpressions_ObservabilityEndpoint(t *testing.T) {
 	_ = g.AddNode(deployNode)
 
 	executor := &Executor{graph: g}
-	executor.resolveComponentExpressions(deployNode)
+	executor.resolveComponentExpressions(deployNode, nil)
 
 	env, ok := deployNode.Inputs["environment"].(map[string]string)
 	if !ok {
@@ -194,7 +194,7 @@ func TestResolveComponentExpressions_ObservabilityNotConfigured(t *testing.T) {
 	_ = g.AddNode(deployNode)
 
 	executor := &Executor{graph: g}
-	executor.resolveComponentExpressions(deployNode)
+	executor.resolveComponentExpressions(deployNode, nil)
 
 	env := deployNode.Inputs["environment"].(map[string]string)
 	assertEnvVar(t, env, "OTEL_EXPORTER_OTLP_ENDPOINT", "")
@@ -213,7 +213,7 @@ func TestResolveComponentExpressions_StringConcatenation(t *testing.T) {
 	_ = g.AddNode(deployNode)
 
 	executor := &Executor{graph: g}
-	executor.resolveComponentExpressions(deployNode)
+	executor.resolveComponentExpressions(deployNode, nil)
 
 	resolved := deployNode.Inputs["some_url"].(string)
 	if resolved != "endpoint=http://otel-collector:4318/v1/traces" {
@@ -237,7 +237,7 @@ func TestResolveComponentExpressions_MapStringInterface(t *testing.T) {
 	_ = g.AddNode(deployNode)
 
 	executor := &Executor{graph: g}
-	executor.resolveComponentExpressions(deployNode)
+	executor.resolveComponentExpressions(deployNode, nil)
 
 	env := deployNode.Inputs["environment"].(map[string]interface{})
 	if env["OTEL_ENDPOINT"] != "http://otel-collector:4318" {

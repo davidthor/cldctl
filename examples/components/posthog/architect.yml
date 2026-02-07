@@ -1,0 +1,44 @@
+# Example: PostHog Product Analytics Configuration
+# A configuration passthrough component for centralizing PostHog settings.
+#
+# PostHog is an open-source product analytics platform (also offered as SaaS).
+# This component centralizes PostHog configuration so dependent applications can:
+#   - Access project keys and settings via dependencies.<name>.outputs.<field>
+#   - Share consistent analytics configuration across the environment
+#
+# Usage:
+#   1. Deploy this component once per environment
+#   2. Have your applications depend on it
+#   3. Access values via ${{ dependencies.posthog.outputs.key }}
+
+variables:
+  key:
+    description: "PostHog project API key (phc_...)"
+    required: true
+
+  debug:
+    description: "Enable PostHog debug mode (logs events to console)"
+    default: "false"
+
+  # Optional: Self-hosted configuration
+  host:
+    description: "PostHog API host (default: https://us.i.posthog.com)"
+    default: "https://us.i.posthog.com"
+
+# Outputs expose values to dependent components
+# Access via: ${{ dependencies.posthog.outputs.<name> }}
+outputs:
+  key:
+    description: "PostHog project API key"
+    value: ${{ variables.key }}
+
+  debug:
+    description: "PostHog debug mode flag"
+    value: ${{ variables.debug }}
+
+  host:
+    description: "PostHog API host"
+    value: ${{ variables.host }}
+
+# This component doesn't deploy any infrastructure.
+# It serves as a configuration hub for PostHog settings across your environment.

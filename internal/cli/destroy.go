@@ -326,19 +326,21 @@ Examples:
 			}
 
 			fmt.Println()
+			fmt.Printf("[destroy] Destroying environment resources...\n")
 
-			// Destroy Docker containers for this environment
-			fmt.Printf("[destroy] Stopping containers...\n")
+			// Use the engine to properly destroy all resources (components + env modules)
+			eng := createEngine(mgr)
+			if err := eng.DestroyEnvironment(ctx, dc, envName, os.Stdout, nil); err != nil {
+				fmt.Printf("[warning] Engine-based destroy encountered errors: %v\n", err)
+			}
+
+			// Also do Docker cleanup as a safety net for any orphaned containers
+			fmt.Printf("[destroy] Stopping any remaining containers...\n")
 			if err := CleanupByEnvName(ctx, envName); err != nil {
 				fmt.Printf("Warning: failed to cleanup containers: %v\n", err)
 			}
 
-			// Destroy components
-			for compName := range env.Components {
-				fmt.Printf("[destroy] Destroying component %q...\n", compName)
-			}
-
-			fmt.Printf("[destroy] Removing environment...\n")
+			fmt.Printf("[destroy] Removing environment state...\n")
 
 			// Delete environment state
 			if err := mgr.DeleteEnvironment(ctx, dc, envName); err != nil {

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/architect-io/arcctl/pkg/engine"
+	"github.com/architect-io/arcctl/pkg/engine/executor"
 	"github.com/architect-io/arcctl/pkg/schema/environment"
 	"github.com/architect-io/arcctl/pkg/state"
 	"github.com/architect-io/arcctl/pkg/state/types"
@@ -209,6 +210,35 @@ func applyEnvironmentConfig(ctx context.Context, mgr state.Manager, dc string, e
 	// Create the engine
 	eng := createEngine(mgr)
 
+	// Re-execute environment-scoped modules to reconcile with any datacenter changes
+	envResult, err := eng.DeployEnvironment(ctx, engine.DeployEnvironmentOptions{
+		Datacenter:  dc,
+		Environment: env.Name,
+		Output:      os.Stdout,
+		Parallelism: defaultParallelism,
+	})
+	if err != nil {
+		fmt.Printf("[warning] Failed to reconcile environment modules: %v\n", err)
+	} else if envResult.Success && len(envResult.ModuleOutputs) > 0 {
+		fmt.Printf("[success] %d environment module(s) reconciled\n", len(envResult.ModuleOutputs))
+	}
+
+	// Create progress callback for component deployments
+	onProgress := func(event executor.ProgressEvent) {
+		switch event.Status {
+		case "running":
+			fmt.Printf("  [%s] %s (%s): provisioning...\n", event.NodeType, event.NodeName, event.NodeID)
+		case "completed":
+			fmt.Printf("  [%s] %s: ready\n", event.NodeType, event.NodeName)
+		case "failed":
+			errMsg := "unknown error"
+			if event.Error != nil {
+				errMsg = event.Error.Error()
+			}
+			fmt.Printf("  [%s] %s: failed (%s)\n", event.NodeType, event.NodeName, errMsg)
+		}
+	}
+
 	// Track any errors
 	var updateErrors []error
 
@@ -257,6 +287,7 @@ func applyEnvironmentConfig(ctx context.Context, mgr state.Manager, dc string, e
 			DryRun:      false,
 			AutoApprove: true, // Already confirmed above
 			Parallelism: defaultParallelism,
+			OnProgress:  onProgress,
 		})
 		if err != nil {
 			fmt.Printf("  Warning: failed to deploy component %q: %v\n", name, err)

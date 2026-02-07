@@ -113,6 +113,20 @@ In the default interactive mode, `arcctl up` watches your source files and autom
 
 The watch behavior respects `.dockerignore` and common ignore patterns.
 
+## Automatic Dependency Deployment
+
+When your component declares dependencies on other components, `arcctl up` will automatically pull and deploy any that are not already present in the environment. Dependencies are resolved transitively.
+
+If a dependency has required variables without defaults, you will be prompted to enter values:
+
+```
+Dependency "shared-db" requires the following variables:
+
+  admin_password (Database admin password) [required]: ********
+```
+
+Dependencies already deployed in the environment are skipped.
+
 ## Local Environment
 
 The local environment uses:

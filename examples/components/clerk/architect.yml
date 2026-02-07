@@ -25,6 +25,12 @@ variables:
     required: true
     sensitive: true
 
+  # Optional: Encryption key for session tokens
+  encryption_key:
+    description: "Clerk encryption key for encrypting session tokens"
+    required: false
+    sensitive: true
+
   # Optional: Webhook configuration
   webhook_secret:
     description: "Clerk webhook signing secret for verifying webhook payloads"
@@ -41,6 +47,11 @@ outputs:
   secret_key:
     description: "Clerk secret key for backend verification"
     value: ${{ variables.secret_key }}
+    sensitive: true
+
+  encryption_key:
+    description: "Clerk encryption key for session tokens"
+    value: ${{ variables.encryption_key }}
     sensitive: true
 
   webhook_secret:

@@ -15,11 +15,132 @@ import (
 )
 
 func newInspectCmd() *cobra.Command {
+	var (
+		datacenter    string
+		outputFormat  string
+		backendType   string
+		backendConfig []string
+	)
+
 	cmd := &cobra.Command{
-		Use:   "inspect",
-		Short: "Inspect and visualize resources",
-		Long:  `Commands for inspecting and visualizing component topologies and configurations.`,
+		Use:   "inspect [environment[/component[/resource]]]",
+		Short: "Inspect deployed state or visualize component topology",
+		Long: `Inspect deployed resources by providing a slash-separated path:
+
+  arcctl inspect <environment>                           Show environment details
+  arcctl inspect <environment>/<component>               Show component details
+  arcctl inspect <environment>/<component>/<resource>    Show resource details
+
+Resources can be qualified with type if the name is ambiguous:
+  arcctl inspect staging/my-app/deployment/api
+
+To visualize a component's topology instead, use:
+  arcctl inspect component ./my-app
+
+Examples:
+  # Inspect an environment
+  arcctl inspect staging
+
+  # Inspect a component within an environment
+  arcctl inspect staging/my-app
+
+  # Inspect a specific resource to see its environment variables
+  arcctl inspect staging/my-app/api
+
+  # Disambiguate resources with the same name across types
+  arcctl inspect staging/my-app/deployment/api
+
+  # Output as JSON or YAML
+  arcctl inspect staging/my-app/api -o json`,
+		Args:         cobra.MaximumNArgs(1),
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return cmd.Help()
+			}
+
+			ctx := context.Background()
+
+			// Resolve datacenter
+			dc, err := resolveDatacenter(datacenter)
+			if err != nil {
+				return err
+			}
+
+			// Create state manager
+			mgr, err := createStateManagerWithConfig(backendType, backendConfig)
+			if err != nil {
+				return fmt.Errorf("failed to create state manager: %w", err)
+			}
+
+			// Parse path: environment[/component[/resource]]
+			pathArg := strings.Trim(args[0], "/")
+			parts := strings.Split(pathArg, "/")
+
+			// All paths require the environment state. Components and resources
+			// are stored inline within the environment state (not as separate files),
+			// so we always load the environment and extract from there.
+			envName := parts[0]
+			env, err := mgr.GetEnvironment(ctx, dc, envName)
+			if err != nil {
+				return fmt.Errorf("environment %q not found in datacenter %q: %w", envName, dc, err)
+			}
+
+			switch len(parts) {
+			case 1:
+				// Environment only
+				return inspectEnvironmentState(env, dc, outputFormat)
+
+			case 2:
+				// Environment/component
+				comp, ok := env.Components[parts[1]]
+				if !ok {
+					var available []string
+					for name := range env.Components {
+						available = append(available, name)
+					}
+					if len(available) == 0 {
+						return fmt.Errorf("component %q not found in environment %q (no components deployed)", parts[1], envName)
+					}
+					return fmt.Errorf("component %q not found in environment %q\n\nAvailable components:\n  %s",
+						parts[1], envName, strings.Join(available, "\n  "))
+				}
+				return inspectComponentState(comp, dc, envName, outputFormat)
+
+			case 3:
+				// Environment/component/resource (match by name)
+				comp, ok := env.Components[parts[1]]
+				if !ok {
+					return fmt.Errorf("component %q not found in environment %q", parts[1], envName)
+				}
+				res, err := findResource(comp.Resources, parts[2], "")
+				if err != nil {
+					return err
+				}
+				return inspectResourceState(res, dc, envName, outputFormat)
+
+			case 4:
+				// Environment/component/type/name
+				comp, ok := env.Components[parts[1]]
+				if !ok {
+					return fmt.Errorf("component %q not found in environment %q", parts[1], envName)
+				}
+				res, err := findResource(comp.Resources, parts[3], parts[2])
+				if err != nil {
+					return err
+				}
+				return inspectResourceState(res, dc, envName, outputFormat)
+
+			default:
+				return fmt.Errorf("invalid path %q: expected environment[/component[/resource]]", args[0])
+			}
+		},
 	}
+
+	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Target datacenter (uses default if not set)")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format: table, json, yaml")
+	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
+	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
 
 	cmd.AddCommand(newInspectComponentCmd())
 

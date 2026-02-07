@@ -1,0 +1,58 @@
+# Example: Slack Integration Configuration
+# A configuration passthrough component for centralizing Slack bot/app settings.
+#
+# Slack provides APIs for building bot integrations and sending notifications.
+# This component centralizes Slack credentials so dependent applications can:
+#   - Access bot tokens and channel config via dependencies.<name>.outputs.<field>
+#   - Share consistent Slack integration settings across the environment
+#
+# Usage:
+#   1. Deploy this component once per environment
+#   2. Have your applications depend on it
+#   3. Access values via ${{ dependencies.slack.outputs.bot_token }}
+
+variables:
+  bot_token:
+    description: "Slack Bot User OAuth Token (xoxb-...)"
+    required: true
+    sensitive: true
+
+  bot_channel:
+    description: "Default Slack channel ID for bot messages (e.g., C01ABCDEF)"
+    required: true
+
+  # Optional: Additional configuration
+  signing_secret:
+    description: "Slack app signing secret for verifying requests"
+    required: false
+    sensitive: true
+
+  app_token:
+    description: "Slack app-level token for Socket Mode (xapp-...)"
+    required: false
+    sensitive: true
+
+# Outputs expose values to dependent components
+# Access via: ${{ dependencies.slack.outputs.<name> }}
+outputs:
+  bot_token:
+    description: "Slack Bot User OAuth Token"
+    value: ${{ variables.bot_token }}
+    sensitive: true
+
+  bot_channel:
+    description: "Default Slack channel ID for bot messages"
+    value: ${{ variables.bot_channel }}
+
+  signing_secret:
+    description: "Slack app signing secret"
+    value: ${{ variables.signing_secret }}
+    sensitive: true
+
+  app_token:
+    description: "Slack app-level token for Socket Mode"
+    value: ${{ variables.app_token }}
+    sensitive: true
+
+# This component doesn't deploy any infrastructure.
+# It serves as a configuration hub for Slack settings across your environment.

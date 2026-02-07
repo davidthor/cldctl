@@ -162,6 +162,78 @@ Examples:
 				}
 			}
 
+			// Create the engine early so we can use it for dependency resolution
+			eng := createEngine(mgr)
+
+			// Determine component path
+			componentPath := source
+			if isLocalPath && !strings.HasSuffix(source, ".yml") && !strings.HasSuffix(source, ".yaml") {
+				componentPath = filepath.Join(source, "architect.yml")
+			}
+
+			// Convert vars to interface{} map
+			varsInterface := make(map[string]interface{})
+			for k, v := range vars {
+				varsInterface[k] = v
+			}
+
+			// Build initial component and variable maps
+			componentsMap := map[string]string{componentName: componentPath}
+			variablesMap := map[string]map[string]interface{}{componentName: varsInterface}
+
+			// Resolve dependencies that are not yet deployed in the environment
+			deps, err := eng.ResolveDependencies(ctx, engine.DeployOptions{
+				Environment: environment,
+				Datacenter:  dc,
+				Components:  componentsMap,
+				Variables:   variablesMap,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to resolve dependencies: %w", err)
+			}
+
+			// Handle dependency variables - prompt or error
+			for i := range deps {
+				dep := &deps[i]
+				if len(dep.MissingVariables) > 0 {
+					if !isInteractive() || autoApprove {
+						var names []string
+						for _, v := range dep.MissingVariables {
+							names = append(names, v.Name())
+						}
+						return fmt.Errorf("cannot auto-deploy dependency %q: missing required variables: %s\nProvide values with --var or deploy the dependency manually first",
+							dep.Name, strings.Join(names, ", "))
+					}
+
+					// Prompt for dependency variables
+					fmt.Printf("Dependency %q requires the following variables:\n", dep.Name)
+					fmt.Println()
+
+					depVars := make(map[string]interface{})
+					for _, v := range dep.MissingVariables {
+						value, err := promptForVariable(v)
+						if err != nil {
+							return fmt.Errorf("failed to read variable %q for dependency %q: %w", v.Name(), dep.Name, err)
+						}
+						depVars[v.Name()] = value
+					}
+					fmt.Println()
+					variablesMap[dep.Name] = depVars
+				}
+
+				// Add dependency to the components map
+				componentsMap[dep.Name] = dep.LocalPath
+			}
+
+			// Display auto-deployed dependencies
+			if len(deps) > 0 {
+				fmt.Println("Dependencies to deploy:")
+				for _, dep := range deps {
+					fmt.Printf("  %s (%s)\n", dep.Name, dep.OCIRef)
+				}
+				fmt.Println()
+			}
+
 			// Display execution plan
 			fmt.Printf("Component:   %s\n", componentName)
 			fmt.Printf("Environment: %s\n", environment)
@@ -225,59 +297,17 @@ Examples:
 
 			fmt.Println()
 
-			// Create the engine
-			eng := createEngine(mgr)
-
-			// Convert vars to interface{} map
-			varsInterface := make(map[string]interface{})
-			for k, v := range vars {
-				varsInterface[k] = v
-			}
-
-			// Determine component path
-			componentPath := source
-			if isLocalPath && !strings.HasSuffix(source, ".yml") && !strings.HasSuffix(source, ".yaml") {
-				componentPath = filepath.Join(source, "architect.yml")
-			}
-
 			// Build progress table from component resources
 			progress := NewProgressTable(os.Stdout)
 
+			// Add dependency component resources to progress table first
+			for _, dep := range deps {
+				addComponentToProgressTable(progress, dep.Name, dep.Component)
+			}
+
 			if comp != nil {
 				// Build dependency graph for progress display
-				var dbDeps []string
-				for _, db := range comp.Databases() {
-					id := fmt.Sprintf("%s/database/%s", componentName, db.Name())
-					progress.AddResource(id, db.Name(), "database", componentName, nil)
-					dbDeps = append(dbDeps, id)
-				}
-
-				for _, bucket := range comp.Buckets() {
-					id := fmt.Sprintf("%s/bucket/%s", componentName, bucket.Name())
-					progress.AddResource(id, bucket.Name(), "bucket", componentName, nil)
-				}
-
-				for _, fn := range comp.Functions() {
-					id := fmt.Sprintf("%s/function/%s", componentName, fn.Name())
-					progress.AddResource(id, fn.Name(), "function", componentName, dbDeps)
-				}
-
-				for _, depl := range comp.Deployments() {
-					id := fmt.Sprintf("%s/deployment/%s", componentName, depl.Name())
-					progress.AddResource(id, depl.Name(), "deployment", componentName, dbDeps)
-				}
-
-				// Services have no dependencies - they can be created in parallel with deployments
-				for _, svc := range comp.Services() {
-					id := fmt.Sprintf("%s/service/%s", componentName, svc.Name())
-					progress.AddResource(id, svc.Name(), "service", componentName, nil)
-				}
-
-				// Routes have no dependencies - they can be created in parallel
-				for _, route := range comp.Routes() {
-					id := fmt.Sprintf("%s/route/%s", componentName, route.Name())
-					progress.AddResource(id, route.Name(), "route", componentName, nil)
-				}
+				addComponentToProgressTable(progress, componentName, comp)
 
 				// Print initial progress table
 				progress.PrintInitial()
@@ -312,8 +342,8 @@ Examples:
 			result, err := eng.Deploy(ctx, engine.DeployOptions{
 				Environment: environment,
 				Datacenter:  dc,
-				Components:  map[string]string{componentName: componentPath},
-				Variables:   map[string]map[string]interface{}{componentName: varsInterface},
+				Components:  componentsMap,
+				Variables:   variablesMap,
 				Output:      os.Stdout,
 				DryRun:      false,
 				AutoApprove: autoApprove,
@@ -591,10 +621,24 @@ Examples:
 				fmt.Printf("[config] Default datacenter set to %q\n", dcName)
 			}
 
+			// Execute root-level modules and reconcile environments
+			eng := createEngine(mgr)
+
+			dcResult, err := eng.DeployDatacenter(ctx, engine.DeployDatacenterOptions{
+				Datacenter:  dcName,
+				Output:      os.Stdout,
+				Parallelism: defaultParallelism,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to provision datacenter infrastructure: %w", err)
+			}
+			if !dcResult.Success {
+				return fmt.Errorf("datacenter infrastructure provisioning failed")
+			}
+
 			fmt.Printf("[success] Datacenter %q deployed as %s\n", dcName, tag)
 			fmt.Println()
 			fmt.Println("The datacenter is now available for use with environments.")
-			fmt.Println("Infrastructure modules will be executed when components are deployed.")
 
 			return nil
 		},
@@ -795,6 +839,42 @@ func parseVarFile(data []byte, vars map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// addComponentToProgressTable adds a component's resources to the progress table.
+// This is shared between the deploy and up commands for both primary and dependency components.
+func addComponentToProgressTable(progress *ProgressTable, compName string, comp component.Component) {
+	var dbDeps []string
+	for _, db := range comp.Databases() {
+		id := fmt.Sprintf("%s/database/%s", compName, db.Name())
+		progress.AddResource(id, db.Name(), "database", compName, nil)
+		dbDeps = append(dbDeps, id)
+	}
+
+	for _, bucket := range comp.Buckets() {
+		id := fmt.Sprintf("%s/bucket/%s", compName, bucket.Name())
+		progress.AddResource(id, bucket.Name(), "bucket", compName, nil)
+	}
+
+	for _, fn := range comp.Functions() {
+		id := fmt.Sprintf("%s/function/%s", compName, fn.Name())
+		progress.AddResource(id, fn.Name(), "function", compName, dbDeps)
+	}
+
+	for _, depl := range comp.Deployments() {
+		id := fmt.Sprintf("%s/deployment/%s", compName, depl.Name())
+		progress.AddResource(id, depl.Name(), "deployment", compName, dbDeps)
+	}
+
+	for _, svc := range comp.Services() {
+		id := fmt.Sprintf("%s/service/%s", compName, svc.Name())
+		progress.AddResource(id, svc.Name(), "service", compName, nil)
+	}
+
+	for _, route := range comp.Routes() {
+		id := fmt.Sprintf("%s/route/%s", compName, route.Name())
+		progress.AddResource(id, route.Name(), "route", compName, nil)
+	}
 }
 
 // copyDirectory copies the contents of srcDir into destDir, excluding
