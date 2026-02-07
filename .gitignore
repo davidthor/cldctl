@@ -10,6 +10,7 @@ dist/
 build/
 bin/
 /cldctl
+/arcctl
 .next/
 out/
 .mintlify/
