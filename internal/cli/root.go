@@ -36,7 +36,7 @@ Command Structure:
 
 Examples:
   cldctl build component ./my-app -t ghcr.io/myorg/app:v1
-  cldctl deploy component ./my-app -e production
+  cldctl deploy component ghcr.io/myorg/app:v1 -e production
   cldctl create environment staging -d my-datacenter
   cldctl list environment
   cldctl destroy component my-app -e staging`,

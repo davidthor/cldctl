@@ -24,7 +24,6 @@ func TestRegistry_AddAndGet(t *testing.T) {
 		Tag:        "v1.0.0",
 		Type:       TypeComponent,
 		Digest:     "sha256:abc123",
-		Source:     SourceBuilt,
 		Size:       1024,
 		CreatedAt:  time.Now(),
 		CachePath:  "/tmp/cache/app",
@@ -38,7 +37,6 @@ func TestRegistry_AddAndGet(t *testing.T) {
 	assert.Equal(t, entry.Reference, got.Reference)
 	assert.Equal(t, entry.Repository, got.Repository)
 	assert.Equal(t, entry.Tag, got.Tag)
-	assert.Equal(t, entry.Source, got.Source)
 	assert.Equal(t, TypeComponent, got.Type)
 }
 
@@ -54,7 +52,6 @@ func TestRegistry_AddUpdatesExisting(t *testing.T) {
 		Repository: "ghcr.io/org/app",
 		Tag:        "v1.0.0",
 		Type:       TypeComponent,
-		Source:     SourcePulled,
 		Size:       1024,
 		CreatedAt:  time.Now(),
 	}
@@ -68,7 +65,6 @@ func TestRegistry_AddUpdatesExisting(t *testing.T) {
 		Repository: "ghcr.io/org/app",
 		Tag:        "v1.0.0",
 		Type:       TypeComponent,
-		Source:     SourceBuilt,
 		Size:       2048,
 		CreatedAt:  time.Now(),
 	}
@@ -80,7 +76,6 @@ func TestRegistry_AddUpdatesExisting(t *testing.T) {
 	entries, err := reg.List()
 	require.NoError(t, err)
 	assert.Len(t, entries, 1)
-	assert.Equal(t, SourceBuilt, entries[0].Source)
 	assert.Equal(t, int64(2048), entries[0].Size)
 }
 
@@ -96,7 +91,6 @@ func TestRegistry_Remove(t *testing.T) {
 		Repository: "ghcr.io/org/app",
 		Tag:        "v1.0.0",
 		Type:       TypeComponent,
-		Source:     SourceBuilt,
 		CreatedAt:  time.Now(),
 	}
 
@@ -125,7 +119,6 @@ func TestRegistry_List(t *testing.T) {
 			Repository: "ghcr.io/org/app",
 			Tag:        "v1.0.0",
 			Type:       TypeComponent,
-			Source:     SourceBuilt,
 			CreatedAt:  now.Add(-2 * time.Hour),
 		},
 		{
@@ -133,7 +126,6 @@ func TestRegistry_List(t *testing.T) {
 			Repository: "ghcr.io/org/app",
 			Tag:        "v2.0.0",
 			Type:       TypeComponent,
-			Source:     SourcePulled,
 			CreatedAt:  now.Add(-1 * time.Hour),
 		},
 		{
@@ -141,7 +133,6 @@ func TestRegistry_List(t *testing.T) {
 			Repository: "docker.io/library/nginx",
 			Tag:        "latest",
 			Type:       TypeComponent,
-			Source:     SourcePulled,
 			CreatedAt:  now,
 		},
 	}
@@ -170,9 +161,9 @@ func TestRegistry_ListByType(t *testing.T) {
 
 	now := time.Now()
 	entries := []ArtifactEntry{
-		{Reference: "myapp:v1", Repository: "myapp", Tag: "v1", Type: TypeComponent, Source: SourceBuilt, CreatedAt: now},
-		{Reference: "my-dc:latest", Repository: "my-dc", Tag: "latest", Type: TypeDatacenter, Source: SourceBuilt, CreatedAt: now},
-		{Reference: "otherapp:v2", Repository: "otherapp", Tag: "v2", Type: TypeComponent, Source: SourcePulled, CreatedAt: now},
+		{Reference: "myapp:v1", Repository: "myapp", Tag: "v1", Type: TypeComponent, CreatedAt: now},
+		{Reference: "my-dc:latest", Repository: "my-dc", Tag: "latest", Type: TypeDatacenter, CreatedAt: now},
+		{Reference: "otherapp:v2", Repository: "otherapp", Tag: "v2", Type: TypeComponent, CreatedAt: now},
 	}
 	for _, e := range entries {
 		require.NoError(t, reg.Add(e))
@@ -200,7 +191,6 @@ func TestRegistry_Clear(t *testing.T) {
 		Repository: "ghcr.io/org/app",
 		Tag:        "v1.0.0",
 		Type:       TypeComponent,
-		Source:     SourceBuilt,
 		CreatedAt:  time.Now(),
 	}
 
@@ -240,7 +230,6 @@ func TestRegistry_PersistenceAcrossInstances(t *testing.T) {
 		Repository: "ghcr.io/org/app",
 		Tag:        "v1.0.0",
 		Type:       TypeComponent,
-		Source:     SourceBuilt,
 		CreatedAt:  time.Now(),
 	}
 
@@ -268,7 +257,6 @@ func TestRegistry_CreatesDirectory(t *testing.T) {
 		Repository: "test",
 		Tag:        "v1",
 		Type:       TypeComponent,
-		Source:     SourceBuilt,
 		CreatedAt:  time.Now(),
 	}
 

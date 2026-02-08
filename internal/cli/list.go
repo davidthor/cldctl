@@ -162,12 +162,11 @@ func listLocalComponents(outputFormat string) error {
 			return nil
 		}
 
-		fmt.Printf("%-40s %-15s %-12s %-8s %s\n", "REPOSITORY", "TAG", "SOURCE", "SIZE", "CREATED")
+		fmt.Printf("%-40s %-15s %-8s %s\n", "REPOSITORY", "TAG", "SIZE", "CREATED")
 		for _, entry := range entries {
-			fmt.Printf("%-40s %-15s %-12s %-8s %s\n",
+			fmt.Printf("%-40s %-15s %-8s %s\n",
 				truncateString(entry.Repository, 40),
 				truncateString(entry.Tag, 15),
-				entry.Source,
 				formatSize(entry.Size),
 				formatTimeAgo(entry.CreatedAt),
 			)

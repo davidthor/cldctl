@@ -22,7 +22,7 @@ All of this happens in a single command.
 
 ```mermaid
 flowchart TD
-    A["cldctl deploy component ./my-app -e preview-42"] --> B[Load my-app]
+    A["cldctl deploy component myapp:latest -e preview-42"] --> B[Load my-app]
     B --> C[Scan dependencies]
     C --> D{auth-service in environment?}
     D -- Yes --> E[Skip]
@@ -92,7 +92,7 @@ outputs:
 ### Deploying
 
 ```
-$ cldctl deploy component ./my-app -e preview-42
+$ cldctl deploy component myapp:latest -e preview-42
 
 Dependencies to deploy:
   clerk (ghcr.io/myorg/clerk:v1)

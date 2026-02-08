@@ -14,14 +14,14 @@ Use `cldctl deploy comp` as shorthand for `cldctl deploy component`.
 ## Synopsis
 
 ```bash
-cldctl deploy component <source> -e <environment> [options]
+cldctl deploy component <image> -e <environment> [options]
 ```
 
 ## Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `<source>` | Component source: OCI image reference, local directory, or path to cloud.component.yml |
+| `<image>` | OCI image reference for the component artifact (e.g., `ghcr.io/myorg/myapp:v1.0.0`). If not in the local cache, the image is pulled automatically. |
 
 ## Options
 
@@ -36,36 +36,30 @@ cldctl deploy component <source> -e <environment> [options]
 | `--backend <type>` | State backend type |
 | `--backend-config <key=value>` | Backend configuration |
 
-## Source Formats
+## Image Resolution
 
-The source argument accepts three formats:
+The image argument must be an OCI image reference. Components must be built into an image
+first using `cldctl build component` before they can be deployed.
 
-**OCI Image Reference:**
+If the image is already in the local cache (from a previous build or pull), it is used
+directly. Otherwise, cldctl automatically pulls it from the remote registry and caches
+it locally before proceeding with deployment.
 
 ```bash
+# Build first, then deploy
+cldctl build component ./my-app -t ghcr.io/myorg/web-app:v1.5.0
+cldctl deploy component ghcr.io/myorg/web-app:v1.5.0 -e staging
+
+# Or pull and deploy in one step (auto-pull from registry)
 cldctl deploy component ghcr.io/myorg/web-app:v1.5.0 -e staging
 ```
-
-**Local Directory:**
-
-```bash
-cldctl deploy component ./services/web-app -e staging
-```
-
-**Path to cloud.component.yml:**
-
-```bash
-cldctl deploy component ./services/web-app/cloud.component.yml -e staging
-```
-
-When deploying from local source, cldctl invokes the datacenter's `dockerBuild` hook to build and push container images.
 
 ## Interactive Variable Prompts
 
 When running interactively (not in CI), cldctl will prompt you to enter values for any required variables that were not provided via `--var` or `--var-file`:
 
 ```
-$ cldctl deploy component ./my-app -e staging
+$ cldctl deploy component myapp:latest -e staging
 
 The following variables need values:
 
@@ -87,9 +81,6 @@ cldctl deploy component ghcr.io/myorg/web-app:v1.5.0 -e staging
 
 # Using alias
 cldctl deploy comp ghcr.io/myorg/web-app:v1.5.0 -e staging
-
-# Deploy from local source
-cldctl deploy component ./services/web-app -e staging
 
 # Deploy with variables
 cldctl deploy component ghcr.io/myorg/web-app:v1.5.0 -e staging \
@@ -117,7 +108,7 @@ $ cldctl deploy component ghcr.io/myorg/web-app:v1.5.0 -e staging
 
 Component:   web-app
 Environment: staging
-Source:      ghcr.io/myorg/web-app:v1.5.0
+Image:       ghcr.io/myorg/web-app:v1.5.0
 
 Execution Plan:
 
@@ -143,7 +134,7 @@ Proceed with deployment? [Y/n]:
 When a component declares dependencies on other components (via the `dependencies` field in `cloud.component.yml`), cldctl will automatically deploy any dependencies that are not already present in the target environment. Dependencies are resolved transitively -- if dependency A depends on dependency B, both will be deployed.
 
 ```
-$ cldctl deploy component ./my-app -e staging
+$ cldctl deploy component myapp:latest -e staging
 
 Dependencies to deploy:
   shared-db (ghcr.io/myorg/shared-db:v1)

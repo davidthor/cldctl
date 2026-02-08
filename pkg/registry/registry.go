@@ -23,17 +23,6 @@ const (
 	TypeDatacenter ArtifactType = "datacenter"
 )
 
-// ArtifactSource indicates how an artifact was added to the local registry.
-type ArtifactSource string
-
-const (
-	// SourceBuilt indicates the artifact was built locally.
-	SourceBuilt ArtifactSource = "built"
-
-	// SourcePulled indicates the artifact was pulled from a remote registry.
-	SourcePulled ArtifactSource = "pulled"
-)
-
 // ArtifactEntry represents an artifact stored in the local registry.
 type ArtifactEntry struct {
 	// Reference is the full tag (e.g., ghcr.io/org/app:v1.0.0, my-dc:latest)
@@ -51,9 +40,6 @@ type ArtifactEntry struct {
 	// Digest is the content digest (sha256:...)
 	Digest string `json:"digest,omitempty"`
 
-	// Source indicates how the artifact was added (built, pulled)
-	Source ArtifactSource `json:"source"`
-
 	// Size is the size in bytes of the artifact
 	Size int64 `json:"size"`
 
@@ -68,9 +54,6 @@ type ArtifactEntry struct {
 
 // ComponentEntry is an alias for ArtifactEntry (backward compatibility).
 type ComponentEntry = ArtifactEntry
-
-// ComponentSource is an alias for ArtifactSource (backward compatibility).
-type ComponentSource = ArtifactSource
 
 // Registry provides access to the local artifact registry.
 type Registry interface {
@@ -189,7 +172,6 @@ func (r *registry) migrateIfNeeded() error {
 			Repository string    `json:"repository"`
 			Tag        string    `json:"tag"`
 			Digest     string    `json:"digest,omitempty"`
-			Source     string    `json:"source"`
 			Size       int64     `json:"size"`
 			CreatedAt  time.Time `json:"createdAt"`
 			CachePath  string    `json:"cachePath"`
@@ -211,7 +193,6 @@ func (r *registry) migrateIfNeeded() error {
 			Tag:        c.Tag,
 			Type:       TypeComponent,
 			Digest:     c.Digest,
-			Source:     ArtifactSource(c.Source),
 			Size:       c.Size,
 			CreatedAt:  c.CreatedAt,
 			CachePath:  c.CachePath,

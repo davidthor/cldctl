@@ -73,9 +73,6 @@ Deploy components into an environment:
 # Deploy from OCI artifact
 cldctl deploy component ghcr.io/myorg/web-app:v1.5.0 -e staging
 
-# Deploy from local source (useful for testing datacenter changes)
-cldctl deploy component ./services/web-app -e staging
-
 # Deploy with variables
 cldctl deploy component ghcr.io/myorg/web-app:v1.5.0 -e staging \
   --var log_level=debug \

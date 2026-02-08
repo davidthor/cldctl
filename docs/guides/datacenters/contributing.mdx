@@ -119,8 +119,9 @@ cldctl deploy datacenter test-dc ./official-templates/<name> \
 # Create an environment
 cldctl create environment test-env -d test-dc
 
-# Deploy a component to verify hooks work
-cldctl deploy component ./examples/components/nextjs-app -e test-env
+# Build and deploy a component to verify hooks work
+cldctl build component ./examples/components/nextjs-app -t myorg/nextjs-app:test
+cldctl deploy component myorg/nextjs-app:test -e test-env
 
 # Verify resources are healthy
 cldctl list component -e test-env

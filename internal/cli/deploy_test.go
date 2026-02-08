@@ -20,8 +20,8 @@ func TestNewDeployCmd(t *testing.T) {
 	}
 
 	expectedCommands := []string{
-		"component <source>",
-		"datacenter <name> <config>",
+		"component <image>",
+		"datacenter <name> <image>",
 	}
 
 	for _, expected := range expectedCommands {
@@ -34,8 +34,8 @@ func TestNewDeployCmd(t *testing.T) {
 func TestDeployComponentCmd_Flags(t *testing.T) {
 	cmd := newDeployComponentCmd()
 
-	if cmd.Use != "component <source>" {
-		t.Errorf("expected use 'component <source>', got '%s'", cmd.Use)
+	if cmd.Use != "component <image>" {
+		t.Errorf("expected use 'component <image>', got '%s'", cmd.Use)
 	}
 
 	// Check required flags
@@ -65,8 +65,8 @@ func TestDeployComponentCmd_Flags(t *testing.T) {
 func TestDeployDatacenterCmd_Flags(t *testing.T) {
 	cmd := newDeployDatacenterCmd()
 
-	if cmd.Use != "datacenter <name> <config>" {
-		t.Errorf("expected use 'datacenter <name> <config>', got '%s'", cmd.Use)
+	if cmd.Use != "datacenter <name> <image>" {
+		t.Errorf("expected use 'datacenter <name> <image>', got '%s'", cmd.Use)
 	}
 
 	// Check optional flags

@@ -15,7 +15,6 @@ import (
 	"github.com/davidthor/cldctl/pkg/oci"
 	"github.com/davidthor/cldctl/pkg/registry"
 	"github.com/davidthor/cldctl/pkg/schema/component"
-	"github.com/davidthor/cldctl/pkg/schema/datacenter"
 	"github.com/davidthor/cldctl/pkg/state"
 	"github.com/davidthor/cldctl/pkg/state/types"
 	"github.com/spf13/cobra"
@@ -48,16 +47,16 @@ func newDeployComponentCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:     "component <source>",
+		Use:     "component <image>",
 		Aliases: []string{"comp", "comps", "components"},
 		Short:   "Deploy a component to an environment or register it with a datacenter",
 		Long: `Deploy a component to an environment, or register it as a datacenter-level
 component declaration when --environment is omitted.
 
-The source can be specified as either:
-  - An OCI image reference (e.g., ghcr.io/myorg/myapp:v1.0.0)
-  - A local directory containing a cloud.component.yml file
-  - A path to a cloud.component.yml file directly
+The image must be a reference to a component artifact in the local cache
+(built with 'cldctl build component' or pulled with 'cldctl pull component').
+If the image is not cached locally, it will be pulled from the remote registry
+automatically.
 
 When -e is provided, the component is deployed into the target environment
 with full resource provisioning.
@@ -70,13 +69,15 @@ In interactive mode (when not running in CI), you will be prompted to enter
 values for any required variables that were not provided via --var or --var-file.
 
 Examples:
-  cldctl deploy component ./my-app -e production
-  cldctl deploy component ./my-app -e staging -d my-dc
+  cldctl deploy component ghcr.io/myorg/myapp:v1.0.0 -e production
+  cldctl deploy component myapp:latest -e staging -d my-dc
   cldctl deploy component ghcr.io/myorg/myapp:v1.0.0 -e production --var api_key=secret123
   cldctl deploy component myorg/stripe:latest -d my-dc --var key=sk_live_xxx`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			source := args[0]
+			cmd.SilenceUsage = true
+
+			imageRef := args[0]
 			ctx := context.Background()
 
 			// Resolve datacenter
@@ -93,7 +94,7 @@ Examples:
 
 			// If no environment specified, register as datacenter-level component
 			if environment == "" {
-				return deployDatacenterComponent(ctx, mgr, dc, source, variables, varFile)
+				return deployDatacenterComponent(ctx, mgr, dc, imageRef, variables, varFile)
 			}
 
 			// Verify environment exists
@@ -122,31 +123,90 @@ Examples:
 				}
 			}
 
-			// Check if this is an OCI reference or local path
-			isLocalPath := !strings.Contains(source, ":") || strings.HasPrefix(source, "./") || strings.HasPrefix(source, "/")
+			// Derive component name from image reference
+			componentName := deriveComponentName(imageRef, false)
 
-			// Derive component name from source
-			componentName := deriveComponentName(source, isLocalPath)
-
-			// Load component to get variable definitions
-			var comp component.Component
-			if isLocalPath {
-			// Determine the path to cloud.component.yml
-			componentFile := source
-			if !strings.HasSuffix(source, ".yml") && !strings.HasSuffix(source, ".yaml") {
-				componentFile = filepath.Join(source, "cloud.component.yml")
+			// Resolve image: load from local cache or pull from remote
+			reg, err := registry.NewRegistry()
+			if err != nil {
+				return fmt.Errorf("failed to open local registry: %w", err)
 			}
 
-				// Load component from local path
-				loader := component.NewLoader()
-				comp, err = loader.Load(componentFile)
-				if err != nil {
-					return fmt.Errorf("failed to load component: %w", err)
+			var componentPath string
+			entry, err := reg.Get(imageRef)
+			if err == nil && entry != nil && entry.CachePath != "" {
+				// Found in local cache — find the component file
+				compFile := findComponentFile(entry.CachePath)
+				if compFile != "" {
+					componentPath = compFile
 				}
 			}
 
+			if componentPath == "" {
+				// Not in local cache or cache is stale — pull from remote
+				fmt.Printf("[pull] Downloading %s...\n", imageRef)
+				client := oci.NewClient()
+
+				compDir, err := registry.CachePathForRef(imageRef)
+				if err != nil {
+					return fmt.Errorf("failed to compute cache path: %w", err)
+				}
+
+				os.RemoveAll(compDir)
+				if err := os.MkdirAll(compDir, 0755); err != nil {
+					return fmt.Errorf("failed to create cache directory: %w", err)
+				}
+
+				if err := client.Pull(ctx, imageRef, compDir); err != nil {
+					os.RemoveAll(compDir)
+					return fmt.Errorf("failed to pull component: %w", err)
+				}
+
+				// Calculate size
+				var totalSize int64
+				_ = filepath.Walk(compDir, func(_ string, info os.FileInfo, walkErr error) error {
+					if walkErr != nil {
+						return walkErr
+					}
+					if !info.IsDir() {
+						totalSize += info.Size()
+					}
+					return nil
+				})
+
+				// Register in local cache
+				repo, tagPortion := registry.ParseReference(imageRef)
+				compEntry := registry.ArtifactEntry{
+					Reference:  imageRef,
+					Repository: repo,
+					Tag:        tagPortion,
+					Type:       registry.TypeComponent,
+					Size:       totalSize,
+					CreatedAt:  time.Now(),
+					CachePath:  compDir,
+				}
+				if err := reg.Add(compEntry); err != nil {
+					return fmt.Errorf("failed to register component: %w", err)
+				}
+
+				compFile := findComponentFile(compDir)
+				if compFile == "" {
+					return fmt.Errorf("no cloud.component.yml found in artifact %s", imageRef)
+				}
+				componentPath = compFile
+				fmt.Printf("[pull] Cached %s\n", imageRef)
+			}
+
+			// Load component from resolved cache path for variable prompts and plan display
+			var comp component.Component
+			loader := component.NewLoader()
+			comp, err = loader.Load(componentPath)
+			if err != nil {
+				return fmt.Errorf("failed to load component: %w", err)
+			}
+
 			// Prompt for missing variables if running interactively
-			if comp != nil && isInteractive() {
+			if isInteractive() {
 				missingVars := getMissingVariables(comp, vars)
 				if len(missingVars) > 0 {
 					fmt.Println("The following variables need values:")
@@ -164,25 +224,17 @@ Examples:
 			}
 
 			// Validate all required variables are set
-			if comp != nil {
-				missingRequired := getMissingRequiredVariables(comp, vars)
-				if len(missingRequired) > 0 {
-					var names []string
-					for _, v := range missingRequired {
-						names = append(names, v.Name())
-					}
-					return fmt.Errorf("missing required variables: %s\nUse --var or --var-file to provide values, or run interactively", strings.Join(names, ", "))
+			missingRequired := getMissingRequiredVariables(comp, vars)
+			if len(missingRequired) > 0 {
+				var names []string
+				for _, v := range missingRequired {
+					names = append(names, v.Name())
 				}
+				return fmt.Errorf("missing required variables: %s\nUse --var or --var-file to provide values, or run interactively", strings.Join(names, ", "))
 			}
 
 			// Create the engine early so we can use it for dependency resolution
 			eng := createEngine(mgr)
-
-			// Determine component path
-			componentPath := source
-			if isLocalPath && !strings.HasSuffix(source, ".yml") && !strings.HasSuffix(source, ".yaml") {
-				componentPath = filepath.Join(source, "cloud.component.yml")
-			}
 
 			// Convert vars to interface{} map
 			varsInterface := make(map[string]interface{})
@@ -251,45 +303,40 @@ Examples:
 			fmt.Printf("Component:   %s\n", componentName)
 			fmt.Printf("Environment: %s\n", environment)
 			fmt.Printf("Datacenter:  %s\n", dc)
-			fmt.Printf("Source:      %s\n", source)
+			fmt.Printf("Image:       %s\n", imageRef)
 			fmt.Println()
 
 			fmt.Println("Execution Plan:")
 			fmt.Println()
 
-			if comp != nil {
-				// Show resources that will be created
-				planCount := 0
+			// Show resources that will be created
+			planCount := 0
 
-				for _, db := range comp.Databases() {
-					fmt.Printf("  database %q (%s)\n", db.Name(), db.Type())
-					fmt.Printf("    + create: Database %q\n\n", fmt.Sprintf("%s-%s-%s", environment, componentName, db.Name()))
-					planCount++
-				}
-
-				for _, depl := range comp.Deployments() {
-					fmt.Printf("  deployment %q\n", depl.Name())
-					fmt.Printf("    + create: Deployment %q\n\n", fmt.Sprintf("%s-%s-%s", environment, componentName, depl.Name()))
-					planCount++
-				}
-
-				for _, svc := range comp.Services() {
-					fmt.Printf("  service %q\n", svc.Name())
-					fmt.Printf("    + create: Service %q\n\n", fmt.Sprintf("%s-%s-%s", environment, componentName, svc.Name()))
-					planCount++
-				}
-
-				for _, route := range comp.Routes() {
-					fmt.Printf("  route %q\n", route.Name())
-					fmt.Printf("    + create: Route %q\n\n", fmt.Sprintf("%s-%s-%s", environment, componentName, route.Name()))
-					planCount++
-				}
-
-				fmt.Printf("Plan: %d to create, 0 to update, 0 to destroy\n", planCount)
-			} else {
-				fmt.Println("  (resources will be determined from OCI artifact)")
+			for _, db := range comp.Databases() {
+				fmt.Printf("  database %q (%s)\n", db.Name(), db.Type())
+				fmt.Printf("    + create: Database %q\n\n", fmt.Sprintf("%s-%s-%s", environment, componentName, db.Name()))
+				planCount++
 			}
 
+			for _, depl := range comp.Deployments() {
+				fmt.Printf("  deployment %q\n", depl.Name())
+				fmt.Printf("    + create: Deployment %q\n\n", fmt.Sprintf("%s-%s-%s", environment, componentName, depl.Name()))
+				planCount++
+			}
+
+			for _, svc := range comp.Services() {
+				fmt.Printf("  service %q\n", svc.Name())
+				fmt.Printf("    + create: Service %q\n\n", fmt.Sprintf("%s-%s-%s", environment, componentName, svc.Name()))
+				planCount++
+			}
+
+			for _, route := range comp.Routes() {
+				fmt.Printf("  route %q\n", route.Name())
+				fmt.Printf("    + create: Route %q\n\n", fmt.Sprintf("%s-%s-%s", environment, componentName, route.Name()))
+				planCount++
+			}
+
+			fmt.Printf("Plan: %d to create, 0 to update, 0 to destroy\n", planCount)
 			fmt.Println()
 
 			// Handle targets filter
@@ -318,14 +365,11 @@ Examples:
 				addComponentToProgressTable(progress, dep.Name, dep.Component)
 			}
 
-			if comp != nil {
-				// Build dependency graph for progress display
-				addComponentToProgressTable(progress, componentName, comp)
+			// Build dependency graph for progress display
+			addComponentToProgressTable(progress, componentName, comp)
 
-				// Print initial progress table
-				progress.PrintInitial()
-
-			}
+			// Print initial progress table
+			progress.PrintInitial()
 
 			// Create progress callback
 			onProgress := func(event executor.ProgressEvent) {
@@ -396,31 +440,20 @@ Examples:
 // deployDatacenterComponent registers a component declaration at the datacenter level.
 // The component is not deployed immediately -- it is stored so the engine can
 // automatically deploy it into environments when needed as a dependency.
-func deployDatacenterComponent(ctx context.Context, mgr state.Manager, dc, source string, variables []string, varFile string) error {
+func deployDatacenterComponent(ctx context.Context, mgr state.Manager, dc, imageRef string, variables []string, varFile string) error {
 	// Verify the datacenter exists
 	_, err := mgr.GetDatacenter(ctx, dc)
 	if err != nil {
 		return fmt.Errorf("datacenter %q not found: %w", dc, err)
 	}
 
-	// Parse the source into component name and version.
+	// Parse the image reference into component name and version tag.
 	// For OCI references like "myorg/stripe:latest", the name is "myorg/stripe" and source is "latest".
-	// For local paths, the name is derived from the directory.
-	isLocalPath := !strings.Contains(source, ":") || strings.HasPrefix(source, "./") || strings.HasPrefix(source, "/")
-
-	var componentName, componentSource string
-	if isLocalPath {
-		componentName = deriveComponentName(source, true)
-		componentSource = source
-	} else {
-		// OCI reference: split into name (registry address) and source (tag)
-		parts := strings.SplitN(source, ":", 2)
-		componentName = parts[0]
-		if len(parts) == 2 {
-			componentSource = parts[1]
-		} else {
-			componentSource = "latest"
-		}
+	parts := strings.SplitN(imageRef, ":", 2)
+	componentName := parts[0]
+	componentSource := "latest"
+	if len(parts) == 2 {
+		componentSource = parts[1]
 	}
 
 	// Load variables from file if specified
@@ -476,22 +509,30 @@ func newDeployDatacenterCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:     "datacenter <name> <config>",
+		Use:     "datacenter <name> <image>",
 		Aliases: []string{"dc", "dcs", "datacenters"},
 		Short:   "Deploy a datacenter",
-		Long: `Deploy or update a datacenter.
+		Long: `Deploy or update a datacenter from a built or pulled image.
+
+The image must be a reference to a datacenter artifact in the local cache
+(built with 'cldctl build datacenter' or pulled with 'cldctl pull datacenter').
+If the image is not cached locally, it will be pulled from the remote registry
+automatically.
 
 Arguments:
   name    Name for the deployed datacenter
-  config  Datacenter config: OCI image reference or local path
+  image   Datacenter image reference (e.g., my-dc:latest, davidthor/local-datacenter)
 
 Examples:
-  cldctl deploy datacenter my-dc ./datacenter
-  cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0`,
+  cldctl deploy datacenter local davidthor/local-datacenter
+  cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0
+  cldctl deploy datacenter my-dc my-dc:latest`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+
 			dcName := args[0]
-			configRef := args[1]
+			imageRef := args[1]
 			ctx := context.Background()
 
 			// Create state manager
@@ -520,72 +561,74 @@ Examples:
 				}
 			}
 
-			// Check if this is an OCI reference or local path
-			isLocalPath := !strings.Contains(configRef, ":") || strings.HasPrefix(configRef, "./") || strings.HasPrefix(configRef, "/")
-
-			// Determine the tag and source for this datacenter
-			tag := configRef // For OCI refs, the tag IS the reference
-			source := configRef
-			if isLocalPath {
-				absPath, err := filepath.Abs(configRef)
-				if err != nil {
-					return fmt.Errorf("failed to resolve absolute path: %w", err)
-				}
-				source = absPath
-				tag = fmt.Sprintf("%s:latest", dcName)
-			}
-
 			// Display execution plan
 			fmt.Printf("Datacenter: %s\n", dcName)
-			fmt.Printf("Source:     %s\n", source)
-			fmt.Printf("Tag:        %s\n", tag)
+			fmt.Printf("Image:      %s\n", imageRef)
 			fmt.Println()
 
-			// Load datacenter to show execution plan
-			var dc datacenter.Datacenter
-			var dcDir string
-			var allModules map[string]moduleInfo
-
-			if isLocalPath {
-				// Load datacenter from local path
-				dcFile := source
-				dcDir = source
-				info, err := os.Stat(source)
-				if err != nil {
-					return fmt.Errorf("failed to access config path: %w", err)
-				}
-				if info.IsDir() {
-					dcFile = filepath.Join(source, "datacenter.dc")
-					if _, err := os.Stat(dcFile); os.IsNotExist(err) {
-						dcFile = filepath.Join(source, "datacenter.hcl")
-					}
-				} else {
-					dcDir = filepath.Dir(source)
-				}
-				loader := datacenter.NewLoader()
-				dc, err = loader.Load(dcFile)
-				if err != nil {
-					return fmt.Errorf("failed to load datacenter: %w", err)
-				}
-
-				// Collect all modules
-				allModules = collectAllModules(dc, dcDir)
-
-				fmt.Println("Build Plan:")
-				if len(allModules) > 0 {
-					fmt.Printf("  %d module(s) to build:\n", len(allModules))
-					for modulePath, modInfo := range allModules {
-						fmt.Printf("    %-24s (%s)\n", modulePath, modInfo.plugin)
-					}
-				} else {
-					fmt.Println("  No modules to build.")
-				}
-			} else {
-				fmt.Println("Build Plan:")
-				fmt.Println("  (modules will be determined from OCI artifact)")
+			// Resolve the image: check local cache first, then pull from remote
+			reg, err := registry.NewRegistry()
+			if err != nil {
+				return fmt.Errorf("failed to open local registry: %w", err)
 			}
 
-			fmt.Println()
+			entry, err := reg.Get(imageRef)
+			if err != nil || entry == nil || entry.CachePath == "" {
+				// Not in local cache — pull from remote
+				fmt.Printf("[pull] Downloading %s...\n", imageRef)
+				client := oci.NewClient()
+
+				dcDir, err := registry.CachePathForRef(imageRef)
+				if err != nil {
+					return fmt.Errorf("failed to compute cache path: %w", err)
+				}
+
+				os.RemoveAll(dcDir)
+				if err := os.MkdirAll(dcDir, 0755); err != nil {
+					return fmt.Errorf("failed to create cache directory: %w", err)
+				}
+
+				if err := client.Pull(ctx, imageRef, dcDir); err != nil {
+					os.RemoveAll(dcDir)
+					return fmt.Errorf("failed to pull datacenter: %w", err)
+				}
+
+				// Calculate size
+				var totalSize int64
+				_ = filepath.Walk(dcDir, func(_ string, info os.FileInfo, walkErr error) error {
+					if walkErr != nil {
+						return walkErr
+					}
+					if !info.IsDir() {
+						totalSize += info.Size()
+					}
+					return nil
+				})
+
+				// Register in local cache
+				repo, tagPortion := registry.ParseReference(imageRef)
+				dcEntry := registry.ArtifactEntry{
+					Reference:  imageRef,
+					Repository: repo,
+					Tag:        tagPortion,
+					Type:       registry.TypeDatacenter,
+					Size:       totalSize,
+					CreatedAt:  time.Now(),
+					CachePath:  dcDir,
+				}
+				if err := reg.Add(dcEntry); err != nil {
+					return fmt.Errorf("failed to register datacenter: %w", err)
+				}
+
+				fmt.Printf("[pull] Cached %s\n", imageRef)
+			} else {
+				// Verify cached content still exists on disk
+				dcFile := findDatacenterFile(entry.CachePath)
+				if dcFile == "" {
+					return fmt.Errorf("cached artifact for %s is missing from disk; try: cldctl pull datacenter %s", imageRef, imageRef)
+				}
+				fmt.Printf("[cache] Using locally cached %s\n", imageRef)
+			}
 
 			// Confirm unless --auto-approve is provided
 			if !autoApprove {
@@ -602,92 +645,11 @@ Examples:
 			fmt.Println()
 			fmt.Printf("[deploy] Deploying datacenter %q...\n", dcName)
 
-			if isLocalPath {
-				// Build module Docker images
-				if len(allModules) > 0 {
-					moduleBuilder, err := createModuleBuilder()
-					if err != nil {
-						return fmt.Errorf("failed to create module builder: %w", err)
-					}
-					defer moduleBuilder.Close()
-
-					// Compute module artifact tags
-					baseRef := tag
-					tagPart := ""
-					if idx := strings.LastIndex(tag, ":"); idx != -1 {
-						baseRef = tag[:idx]
-						tagPart = tag[idx:]
-					}
-
-					for modulePath, modInfo := range allModules {
-						modName := strings.TrimPrefix(modulePath, "module/")
-						modRef := fmt.Sprintf("%s-module-%s%s", baseRef, modName, tagPart)
-
-						fmt.Printf("[build] Building %s...\n", modulePath)
-						buildResult, err := moduleBuilder.Build(ctx, modInfo.sourceDir, modInfo.plugin, modRef)
-						if err != nil {
-							return fmt.Errorf("failed to build module %s: %w", modulePath, err)
-						}
-						fmt.Printf("[success] Built %s (%s)\n", modRef, buildResult.ModuleType)
-					}
-				}
-
-				// Snapshot the datacenter source to a stable cache directory.
-				// This makes the deployed datacenter immutable — source changes
-				// won't affect it until explicitly re-deployed.
-				cacheDir, err := registry.CachePathForRef(tag)
-				if err != nil {
-					return fmt.Errorf("failed to compute cache path: %w", err)
-				}
-
-				// Remove old cache if present
-				os.RemoveAll(cacheDir)
-				if err := os.MkdirAll(cacheDir, 0755); err != nil {
-					return fmt.Errorf("failed to create cache directory: %w", err)
-				}
-
-				if err := copyDirectory(dcDir, cacheDir); err != nil {
-					return fmt.Errorf("failed to snapshot datacenter source: %w", err)
-				}
-
-				// Register in unified artifact registry
-				reg, err := registry.NewRegistry()
-				if err != nil {
-					return fmt.Errorf("failed to create local registry: %w", err)
-				}
-
-				repo, tagPortion := registry.ParseReference(tag)
-				dcEntry := registry.ArtifactEntry{
-					Reference:  tag,
-					Repository: repo,
-					Tag:        tagPortion,
-					Type:       registry.TypeDatacenter,
-					Source:     registry.SourceBuilt,
-					CreatedAt:  time.Now(),
-					CachePath:  cacheDir,
-				}
-				if err := reg.Add(dcEntry); err != nil {
-					return fmt.Errorf("failed to register datacenter: %w", err)
-				}
-
-				fmt.Printf("[success] Datacenter cached at %s\n", cacheDir)
-			} else {
-				// For OCI references, verify the artifact exists
-				client := oci.NewClient()
-				exists, err := client.Exists(ctx, configRef)
-				if err != nil {
-					return fmt.Errorf("failed to check artifact: %w", err)
-				}
-				if !exists {
-					return fmt.Errorf("artifact %s not found in registry", configRef)
-				}
-			}
-
 			// Save datacenter state
 			dcState := &types.DatacenterState{
 				Name:      dcName,
-				Version:   tag,
-				Source:     source,
+				Version:   imageRef,
+				Source:    imageRef,
 				Variables: vars,
 				Modules:   make(map[string]*types.ModuleState),
 				CreatedAt: time.Now(),
@@ -721,7 +683,7 @@ Examples:
 				return fmt.Errorf("datacenter infrastructure provisioning failed")
 			}
 
-			fmt.Printf("[success] Datacenter %q deployed as %s\n", dcName, tag)
+			fmt.Printf("[success] Datacenter %q deployed from %s\n", dcName, imageRef)
 			fmt.Println()
 			fmt.Println("The datacenter is now available for use with environments.")
 
@@ -784,6 +746,20 @@ func deriveComponentName(source string, isLocalPath bool) string {
 	}
 
 	return ref
+}
+
+// findComponentFile looks for a component config file in the given directory.
+// Returns the path to the file if found, or empty string if not.
+func findComponentFile(dir string) string {
+	ymlFile := filepath.Join(dir, "cloud.component.yml")
+	if _, err := os.Stat(ymlFile); err == nil {
+		return ymlFile
+	}
+	yamlFile := filepath.Join(dir, "cloud.component.yaml")
+	if _, err := os.Stat(yamlFile); err == nil {
+		return yamlFile
+	}
+	return ""
 }
 
 // isInteractive returns true if the CLI is running in an interactive terminal

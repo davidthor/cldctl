@@ -150,8 +150,8 @@ For convenience, cldctl supports shorthand aliases:
 
 ```bash
 # These are equivalent:
-cldctl deploy component ./my-app -e staging
-cldctl deploy comp ./my-app -e staging
+cldctl deploy component myapp:latest -e staging
+cldctl deploy comp myapp:latest -e staging
 
 # These are equivalent:
 cldctl build datacenter . -t ghcr.io/myorg/dc:v1.0.0
@@ -169,7 +169,7 @@ cldctl supports multiple state backends for storing deployment state:
 ### Local Backend (Default)
 
 ```bash
-cldctl deploy component ./my-app -e staging
+cldctl deploy component myapp:latest -e staging
 ```
 
 State is stored in `~/.cldctl/state/`.
@@ -177,7 +177,7 @@ State is stored in `~/.cldctl/state/`.
 ### S3 Backend
 
 ```bash
-cldctl deploy component ./my-app -e staging \
+cldctl deploy component myapp:latest -e staging \
   --backend s3 \
   --backend-config bucket=my-cldctl-state \
   --backend-config region=us-east-1 \
@@ -187,7 +187,7 @@ cldctl deploy component ./my-app -e staging \
 ### GCS Backend
 
 ```bash
-cldctl deploy component ./my-app -e staging \
+cldctl deploy component myapp:latest -e staging \
   --backend gcs \
   --backend-config bucket=my-cldctl-state \
   --backend-config prefix=cldctl
@@ -196,7 +196,7 @@ cldctl deploy component ./my-app -e staging \
 ### Azure Backend
 
 ```bash
-cldctl deploy component ./my-app -e staging \
+cldctl deploy component myapp:latest -e staging \
   --backend azurerm \
   --backend-config storage_account_name=myaccount \
   --backend-config container_name=cldctl-state \
@@ -212,7 +212,7 @@ export CLDCTL_BACKEND=s3
 export CLDCTL_BACKEND_S3_BUCKET=my-cldctl-state
 export CLDCTL_BACKEND_S3_REGION=us-east-1
 
-cldctl deploy component ./my-app -e staging
+cldctl deploy component myapp:latest -e staging
 ```
 
 ## Output Formats

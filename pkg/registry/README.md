@@ -46,7 +46,6 @@ entry := registry.ArtifactEntry{
     Repository: "ghcr.io/org/app",
     Tag:        "v1.0.0",
     Type:       registry.TypeComponent,
-    Source:     registry.SourceBuilt,
     Size:       1024,
     CreatedAt:  time.Now(),
     CachePath:  "/path/to/cache",
@@ -81,7 +80,6 @@ cachePath, err := registry.CachePathForRef("ghcr.io/org/app:v1.0.0")
 | `Tag`        | Tag portion (e.g., `v1.0.0`)                        |
 | `Type`       | Artifact type: `component` or `datacenter`          |
 | `Digest`     | Content digest (sha256:...)                         |
-| `Source`     | How the artifact was added (`built` or `pulled`)    |
 | `Size`       | Size in bytes                                       |
 | `CreatedAt`  | When the artifact was added                         |
 | `CachePath`  | Local filesystem path to the cached artifact        |

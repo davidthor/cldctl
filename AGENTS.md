@@ -31,9 +31,10 @@ cldctl build datacenter ./dc -t ghcr.io/myorg/dc:v1
 cldctl build datacenter ./dc                              # digest-only
 
 # Deploy commands
-cldctl deploy component ./my-app -e production -d my-datacenter
+cldctl deploy component myorg/myapp:v1 -e production -d my-datacenter
 cldctl deploy component myorg/stripe:latest -d my-dc --var key=secret  # datacenter-level component (no -e)
-cldctl deploy datacenter my-dc ./datacenter
+cldctl deploy datacenter local davidthor/local-datacenter
+cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0
 
 # Environment management
 cldctl create environment staging -d my-datacenter
@@ -101,9 +102,9 @@ All environment-scoped commands require a datacenter to be specified. The datace
 
 This means after deploying a datacenter once, subsequent commands can omit `-d`:
 ```bash
-cldctl deploy datacenter my-dc ./datacenter  # auto-sets default_datacenter
+cldctl deploy datacenter my-dc my-dc:latest    # auto-sets default_datacenter
 cldctl create environment staging            # uses my-dc from config
-cldctl deploy component ./my-app -e staging  # uses my-dc from config
+cldctl deploy component myapp:latest -e staging  # uses my-dc from config
 ```
 
 ### Automatic Dependency Deployment
@@ -412,7 +413,7 @@ component "myorg/stripe" {
 - Components are **not** deployed at the datacenter level -- they are deployed into individual environments when another component declares them as a dependency
 - Datacenter component variables take priority over interactive prompts but not over explicitly provided values (from environment config files or CLI flags)
 - Component declarations are stored as individual state files (`datacenters/<dc>/components/<name>.state.json`), separate from the datacenter template state, so re-deploying a datacenter template does not remove previously registered components
-- Components can also be managed via CLI: `cldctl deploy component <source> -d <dc>` (no `-e` flag) and `cldctl destroy component <name> -d <dc>`
+- Components can also be managed via CLI: `cldctl deploy component <image> -d <dc>` (no `-e` flag) and `cldctl destroy component <name> -d <dc>`
 
 ### Hook Types & Required Outputs
 | Hook | Required Outputs |
