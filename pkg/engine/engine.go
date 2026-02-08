@@ -11,17 +11,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/davidthor/arcctl/pkg/engine/executor"
-	"github.com/davidthor/arcctl/pkg/engine/planner"
-	"github.com/davidthor/arcctl/pkg/graph"
-	"github.com/davidthor/arcctl/pkg/iac"
-	"github.com/davidthor/arcctl/pkg/oci"
-	"github.com/davidthor/arcctl/pkg/registry"
-	"github.com/davidthor/arcctl/pkg/schema/component"
-	"github.com/davidthor/arcctl/pkg/schema/datacenter"
-	"github.com/davidthor/arcctl/pkg/schema/environment"
-	"github.com/davidthor/arcctl/pkg/state"
-	"github.com/davidthor/arcctl/pkg/state/types"
+	"github.com/davidthor/cldctl/pkg/engine/executor"
+	"github.com/davidthor/cldctl/pkg/engine/planner"
+	"github.com/davidthor/cldctl/pkg/graph"
+	"github.com/davidthor/cldctl/pkg/iac"
+	"github.com/davidthor/cldctl/pkg/oci"
+	"github.com/davidthor/cldctl/pkg/registry"
+	"github.com/davidthor/cldctl/pkg/schema/component"
+	"github.com/davidthor/cldctl/pkg/schema/datacenter"
+	"github.com/davidthor/cldctl/pkg/schema/environment"
+	"github.com/davidthor/cldctl/pkg/state"
+	"github.com/davidthor/cldctl/pkg/state/types"
 )
 
 // OCIClient defines the interface for OCI registry operations needed by the engine.

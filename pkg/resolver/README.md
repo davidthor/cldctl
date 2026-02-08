@@ -86,7 +86,7 @@ type DependencyGraph struct {
 ### Creating a Resolver
 
 ```go
-import "github.com/davidthor/arcctl/pkg/resolver"
+import "github.com/davidthor/cldctl/pkg/resolver"
 
 // Create with default options
 r := resolver.NewResolver(resolver.Options{
@@ -142,7 +142,7 @@ refType := resolver.DetectReferenceType("git::https://github.com/org/repo.git//p
 ### Creating a Dependency Resolver
 
 ```go
-import "github.com/davidthor/arcctl/pkg/resolver"
+import "github.com/davidthor/cldctl/pkg/resolver"
 
 r := resolver.NewResolver(resolver.Options{
     AllowLocal:  true,
@@ -248,8 +248,8 @@ Remote components are cached locally to avoid repeated downloads:
 import (
     "context"
     "fmt"
-    "github.com/davidthor/arcctl/pkg/resolver"
-    "github.com/davidthor/arcctl/pkg/oci"
+    "github.com/davidthor/cldctl/pkg/resolver"
+    "github.com/davidthor/cldctl/pkg/oci"
 )
 
 func main() {

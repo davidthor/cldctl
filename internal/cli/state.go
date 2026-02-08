@@ -4,8 +4,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/davidthor/arcctl/pkg/state"
-	"github.com/davidthor/arcctl/pkg/state/backend"
+	"github.com/davidthor/cldctl/pkg/state"
+	"github.com/davidthor/cldctl/pkg/state/backend"
 )
 
 // Environment variable names for state backend configuration.

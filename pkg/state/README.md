@@ -32,8 +32,8 @@ The manager provides high-level operations for state management.
 
 ```go
 import (
-    "github.com/davidthor/arcctl/pkg/state"
-    "github.com/davidthor/arcctl/pkg/state/backend"
+    "github.com/davidthor/cldctl/pkg/state"
+    "github.com/davidthor/cldctl/pkg/state/backend"
 )
 
 // From a backend instance
@@ -236,7 +236,7 @@ type Backend interface {
 Stores state on the local filesystem.
 
 ```go
-import "github.com/davidthor/arcctl/pkg/state/backend/local"
+import "github.com/davidthor/cldctl/pkg/state/backend/local"
 
 backend, err := local.NewBackend(map[string]string{
     "path": "~/.cldctl/state",  // Optional, default: ~/.cldctl/state
@@ -248,7 +248,7 @@ backend, err := local.NewBackend(map[string]string{
 Stores state in AWS S3 or compatible services (MinIO, R2).
 
 ```go
-import "github.com/davidthor/arcctl/pkg/state/backend/s3"
+import "github.com/davidthor/cldctl/pkg/state/backend/s3"
 
 backend, err := s3.NewBackend(map[string]string{
     "bucket":           "my-cldctl-state",  // Required
@@ -266,7 +266,7 @@ backend, err := s3.NewBackend(map[string]string{
 Stores state in Google Cloud Storage.
 
 ```go
-import "github.com/davidthor/arcctl/pkg/state/backend/gcs"
+import "github.com/davidthor/cldctl/pkg/state/backend/gcs"
 
 backend, err := gcs.NewBackend(map[string]string{
     "bucket":           "my-cldctl-state",  // Required
@@ -283,7 +283,7 @@ defer backend.Close()
 Stores state in Azure Blob Storage.
 
 ```go
-import "github.com/davidthor/arcctl/pkg/state/backend/azurerm"
+import "github.com/davidthor/cldctl/pkg/state/backend/azurerm"
 
 backend, err := azurerm.NewBackend(map[string]string{
     "storage_account_name": "myaccount",    // Required
@@ -299,7 +299,7 @@ backend, err := azurerm.NewBackend(map[string]string{
 ### Backend Registry
 
 ```go
-import "github.com/davidthor/arcctl/pkg/state/backend"
+import "github.com/davidthor/cldctl/pkg/state/backend"
 
 // Create a backend from configuration
 b, err := backend.Create(backend.Config{
@@ -374,9 +374,9 @@ type LockError struct {
 import (
     "context"
     "time"
-    "github.com/davidthor/arcctl/pkg/state"
-    "github.com/davidthor/arcctl/pkg/state/backend"
-    "github.com/davidthor/arcctl/pkg/state/types"
+    "github.com/davidthor/cldctl/pkg/state"
+    "github.com/davidthor/cldctl/pkg/state/backend"
+    "github.com/davidthor/cldctl/pkg/state/types"
 )
 
 func main() {
@@ -447,7 +447,7 @@ func main() {
 ## Error Handling
 
 ```go
-import "github.com/davidthor/arcctl/pkg/state/backend"
+import "github.com/davidthor/cldctl/pkg/state/backend"
 
 // Check for not found
 if err == backend.ErrNotFound {

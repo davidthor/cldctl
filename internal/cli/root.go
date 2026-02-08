@@ -8,13 +8,13 @@ import (
 	"github.com/spf13/viper"
 
 	// Import state backends to register them via init()
-	_ "github.com/davidthor/arcctl/pkg/state/backend/azurerm"
-	_ "github.com/davidthor/arcctl/pkg/state/backend/gcs"
-	_ "github.com/davidthor/arcctl/pkg/state/backend/local"
-	_ "github.com/davidthor/arcctl/pkg/state/backend/s3"
+	_ "github.com/davidthor/cldctl/pkg/state/backend/azurerm"
+	_ "github.com/davidthor/cldctl/pkg/state/backend/gcs"
+	_ "github.com/davidthor/cldctl/pkg/state/backend/local"
+	_ "github.com/davidthor/cldctl/pkg/state/backend/s3"
 
 	// Import log query adapters to register them via init()
-	_ "github.com/davidthor/arcctl/pkg/logs/loki"
+	_ "github.com/davidthor/cldctl/pkg/logs/loki"
 )
 
 var (

@@ -1,7 +1,7 @@
 package v1
 
 import (
-	"github.com/davidthor/arcctl/pkg/schema/environment/internal"
+	"github.com/davidthor/cldctl/pkg/schema/environment/internal"
 )
 
 // Transformer converts v1 schema to internal representation.

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/davidthor/arcctl/pkg/errors"
-	"github.com/davidthor/arcctl/pkg/schema/environment/internal"
-	"github.com/davidthor/arcctl/pkg/schema/environment/v1"
+	"github.com/davidthor/cldctl/pkg/errors"
+	"github.com/davidthor/cldctl/pkg/schema/environment/internal"
+	"github.com/davidthor/cldctl/pkg/schema/environment/v1"
 )
 
 // versionDetectingLoader implements the Loader interface.

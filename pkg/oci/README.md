@@ -100,7 +100,7 @@ type ModuleConfig struct {
 ### Creating a Client
 
 ```go
-import "github.com/davidthor/arcctl/pkg/oci"
+import "github.com/davidthor/cldctl/pkg/oci"
 
 // Create a client with default keychain authentication
 client := oci.NewClient()
@@ -228,7 +228,7 @@ The client uses the default keychain for authentication, which supports:
 ```go
 import (
     "context"
-    "github.com/davidthor/arcctl/pkg/oci"
+    "github.com/davidthor/cldctl/pkg/oci"
 )
 
 func main() {

@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/davidthor/arcctl/pkg/state/types"
+	"github.com/davidthor/cldctl/pkg/state/types"
 	"gopkg.in/yaml.v3"
 )
 

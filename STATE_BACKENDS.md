@@ -95,7 +95,7 @@ import (
     "fmt"
     "io"
 
-    "github.com/davidthor/arcctl/pkg/state/backend"
+    "github.com/davidthor/cldctl/pkg/state/backend"
 )
 
 // Backend implements the state backend interface for MyStorage
@@ -378,7 +378,7 @@ Add your backend to the registry:
 // pkg/state/backend/registry.go
 
 import (
-    "github.com/davidthor/arcctl/pkg/state/backend/mybackend"
+    "github.com/davidthor/cldctl/pkg/state/backend/mybackend"
 )
 
 func init() {

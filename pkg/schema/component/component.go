@@ -2,7 +2,7 @@
 package component
 
 import (
-	"github.com/davidthor/arcctl/pkg/schema/component/internal"
+	"github.com/davidthor/cldctl/pkg/schema/component/internal"
 )
 
 // Component represents a parsed and validated component configuration.

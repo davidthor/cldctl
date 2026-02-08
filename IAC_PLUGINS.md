@@ -149,7 +149,7 @@ import (
     "context"
     "fmt"
 
-    "github.com/davidthor/arcctl/pkg/iac"
+    "github.com/davidthor/cldctl/pkg/iac"
 )
 
 // Plugin implements the IaC plugin interface for MyIaC
@@ -184,7 +184,7 @@ import (
     "os"
     "path/filepath"
 
-    "github.com/davidthor/arcctl/pkg/oci"
+    "github.com/davidthor/cldctl/pkg/oci"
 )
 
 // prepareModule sets up the module for execution
@@ -250,7 +250,7 @@ import (
     "encoding/json"
     "os/exec"
 
-    "github.com/davidthor/arcctl/pkg/iac"
+    "github.com/davidthor/cldctl/pkg/iac"
 )
 
 func (p *Plugin) Preview(ctx context.Context, opts iac.RunOptions) (*iac.PreviewResult, error) {
@@ -350,7 +350,7 @@ import (
     "os/exec"
     "path/filepath"
 
-    "github.com/davidthor/arcctl/pkg/iac"
+    "github.com/davidthor/cldctl/pkg/iac"
 )
 
 func (p *Plugin) Apply(ctx context.Context, opts iac.RunOptions) (*iac.ApplyResult, error) {
@@ -474,7 +474,7 @@ import (
     "context"
     "os/exec"
 
-    "github.com/davidthor/arcctl/pkg/iac"
+    "github.com/davidthor/cldctl/pkg/iac"
 )
 
 func (p *Plugin) Destroy(ctx context.Context, opts iac.RunOptions) error {
@@ -519,7 +519,7 @@ import (
     "context"
     "os/exec"
 
-    "github.com/davidthor/arcctl/pkg/iac"
+    "github.com/davidthor/cldctl/pkg/iac"
 )
 
 func (p *Plugin) Refresh(ctx context.Context, opts iac.RunOptions) (*iac.RefreshResult, error) {
@@ -568,7 +568,7 @@ func (p *Plugin) Refresh(ctx context.Context, opts iac.RunOptions) (*iac.Refresh
 // pkg/iac/registry.go
 
 import (
-    "github.com/davidthor/arcctl/pkg/iac/myiac"
+    "github.com/davidthor/cldctl/pkg/iac/myiac"
 )
 
 func init() {

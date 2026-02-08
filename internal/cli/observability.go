@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/davidthor/arcctl/pkg/state/types"
+	"github.com/davidthor/cldctl/pkg/state/types"
 	"github.com/spf13/cobra"
 )
 

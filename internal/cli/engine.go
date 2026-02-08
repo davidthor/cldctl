@@ -1,15 +1,15 @@
 package cli
 
 import (
-	"github.com/davidthor/arcctl/pkg/engine"
-	"github.com/davidthor/arcctl/pkg/iac"
-	"github.com/davidthor/arcctl/pkg/state"
+	"github.com/davidthor/cldctl/pkg/engine"
+	"github.com/davidthor/cldctl/pkg/iac"
+	"github.com/davidthor/cldctl/pkg/state"
 
 	// Import IaC plugins to trigger registration via init() functions
-	_ "github.com/davidthor/arcctl/pkg/iac/container"
-	_ "github.com/davidthor/arcctl/pkg/iac/native"
-	_ "github.com/davidthor/arcctl/pkg/iac/opentofu"
-	_ "github.com/davidthor/arcctl/pkg/iac/pulumi"
+	_ "github.com/davidthor/cldctl/pkg/iac/container"
+	_ "github.com/davidthor/cldctl/pkg/iac/native"
+	_ "github.com/davidthor/cldctl/pkg/iac/opentofu"
+	_ "github.com/davidthor/cldctl/pkg/iac/pulumi"
 )
 
 // createEngine creates a new deployment engine with the given state manager.

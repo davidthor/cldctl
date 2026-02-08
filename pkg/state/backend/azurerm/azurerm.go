@@ -17,7 +17,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
-	"github.com/davidthor/arcctl/pkg/state/backend"
+	"github.com/davidthor/cldctl/pkg/state/backend"
 	"github.com/google/uuid"
 )
 

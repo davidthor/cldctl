@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/davidthor/arcctl/pkg/iac"
+	"github.com/davidthor/cldctl/pkg/iac"
 )
 
 func init() {

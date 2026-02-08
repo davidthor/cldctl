@@ -363,7 +363,7 @@ import (
     "fmt"
     "strings"
 
-    "github.com/davidthor/arcctl/pkg/schema/component/internal"
+    "github.com/davidthor/cldctl/pkg/schema/component/internal"
 )
 
 // Transformer converts v1 schema to internal representation.
@@ -594,7 +594,7 @@ type ResourceGroupV2 struct {
 
 package v2
 
-import "github.com/davidthor/arcctl/pkg/schema/component/internal"
+import "github.com/davidthor/cldctl/pkg/schema/component/internal"
 
 type Transformer struct{}
 

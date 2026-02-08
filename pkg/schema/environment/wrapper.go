@@ -1,7 +1,7 @@
 package environment
 
 import (
-	"github.com/davidthor/arcctl/pkg/schema/environment/internal"
+	"github.com/davidthor/cldctl/pkg/schema/environment/internal"
 )
 
 // environmentWrapper wraps an InternalEnvironment to implement the Environment interface.

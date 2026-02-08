@@ -7,10 +7,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/davidthor/arcctl/pkg/errors"
-	"github.com/davidthor/arcctl/pkg/graph"
-	"github.com/davidthor/arcctl/pkg/resolver"
-	"github.com/davidthor/arcctl/pkg/schema/component"
+	"github.com/davidthor/cldctl/pkg/errors"
+	"github.com/davidthor/cldctl/pkg/graph"
+	"github.com/davidthor/cldctl/pkg/resolver"
+	"github.com/davidthor/cldctl/pkg/schema/component"
 	"github.com/spf13/cobra"
 )
 

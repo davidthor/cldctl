@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/davidthor/arcctl/pkg/schema/component"
+	"github.com/davidthor/cldctl/pkg/schema/component"
 )
 
 // DependencyResolver resolves component dependencies recursively.

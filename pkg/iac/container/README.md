@@ -146,7 +146,7 @@ response, err := executor.Execute(ctx, container.ExecuteOptions{
 
 ```go
 // Register automatically on import
-import _ "github.com/davidthor/arcctl/pkg/iac/container"
+import _ "github.com/davidthor/cldctl/pkg/iac/container"
 
 // Get plugin from registry
 plugin, _ := iac.DefaultRegistry.Get("container")

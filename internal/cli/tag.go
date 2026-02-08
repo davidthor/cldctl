@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/davidthor/arcctl/pkg/oci"
+	"github.com/davidthor/cldctl/pkg/oci"
 	"github.com/spf13/cobra"
 )
 

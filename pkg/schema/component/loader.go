@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/davidthor/arcctl/pkg/errors"
-	"github.com/davidthor/arcctl/pkg/schema/component/internal"
-	"github.com/davidthor/arcctl/pkg/schema/component/v1"
+	"github.com/davidthor/cldctl/pkg/errors"
+	"github.com/davidthor/cldctl/pkg/schema/component/internal"
+	"github.com/davidthor/cldctl/pkg/schema/component/v1"
 	"gopkg.in/yaml.v3"
 )
 

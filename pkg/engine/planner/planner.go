@@ -4,8 +4,8 @@ package planner
 import (
 	"fmt"
 
-	"github.com/davidthor/arcctl/pkg/graph"
-	"github.com/davidthor/arcctl/pkg/state/types"
+	"github.com/davidthor/cldctl/pkg/graph"
+	"github.com/davidthor/cldctl/pkg/state/types"
 )
 
 // Action represents the type of operation to perform.

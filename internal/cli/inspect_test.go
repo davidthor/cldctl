@@ -3,9 +3,9 @@ package cli
 import (
 	"testing"
 
-	"github.com/davidthor/arcctl/pkg/graph"
-	"github.com/davidthor/arcctl/pkg/resolver"
-	"github.com/davidthor/arcctl/pkg/state/types"
+	"github.com/davidthor/cldctl/pkg/graph"
+	"github.com/davidthor/cldctl/pkg/resolver"
+	"github.com/davidthor/cldctl/pkg/state/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

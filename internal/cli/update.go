@@ -6,12 +6,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/davidthor/arcctl/pkg/engine"
-	"github.com/davidthor/arcctl/pkg/engine/executor"
-	"github.com/davidthor/arcctl/pkg/envfile"
-	"github.com/davidthor/arcctl/pkg/schema/environment"
-	"github.com/davidthor/arcctl/pkg/state"
-	"github.com/davidthor/arcctl/pkg/state/types"
+	"github.com/davidthor/cldctl/pkg/engine"
+	"github.com/davidthor/cldctl/pkg/engine/executor"
+	"github.com/davidthor/cldctl/pkg/envfile"
+	"github.com/davidthor/cldctl/pkg/schema/environment"
+	"github.com/davidthor/cldctl/pkg/state"
+	"github.com/davidthor/cldctl/pkg/state/types"
 	"github.com/spf13/cobra"
 )
 

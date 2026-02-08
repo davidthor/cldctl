@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/davidthor/arcctl/pkg/oci"
-	"github.com/davidthor/arcctl/pkg/registry"
-	"github.com/davidthor/arcctl/pkg/schema/component"
-	"github.com/davidthor/arcctl/pkg/schema/datacenter"
+	"github.com/davidthor/cldctl/pkg/oci"
+	"github.com/davidthor/cldctl/pkg/registry"
+	"github.com/davidthor/cldctl/pkg/schema/component"
+	"github.com/davidthor/cldctl/pkg/schema/datacenter"
 	"github.com/spf13/cobra"
 )
 

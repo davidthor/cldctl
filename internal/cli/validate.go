@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/davidthor/arcctl/pkg/errors"
-	"github.com/davidthor/arcctl/pkg/schema/component"
-	"github.com/davidthor/arcctl/pkg/schema/datacenter"
-	"github.com/davidthor/arcctl/pkg/schema/environment"
+	"github.com/davidthor/cldctl/pkg/errors"
+	"github.com/davidthor/cldctl/pkg/schema/component"
+	"github.com/davidthor/cldctl/pkg/schema/datacenter"
+	"github.com/davidthor/cldctl/pkg/schema/environment"
 	"github.com/spf13/cobra"
 )
 

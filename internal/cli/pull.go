@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/davidthor/arcctl/pkg/oci"
-	"github.com/davidthor/arcctl/pkg/registry"
+	"github.com/davidthor/cldctl/pkg/oci"
+	"github.com/davidthor/cldctl/pkg/registry"
 	"github.com/spf13/cobra"
 )
 

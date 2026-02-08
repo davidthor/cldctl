@@ -27,7 +27,7 @@ jobs:
       - checkout
       - run:
           name: Install cldctl
-          command: go install github.com/davidthor/arcctl@latest
+          command: go install github.com/davidthor/cldctl@latest
       - run:
           name: Build component
           command: |
@@ -44,7 +44,7 @@ jobs:
     steps:
       - run:
           name: Install cldctl
-          command: go install github.com/davidthor/arcctl@latest
+          command: go install github.com/davidthor/cldctl@latest
       - run:
           name: Deploy to staging
           command: |

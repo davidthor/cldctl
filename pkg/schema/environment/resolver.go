@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/davidthor/arcctl/pkg/schema/environment/internal"
+	"github.com/davidthor/cldctl/pkg/schema/environment/internal"
 )
 
 // expressionPattern matches ${{ ... }} expressions in string values.

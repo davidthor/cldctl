@@ -3,8 +3,8 @@ package planner
 import (
 	"testing"
 
-	"github.com/davidthor/arcctl/pkg/graph"
-	"github.com/davidthor/arcctl/pkg/state/types"
+	"github.com/davidthor/cldctl/pkg/graph"
+	"github.com/davidthor/cldctl/pkg/state/types"
 )
 
 func TestActionConstants(t *testing.T) {

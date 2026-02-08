@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/davidthor/arcctl/pkg/state/backend"
+	"github.com/davidthor/cldctl/pkg/state/backend"
 )
 
 // mockAzureBlobServer simulates Azure Blob Storage API for testing.

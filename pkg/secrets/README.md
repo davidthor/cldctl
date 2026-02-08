@@ -43,7 +43,7 @@ The manager coordinates multiple providers with priority ordering.
 ### Creating a Manager
 
 ```go
-import "github.com/davidthor/arcctl/pkg/secrets"
+import "github.com/davidthor/cldctl/pkg/secrets"
 
 // Default manager (includes EnvProvider)
 manager := secrets.DefaultManager()
@@ -219,7 +219,7 @@ Features:
 import (
     "context"
     "os"
-    "github.com/davidthor/arcctl/pkg/secrets"
+    "github.com/davidthor/cldctl/pkg/secrets"
 )
 
 func main() {

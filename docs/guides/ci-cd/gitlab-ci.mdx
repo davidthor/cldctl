@@ -28,7 +28,7 @@ build:
   stage: build
   image: golang:1.22
   script:
-    - go install github.com/davidthor/arcctl@latest
+    - go install github.com/davidthor/cldctl@latest
     - cldctl build component . -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
     - cldctl push component $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
   only:
@@ -39,7 +39,7 @@ deploy-staging:
   stage: deploy-staging
   image: golang:1.22
   script:
-    - go install github.com/davidthor/arcctl@latest
+    - go install github.com/davidthor/cldctl@latest
     - cldctl deploy component $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA -e staging --auto-approve
   only:
     - main
@@ -58,7 +58,7 @@ deploy-production:
   stage: deploy-production
   image: golang:1.22
   script:
-    - go install github.com/davidthor/arcctl@latest
+    - go install github.com/davidthor/cldctl@latest
     - cldctl deploy component $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA -e production --auto-approve
   only:
     - tags

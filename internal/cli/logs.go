@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/davidthor/arcctl/pkg/logs"
-	"github.com/davidthor/arcctl/pkg/state/types"
+	"github.com/davidthor/cldctl/pkg/logs"
+	"github.com/davidthor/cldctl/pkg/state/types"
 	"github.com/spf13/cobra"
 
 	// Register log query adapters
-	_ "github.com/davidthor/arcctl/pkg/logs/loki"
+	_ "github.com/davidthor/cldctl/pkg/logs/loki"
 )
 
 func newLogsCmd() *cobra.Command {

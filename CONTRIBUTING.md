@@ -27,7 +27,7 @@ This guide explains how to contribute new features to cldctl, including adding n
 
 ```bash
 # Clone the repository
-git clone https://github.com/davidthor/arcctl.git
+git clone https://github.com/davidthor/cldctl.git
 cd cldctl
 
 # Install dependencies
@@ -565,7 +565,7 @@ import (
     "path"
 
     "github.com/hashicorp/consul/api"
-    "github.com/davidthor/arcctl/pkg/state/backend"
+    "github.com/davidthor/cldctl/pkg/state/backend"
 )
 
 // Backend implements the state backend interface for Consul KV
@@ -727,7 +727,7 @@ Add to the registry initialization:
 // pkg/state/backend/registry.go
 
 import (
-    "github.com/davidthor/arcctl/pkg/state/backend/consul"
+    "github.com/davidthor/cldctl/pkg/state/backend/consul"
 )
 
 func init() {
@@ -808,7 +808,7 @@ import (
     "fmt"
     "os/exec"
 
-    "github.com/davidthor/arcctl/pkg/iac"
+    "github.com/davidthor/cldctl/pkg/iac"
 )
 
 // Plugin implements the IaC plugin interface for AWS CDK
@@ -954,7 +954,7 @@ func (p *Plugin) writeContext(workDir string, inputs map[string]interface{}) err
 // pkg/iac/registry.go
 
 import (
-    "github.com/davidthor/arcctl/pkg/iac/awscdk"
+    "github.com/davidthor/cldctl/pkg/iac/awscdk"
 )
 
 func init() {

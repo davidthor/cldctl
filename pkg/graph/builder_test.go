@@ -3,7 +3,7 @@ package graph
 import (
 	"testing"
 
-	"github.com/davidthor/arcctl/pkg/schema/component"
+	"github.com/davidthor/cldctl/pkg/schema/component"
 )
 
 // loadComponent is a test helper that parses a YAML component specification.

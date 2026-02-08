@@ -79,7 +79,7 @@ jobs:
           COMMIT=$(git rev-parse --short HEAD)
           BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-          LDFLAGS="-s -w -X github.com/davidthor/arcctl/internal/cli.Version=${VERSION} -X github.com/davidthor/arcctl/internal/cli.Commit=${COMMIT} -X github.com/davidthor/arcctl/internal/cli.BuildDate=${BUILD_DATE}"
+          LDFLAGS="-s -w -X github.com/davidthor/cldctl/internal/cli.Version=${VERSION} -X github.com/davidthor/cldctl/internal/cli.Commit=${COMMIT} -X github.com/davidthor/cldctl/internal/cli.BuildDate=${BUILD_DATE}"
 
           go build -ldflags "${LDFLAGS}" -o cldctl-${{ matrix.suffix }}${{ matrix.extension }} ./cmd/cldctl
 

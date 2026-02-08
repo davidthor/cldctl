@@ -2,7 +2,7 @@
 package datacenter
 
 import (
-	"github.com/davidthor/arcctl/pkg/schema/datacenter/internal"
+	"github.com/davidthor/cldctl/pkg/schema/datacenter/internal"
 )
 
 // Datacenter represents a parsed and validated datacenter configuration.

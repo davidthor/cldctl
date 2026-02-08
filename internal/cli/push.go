@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/davidthor/arcctl/pkg/oci"
-	"github.com/davidthor/arcctl/pkg/schema/datacenter"
+	"github.com/davidthor/cldctl/pkg/oci"
+	"github.com/davidthor/cldctl/pkg/schema/datacenter"
 	"github.com/spf13/cobra"
 )
 

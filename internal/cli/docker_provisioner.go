@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/davidthor/arcctl/pkg/schema/component"
-	"github.com/davidthor/arcctl/pkg/state/types"
+	"github.com/davidthor/cldctl/pkg/schema/component"
+	"github.com/davidthor/cldctl/pkg/state/types"
 )
 
 // DockerProvisioner handles local Docker-based resource provisioning.

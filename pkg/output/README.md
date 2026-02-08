@@ -62,7 +62,7 @@ The main stream manages event distribution to handlers.
 ### Creating a Stream
 
 ```go
-import "github.com/davidthor/arcctl/pkg/output"
+import "github.com/davidthor/cldctl/pkg/output"
 
 stream := output.NewStream()
 ```
@@ -211,7 +211,7 @@ import (
     "context"
     "os"
     "os/exec"
-    "github.com/davidthor/arcctl/pkg/output"
+    "github.com/davidthor/cldctl/pkg/output"
 )
 
 func main() {

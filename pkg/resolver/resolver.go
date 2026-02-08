@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/davidthor/arcctl/pkg/oci"
-	"github.com/davidthor/arcctl/pkg/schema/component"
+	"github.com/davidthor/cldctl/pkg/oci"
+	"github.com/davidthor/cldctl/pkg/schema/component"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 )

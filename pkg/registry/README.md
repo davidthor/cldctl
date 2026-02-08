@@ -32,7 +32,7 @@ If `artifacts.json` doesn't exist but a legacy `components.json` does in the sam
 ## Usage
 
 ```go
-import "github.com/davidthor/arcctl/pkg/registry"
+import "github.com/davidthor/cldctl/pkg/registry"
 
 // Create a registry instance
 reg, err := registry.NewRegistry()

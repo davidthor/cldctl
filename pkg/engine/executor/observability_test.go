@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/davidthor/arcctl/pkg/graph"
-	"github.com/davidthor/arcctl/pkg/schema/datacenter"
+	"github.com/davidthor/cldctl/pkg/graph"
+	"github.com/davidthor/cldctl/pkg/schema/datacenter"
 )
 
 // --- enrichObservabilityOutputs tests ---

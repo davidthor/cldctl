@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/davidthor/arcctl/pkg/engine/planner"
-	"github.com/davidthor/arcctl/pkg/graph"
-	"github.com/davidthor/arcctl/pkg/iac"
-	"github.com/davidthor/arcctl/pkg/state"
-	"github.com/davidthor/arcctl/pkg/state/backend"
-	"github.com/davidthor/arcctl/pkg/state/types"
+	"github.com/davidthor/cldctl/pkg/engine/planner"
+	"github.com/davidthor/cldctl/pkg/graph"
+	"github.com/davidthor/cldctl/pkg/iac"
+	"github.com/davidthor/cldctl/pkg/state"
+	"github.com/davidthor/cldctl/pkg/state/backend"
+	"github.com/davidthor/cldctl/pkg/state/types"
 )
 
 // mockStateManager implements state.Manager for testing

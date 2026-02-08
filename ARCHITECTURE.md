@@ -408,7 +408,7 @@ Each schema version has a transformer that converts from the external format to 
 
 package v1
 
-import "github.com/davidthor/arcctl/pkg/schema/component/internal"
+import "github.com/davidthor/cldctl/pkg/schema/component/internal"
 
 // Transformer converts v1 schema to internal representation
 type Transformer struct{}
@@ -628,7 +628,7 @@ import (
     "path"
 
     "github.com/aws/aws-sdk-go-v2/service/s3"
-    "github.com/davidthor/arcctl/pkg/state/backend"
+    "github.com/davidthor/cldctl/pkg/state/backend"
 )
 
 // Backend implements the state backend interface for S3-compatible storage
@@ -716,7 +716,7 @@ To add a new state backend (e.g., for Consul):
 
 package consul
 
-import "github.com/davidthor/arcctl/pkg/state/backend"
+import "github.com/davidthor/cldctl/pkg/state/backend"
 
 type Backend struct {
     // Consul-specific fields
@@ -809,10 +809,10 @@ import (
     "fmt"
 
     "github.com/spf13/cobra"
-    "github.com/davidthor/arcctl/internal/ui"
-    "github.com/davidthor/arcctl/pkg/engine/executor"
-    "github.com/davidthor/arcctl/pkg/schema/component"
-    "github.com/davidthor/arcctl/pkg/state"
+    "github.com/davidthor/cldctl/internal/ui"
+    "github.com/davidthor/cldctl/pkg/engine/executor"
+    "github.com/davidthor/cldctl/pkg/schema/component"
+    "github.com/davidthor/cldctl/pkg/state"
 )
 
 func NewDeployCmd() *cobra.Command {
@@ -1001,7 +1001,7 @@ import (
     "fmt"
     "os/exec"
 
-    "github.com/davidthor/arcctl/pkg/iac"
+    "github.com/davidthor/cldctl/pkg/iac"
 )
 
 // Plugin implements the IaC plugin interface for Pulumi
@@ -1089,9 +1089,9 @@ import (
     "encoding/json"
     "fmt"
 
-    "github.com/davidthor/arcctl/pkg/iac"
-    "github.com/davidthor/arcctl/pkg/iac/native/docker"
-    "github.com/davidthor/arcctl/pkg/iac/native/process"
+    "github.com/davidthor/cldctl/pkg/iac"
+    "github.com/davidthor/cldctl/pkg/iac/native/docker"
+    "github.com/davidthor/cldctl/pkg/iac/native/process"
 )
 
 // Plugin implements the IaC plugin interface for native execution
@@ -1671,8 +1671,8 @@ import (
     "context"
     "fmt"
 
-    "github.com/davidthor/arcctl/pkg/docker"
-    "github.com/davidthor/arcctl/pkg/schema/component"
+    "github.com/davidthor/cldctl/pkg/docker"
+    "github.com/davidthor/cldctl/pkg/schema/component"
 )
 
 // ComponentBuilder builds component OCI artifacts
@@ -1980,7 +1980,7 @@ import (
     "context"
     "testing"
 
-    "github.com/davidthor/arcctl/pkg/state/backend/local"
+    "github.com/davidthor/cldctl/pkg/state/backend/local"
 )
 
 func TestExecutor_Deploy_Integration(t *testing.T) {

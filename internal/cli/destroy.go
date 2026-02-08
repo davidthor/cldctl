@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/davidthor/arcctl/pkg/engine"
-	"github.com/davidthor/arcctl/pkg/state"
+	"github.com/davidthor/cldctl/pkg/engine"
+	"github.com/davidthor/cldctl/pkg/state"
 	"github.com/spf13/cobra"
 )
 

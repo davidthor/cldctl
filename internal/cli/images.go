@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/davidthor/arcctl/pkg/registry"
+	"github.com/davidthor/cldctl/pkg/registry"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )

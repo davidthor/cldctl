@@ -43,7 +43,7 @@ Parses and validates component configurations that define application resources.
 ### Usage
 
 ```go
-import "github.com/davidthor/arcctl/pkg/schema/component"
+import "github.com/davidthor/cldctl/pkg/schema/component"
 
 // Create a loader
 loader := component.NewLoader()
@@ -124,7 +124,7 @@ Parses and validates datacenter configurations that define infrastructure module
 ### Usage
 
 ```go
-import "github.com/davidthor/arcctl/pkg/schema/datacenter"
+import "github.com/davidthor/cldctl/pkg/schema/datacenter"
 
 // Create a loader
 loader := datacenter.NewLoader()
@@ -158,7 +158,7 @@ type Datacenter interface {
 Datacenters use HCL with runtime evaluation:
 
 ```go
-import "github.com/davidthor/arcctl/pkg/schema/datacenter/v1"
+import "github.com/davidthor/cldctl/pkg/schema/datacenter/v1"
 
 // Create parser with context
 parser := v1.NewParser()
@@ -234,7 +234,7 @@ Parses and validates environment configurations that define how components are d
 ### Usage
 
 ```go
-import "github.com/davidthor/arcctl/pkg/schema/environment"
+import "github.com/davidthor/cldctl/pkg/schema/environment"
 
 // Create a loader
 loader := environment.NewLoader()
@@ -334,7 +334,7 @@ for _, e := range errors {
 Each schema type has internal types for canonical representation:
 
 ```go
-import "github.com/davidthor/arcctl/pkg/schema/component/internal"
+import "github.com/davidthor/cldctl/pkg/schema/component/internal"
 
 // Access internal representation
 internal := comp.Internal()
@@ -350,7 +350,7 @@ for _, db := range internal.Databases {
 For components, the internal package provides an Expression type:
 
 ```go
-import "github.com/davidthor/arcctl/pkg/schema/component/internal"
+import "github.com/davidthor/cldctl/pkg/schema/component/internal"
 
 // Create an expression
 expr := internal.NewExpression("${{ variables.name }}")

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/davidthor/arcctl/internal/cli"
+	"github.com/davidthor/cldctl/internal/cli"
 )
 
 func main() {

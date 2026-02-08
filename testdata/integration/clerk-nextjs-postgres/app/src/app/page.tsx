@@ -68,7 +68,7 @@ export default function Home() {
           <p>
             Deployed with{" "}
             <a
-              href="https://github.com/architect-team/arcctl"
+              href="https://github.com/davidthor/cldctl"
               className="text-blue-600 hover:underline"
             >
               cldctl

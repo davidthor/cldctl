@@ -2,7 +2,7 @@
 //
 // It is imported as a side effect to register the "loki" query type:
 //
-//	import _ "github.com/davidthor/arcctl/pkg/logs/loki"
+//	import _ "github.com/davidthor/cldctl/pkg/logs/loki"
 package loki
 
 import (
@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/davidthor/arcctl/pkg/logs"
+	"github.com/davidthor/cldctl/pkg/logs"
 	"github.com/gorilla/websocket"
 )
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/davidthor/arcctl/pkg/logs"
+	"github.com/davidthor/cldctl/pkg/logs"
 	"github.com/gorilla/websocket"
 )
 

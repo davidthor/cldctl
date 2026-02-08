@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/davidthor/arcctl/pkg/state/backend"
-	"github.com/davidthor/arcctl/pkg/state/backend/local"
-	"github.com/davidthor/arcctl/pkg/state/types"
+	"github.com/davidthor/cldctl/pkg/state/backend"
+	"github.com/davidthor/cldctl/pkg/state/backend/local"
+	"github.com/davidthor/cldctl/pkg/state/types"
 )
 
 func TestNewManager(t *testing.T) {

@@ -151,7 +151,7 @@ err = err.WithDetail("component", "my-api")
 ### Basic Error Handling
 
 ```go
-import "github.com/davidthor/arcctl/pkg/errors"
+import "github.com/davidthor/cldctl/pkg/errors"
 
 func loadComponent(path string) (*Component, error) {
     data, err := os.ReadFile(path)
@@ -231,7 +231,7 @@ The `Error` type fully implements Go's error interface and supports the standard
 ```go
 import (
     "errors"
-    arcerrors "github.com/davidthor/arcctl/pkg/errors"
+    arcerrors "github.com/davidthor/cldctl/pkg/errors"
 )
 
 // Use errors.Is for type checking

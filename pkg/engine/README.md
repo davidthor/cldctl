@@ -98,7 +98,7 @@ result, err := engine.Destroy(ctx, engine.DestroyOptions{
 Executes planned changes sequentially or in parallel, respecting dependencies.
 
 ```go
-import "github.com/davidthor/arcctl/pkg/engine/executor"
+import "github.com/davidthor/cldctl/pkg/engine/executor"
 
 // Create an executor with options
 exec := executor.NewExecutor(stateManager, iacRegistry, executor.Options{
@@ -127,7 +127,7 @@ result, err := exec.ExecuteParallel(ctx, plan, graph)
 Parses and evaluates `${{ }}` expressions against a context.
 
 ```go
-import "github.com/davidthor/arcctl/pkg/engine/expression"
+import "github.com/davidthor/cldctl/pkg/engine/expression"
 
 // Parse an expression
 parser := expression.NewParser()
@@ -174,7 +174,7 @@ This package is located at `pkg/graph/` (not under engine) for broader reusabili
 such as rendering topology without executing.
 
 ```go
-import "github.com/davidthor/arcctl/pkg/graph"
+import "github.com/davidthor/cldctl/pkg/graph"
 
 // Create a new graph
 g := graph.NewGraph("production", "aws")
@@ -238,7 +238,7 @@ g := builder.Build()
 Generates execution plans by comparing desired state with current state.
 
 ```go
-import "github.com/davidthor/arcctl/pkg/engine/planner"
+import "github.com/davidthor/cldctl/pkg/engine/planner"
 
 // Create a planner
 p := planner.NewPlanner()
@@ -293,9 +293,9 @@ for _, change := range plan.Changes {
 
 ```go
 import (
-    "github.com/davidthor/arcctl/pkg/engine"
-    "github.com/davidthor/arcctl/pkg/iac"
-    "github.com/davidthor/arcctl/pkg/state"
+    "github.com/davidthor/cldctl/pkg/engine"
+    "github.com/davidthor/cldctl/pkg/iac"
+    "github.com/davidthor/cldctl/pkg/state"
 )
 
 // Initialize dependencies

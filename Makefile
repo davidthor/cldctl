@@ -4,7 +4,7 @@ BINARY_NAME=cldctl
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-LDFLAGS=-ldflags "-s -w -X github.com/davidthor/arcctl/internal/cli.Version=$(VERSION) -X github.com/davidthor/arcctl/internal/cli.Commit=$(COMMIT) -X github.com/davidthor/arcctl/internal/cli.BuildDate=$(BUILD_DATE)"
+LDFLAGS=-ldflags "-s -w -X github.com/davidthor/cldctl/internal/cli.Version=$(VERSION) -X github.com/davidthor/cldctl/internal/cli.Commit=$(COMMIT) -X github.com/davidthor/cldctl/internal/cli.BuildDate=$(BUILD_DATE)"
 
 .PHONY: all build clean test lint install
 

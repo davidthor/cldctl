@@ -10,11 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/davidthor/arcctl/pkg/engine"
-	"github.com/davidthor/arcctl/pkg/engine/executor"
-	"github.com/davidthor/arcctl/pkg/schema/component"
-	"github.com/davidthor/arcctl/pkg/state"
-	"github.com/davidthor/arcctl/pkg/state/types"
+	"github.com/davidthor/cldctl/pkg/engine"
+	"github.com/davidthor/cldctl/pkg/engine/executor"
+	"github.com/davidthor/cldctl/pkg/schema/component"
+	"github.com/davidthor/cldctl/pkg/state"
+	"github.com/davidthor/cldctl/pkg/state/types"
 	"github.com/spf13/cobra"
 )
 

@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/davidthor/arcctl/pkg/schema/environment/internal"
+	"github.com/davidthor/cldctl/pkg/schema/environment/internal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -284,7 +284,7 @@
       "anchors": [
         {
           "anchor": "GitHub",
-          "href": "https://github.com/davidthor/arcctl",
+          "href": "https://github.com/davidthor/cldctl",
           "icon": "github"
         }
       ]
@@ -298,13 +298,13 @@
     "links": [
       {
         "label": "GitHub",
-        "href": "https://github.com/davidthor/arcctl"
+        "href": "https://github.com/davidthor/cldctl"
       }
     ]
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/davidthor/arcctl"
+      "github": "https://github.com/davidthor/cldctl"
     }
   }
 }
