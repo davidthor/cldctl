@@ -42,6 +42,8 @@ Examples:
   cldctl pull component docker.io/library/nginx:latest`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+
 			reference := args[0]
 			ctx := context.Background()
 
@@ -155,6 +157,8 @@ Examples:
   cldctl pull datacenter ghcr.io/myorg/my-dc:v1.0.0`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+
 			reference := args[0]
 			ctx := context.Background()
 

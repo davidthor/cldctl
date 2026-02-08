@@ -5,8 +5,10 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/google/go-containerregistry/pkg/v1/static"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 )
@@ -78,7 +81,7 @@ func (c *Client) Pull(ctx context.Context, reference string, destDir string) err
 	// Pull image
 	img, err := remote.Image(ref, remote.WithAuthFromKeychain(c.auth), remote.WithContext(ctx))
 	if err != nil {
-		return fmt.Errorf("failed to pull: %w", err)
+		return registryError(reference, err)
 	}
 
 	// Extract layers
@@ -201,6 +204,31 @@ func (c *Client) BuildFromDirectory(ctx context.Context, dir string, artifactTyp
 			Data: tarData,
 		}},
 	}, nil
+}
+
+// registryError translates OCI registry errors into user-friendly messages.
+func registryError(reference string, err error) error {
+	var transportErr *transport.Error
+	if errors.As(err, &transportErr) {
+		for _, diagnostic := range transportErr.Errors {
+			switch diagnostic.Code {
+			case transport.ManifestUnknownErrorCode:
+				return fmt.Errorf("artifact not found: %s does not exist or the tag is invalid", reference)
+			case transport.NameUnknownErrorCode:
+				return fmt.Errorf("repository not found: %s does not exist in the registry", reference)
+			case transport.UnauthorizedErrorCode:
+				return fmt.Errorf("authentication required: you may need to log in to access %s", reference)
+			case transport.DeniedErrorCode:
+				return fmt.Errorf("access denied: you don't have permission to pull %s", reference)
+			}
+		}
+
+		if transportErr.StatusCode == http.StatusNotFound {
+			return fmt.Errorf("artifact not found: %s does not exist in the registry", reference)
+		}
+	}
+
+	return fmt.Errorf("failed to pull: %w", err)
 }
 
 // extractTar extracts a tar archive to a directory.
