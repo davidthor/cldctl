@@ -31,13 +31,13 @@ Even though the infrastructure already exists, cldctl needs a component definiti
 
 ```yaml
 # frontend/cloud.component.yml
+dependencies:
+  api:
+    component: ghcr.io/acme/api
+
 databases:
   main:
     type: postgres:^16
-
-builds:
-  web:
-    context: .
 
 functions:
   web:
@@ -46,7 +46,7 @@ functions:
       framework: nextjs
     environment:
       DATABASE_URL: ${{ databases.main.url }}
-      NEXT_PUBLIC_API_URL: ${{ services.api.url }}
+      NEXT_PUBLIC_API_URL: ${{ dependencies.api.routes.api.url }}
 
 routes:
   main:
@@ -55,7 +55,7 @@ routes:
 ```
 
 <Note>
-The `databases` block here declares a dependency on PostgreSQL. At import time you will map this to the existing RDS instance — cldctl will not create a new one.
+The `dependencies` block declares that the frontend depends on the API component. At runtime, `${{ dependencies.api.routes.api.url }}` resolves to the API's route URL. The `databases` block declares a dependency on PostgreSQL — at import time you will map this to the existing RDS instance rather than creating a new one.
 </Note>
 
 ### API Component
