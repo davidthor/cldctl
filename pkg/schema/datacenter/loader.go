@@ -99,9 +99,25 @@ func (l *versionDetectingLoader) Validate(path string) error {
 	return nil
 }
 
+// NewFromInternal creates a Datacenter from an InternalDatacenter.
+// This is used after merge operations to wrap the merged result.
+func NewFromInternal(dc *internal.InternalDatacenter) Datacenter {
+	return &datacenterWrapper{dc: dc}
+}
+
 // datacenterWrapper implements the Datacenter interface.
 type datacenterWrapper struct {
 	dc *internal.InternalDatacenter
+}
+
+func (d *datacenterWrapper) Extends() *Extends {
+	if d.dc.Extends == nil {
+		return nil
+	}
+	return &Extends{
+		Image: d.dc.Extends.Image,
+		Path:  d.dc.Extends.Path,
+	}
 }
 
 func (d *datacenterWrapper) Variables() []Variable {

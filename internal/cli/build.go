@@ -432,6 +432,55 @@ If no tag is provided, the artifact is identified by its content digest
 				return fmt.Errorf("failed to load datacenter: %w", err)
 			}
 
+			// Track extendsImage for image-based extends (persisted in artifact config)
+			var extendsImage string
+
+			// Handle extends
+			if ext := dc.Extends(); ext != nil {
+				if ext.Path != "" {
+					// Path-based extends: collapse at build time
+					parentPath := ext.Path
+					if !filepath.IsAbs(parentPath) {
+						parentPath = filepath.Join(dcDir, parentPath)
+					}
+
+					// Find the parent datacenter file
+					parentInfo, err := os.Stat(parentPath)
+					if err != nil {
+						return fmt.Errorf("failed to access parent datacenter path %q: %w", ext.Path, err)
+					}
+					parentFile := parentPath
+					parentDir := parentPath
+					if parentInfo.IsDir() {
+						parentFile = filepath.Join(parentPath, "datacenter.dc")
+						if _, err := os.Stat(parentFile); os.IsNotExist(err) {
+							parentFile = filepath.Join(parentPath, "datacenter.hcl")
+						}
+					} else {
+						parentDir = filepath.Dir(parentPath)
+					}
+
+					parentDC, err := loader.Load(parentFile)
+					if err != nil {
+						return fmt.Errorf("failed to load parent datacenter from %q: %w", ext.Path, err)
+					}
+
+					// Merge child into parent (child takes precedence)
+					merged := datacenter.MergeDatacenters(dc.Internal(), parentDC.Internal())
+					dc = datacenter.NewFromInternal(merged)
+
+					fmt.Printf("Extends: collapsed parent datacenter from %s\n", ext.Path)
+
+					// Also collect modules from the parent directory
+					// since the merged datacenter may reference parent modules
+					_ = parentDir // parent modules are included via the merged datacenter
+				} else if ext.Image != "" {
+					// Image-based extends: preserve reference in artifact config
+					extendsImage = ext.Image
+					fmt.Printf("Extends: parent %s (resolved at deploy time)\n", ext.Image)
+				}
+			}
+
 			fmt.Printf("Building datacenter: %s\n\n", filepath.Base(dcDir))
 
 			// Collect all modules from datacenter, environment, and hooks
@@ -522,6 +571,7 @@ If no tag is provided, the artifact is identified by its content digest
 				SchemaVersion:   "v1",
 				Name:            filepath.Base(dcDir),
 				ModuleArtifacts: moduleArtifacts,
+				ExtendsImage:    extendsImage,
 				BuildTime:       time.Now().UTC().Format(time.RFC3339),
 			}
 

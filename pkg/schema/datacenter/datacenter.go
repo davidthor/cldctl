@@ -7,6 +7,9 @@ import (
 
 // Datacenter represents a parsed and validated datacenter configuration.
 type Datacenter interface {
+	// Extends returns the extends metadata, or nil if not extending.
+	Extends() *Extends
+
 	// Variables
 	Variables() []Variable
 
@@ -27,6 +30,12 @@ type Datacenter interface {
 
 	// Internal access (for engine use)
 	Internal() *internal.InternalDatacenter
+}
+
+// Extends represents datacenter inheritance metadata.
+type Extends struct {
+	Image string // OCI reference (deploy-time resolution)
+	Path  string // Local path (build-time resolution)
 }
 
 // DatacenterComponent represents a component declared at the datacenter level.

@@ -23,6 +23,14 @@ func (t *Transformer) Transform(v1 *SchemaV1) (*internal.InternalDatacenter, err
 		SourceVersion: "v1",
 	}
 
+	// Transform extends
+	if v1.Extends != nil {
+		dc.Extends = &internal.InternalExtends{
+			Image: v1.Extends.Image,
+			Path:  v1.Extends.Path,
+		}
+	}
+
 	// Transform variables
 	for _, v := range v1.Variables {
 		iv := t.transformVariable(v)
