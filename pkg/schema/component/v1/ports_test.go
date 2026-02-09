@@ -96,7 +96,7 @@ services:
 		t.Fatalf("failed to parse: %v", err)
 	}
 
-	if schema.Ports != nil && len(schema.Ports) != 0 {
+	if len(schema.Ports) != 0 {
 		t.Errorf("expected no ports, got %d", len(schema.Ports))
 	}
 }
