@@ -154,6 +154,9 @@ func (p *Planner) Plan(g *graph.Graph, currentState *types.EnvironmentState) (*P
 }
 
 // PlanDestroy creates a plan to destroy all resources.
+// Tasks (e.g., database migrations) are excluded because they are one-time
+// operations with no persistent resources to tear down — the underlying
+// infrastructure (databases, etc.) is destroyed by its own resource entry.
 func (p *Planner) PlanDestroy(g *graph.Graph, currentState *types.EnvironmentState) (*Plan, error) {
 	plan := &Plan{
 		Environment: g.Environment,
@@ -167,6 +170,12 @@ func (p *Planner) PlanDestroy(g *graph.Graph, currentState *types.EnvironmentSta
 	}
 
 	for _, node := range sortedNodes {
+		// Skip tasks — they are one-time operations (migrations, seed scripts,
+		// etc.) with nothing to tear down during destroy.
+		if node.Type == graph.NodeTypeTask {
+			continue
+		}
+
 		// Find current state for this resource
 		var currentResState *types.ResourceState
 		if currentState != nil {

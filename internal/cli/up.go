@@ -265,21 +265,20 @@ Examples:
 			progress.PrintFinalSummary()
 
 			if err != nil {
-				cleanupEnvironment("failed")
-				return fmt.Errorf("deployment failed: %w", err)
+				cleanupEnvironment()
+				// Return a short message — full error details were already
+				// printed by PrintFinalSummary above.
+				return fmt.Errorf("deployment failed")
 			}
 
 			if !result.Success {
-				cleanupEnvironment("failed")
-				if result.Execution != nil && len(result.Execution.Errors) > 0 {
-					return fmt.Errorf("deployment failed: %v", result.Execution.Errors[0])
-				}
+				cleanupEnvironment()
 				return fmt.Errorf("deployment failed")
 			}
 
 			// Check if interrupted during deployment
 			if ctx.Err() != nil {
-				cleanupEnvironment("interrupted")
+				cleanupEnvironment()
 				return ctx.Err()
 			}
 
@@ -350,7 +349,7 @@ Examples:
 					<-ctx.Done()
 				}
 
-				cleanupEnvironment("interrupted")
+				cleanupEnvironment()
 			}
 
 			return nil
@@ -619,14 +618,14 @@ func prepareEnvironmentMode(
 // makeCleanupFunc creates the cleanup function used during shutdown.
 // The cleanup runs quietly — no plan or per-resource progress is printed.
 // Only errors (if any) and the final "Cleanup complete." line are shown.
-func makeCleanupFunc(provisioningStarted *bool, mgr state.Manager, envName, dc string) func(string) {
-	return func(reason string) {
+func makeCleanupFunc(provisioningStarted *bool, mgr state.Manager, envName, dc string) func() {
+	return func() {
 		if !*provisioningStarted {
 			return
 		}
 
 		fmt.Println()
-		fmt.Printf("Cleaning up (%s)...\n", reason)
+		fmt.Println("Cleaning up...")
 
 		cleanupCtx := context.Background()
 
