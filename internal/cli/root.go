@@ -94,6 +94,9 @@ func init() {
 	// Migration commands
 	rootCmd.AddCommand(newMigrateCmd())
 
+	// Rollout commands (progressive delivery)
+	rootCmd.AddCommand(newRolloutCmd())
+
 	// Observability commands
 	rootCmd.AddCommand(newLogsCmd())
 	rootCmd.AddCommand(newObservabilityCmd())

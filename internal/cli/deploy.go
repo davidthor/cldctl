@@ -14,6 +14,7 @@ import (
 	"github.com/davidthor/cldctl/pkg/engine/executor"
 	"github.com/davidthor/cldctl/pkg/engine/importmap"
 	"github.com/davidthor/cldctl/pkg/engine/planner"
+	"github.com/davidthor/cldctl/pkg/graph"
 	"github.com/davidthor/cldctl/pkg/iac"
 	"github.com/davidthor/cldctl/pkg/oci"
 	"github.com/davidthor/cldctl/pkg/registry"
@@ -48,6 +49,8 @@ func newDeployComponentCmd() *cobra.Command {
 		targets       []string
 		backendType   string
 		backendConfig []string
+		instanceName  string
+		instanceWeight int
 	)
 
 	cmd := &cobra.Command{
@@ -72,11 +75,16 @@ environments when needed as dependencies by other components.
 In interactive mode (when not running in CI), you will be prompted to enter
 values for any required variables that were not provided via --var or --var-file.
 
+Use --instance and --weight for progressive delivery (canary/blue-green deployments).
+When --instance is specified, the component is deployed as a new weighted instance
+alongside existing instances, enabling gradual traffic shifting.
+
 Examples:
   cldctl deploy component ghcr.io/myorg/myapp:v1.0.0 -e production
   cldctl deploy component myapp:latest -e staging -d my-dc
   cldctl deploy component ghcr.io/myorg/myapp:v1.0.0 -e production --var api_key=secret123
-  cldctl deploy component myorg/stripe:latest -d my-dc --var key=sk_live_xxx`,
+  cldctl deploy component myorg/stripe:latest -d my-dc --var key=sk_live_xxx
+  cldctl deploy component my-app:v2 -e production --instance canary --weight 10`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
@@ -303,11 +311,74 @@ Examples:
 				fmt.Println()
 			}
 
+			// Build instance configuration if --instance flag is used
+			var instancesMap map[string][]graph.InstanceInfo
+			if instanceName != "" {
+				if instanceWeight < 0 || instanceWeight > 100 {
+					return fmt.Errorf("--weight must be between 0 and 100")
+				}
+
+				instancesMap = make(map[string][]graph.InstanceInfo)
+
+				// Check if there are existing instances for this component
+				existingInstances := make([]graph.InstanceInfo, 0)
+				if envState != nil && envState.Components != nil {
+					if compState, ok := envState.Components[componentName]; ok {
+						if compState.Instances != nil {
+							// Component already has instances - add/update the specified one
+							for name, inst := range compState.Instances {
+								if name == instanceName {
+									continue // Will be replaced by the new deployment
+								}
+								existingInstances = append(existingInstances, graph.InstanceInfo{
+									Name:   name,
+									Weight: inst.Weight,
+								})
+							}
+						} else {
+							// Component exists in single-instance mode - create "default" instance
+							// with auto-adjusted weight
+							defaultWeight := 100 - instanceWeight
+							if defaultWeight < 0 {
+								defaultWeight = 0
+							}
+							existingInstances = append(existingInstances, graph.InstanceInfo{
+								Name:   "default",
+								Weight: defaultWeight,
+							})
+						}
+					}
+				}
+
+				// Auto-adjust remaining instance weights if needed
+				totalExistingWeight := 0
+				for _, inst := range existingInstances {
+					totalExistingWeight += inst.Weight
+				}
+				if totalExistingWeight+instanceWeight > 100 && len(existingInstances) > 0 {
+					// Proportionally reduce existing weights
+					remaining := 100 - instanceWeight
+					for i := range existingInstances {
+						if totalExistingWeight > 0 {
+							existingInstances[i].Weight = existingInstances[i].Weight * remaining / totalExistingWeight
+						}
+					}
+				}
+
+				// New instance goes first (newest)
+				allInstances := []graph.InstanceInfo{{Name: instanceName, Weight: instanceWeight}}
+				allInstances = append(allInstances, existingInstances...)
+				instancesMap[componentName] = allInstances
+			}
+
 			// Display execution plan
 			fmt.Printf("Component:   %s\n", componentName)
 			fmt.Printf("Environment: %s\n", environment)
 			fmt.Printf("Datacenter:  %s\n", dc)
 			fmt.Printf("Image:       %s\n", imageRef)
+			if instanceName != "" {
+				fmt.Printf("Instance:    %s (weight: %d%%)\n", instanceName, instanceWeight)
+			}
 			fmt.Println()
 
 			fmt.Println("Execution Plan:")
@@ -435,7 +506,7 @@ Examples:
 			}
 
 			// Execute deployment using the engine
-			result, err := eng.Deploy(ctx, engine.DeployOptions{
+			deployOpts := engine.DeployOptions{
 				Environment: environment,
 				Datacenter:  dc,
 				Components:  componentsMap,
@@ -446,7 +517,11 @@ Examples:
 				Parallelism: defaultParallelism,
 				OnProgress:  onProgress,
 				OnPlan:      onPlan,
-			})
+			}
+			if instancesMap != nil {
+				deployOpts.Instances = instancesMap
+			}
+			result, err := eng.Deploy(ctx, deployOpts)
 			// Always print the final progress summary so the user sees a clear
 			// success/failure report with resource counts and error details.
 			progress.PrintFinalSummary()
@@ -475,6 +550,8 @@ Examples:
 	cmd.Flags().StringArrayVar(&targets, "target", nil, "Target specific resource (repeatable)")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
+	cmd.Flags().StringVar(&instanceName, "instance", "", "Deploy as a named instance (for progressive delivery)")
+	cmd.Flags().IntVar(&instanceWeight, "weight", 10, "Traffic weight for the instance (0-100, used with --instance)")
 
 	return cmd
 }
