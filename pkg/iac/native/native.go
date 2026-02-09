@@ -552,10 +552,10 @@ func (p *Plugin) applyProcess(ctx context.Context, name string, props map[string
 		}
 	}
 
-	// Get environment variables first (so we can resolve PORT for readiness)
+	// Get environment variables first
 	env := getStringMap(props, "environment")
 
-	// Pre-assign PORT if set to "auto"
+	// Pre-assign PORT if set to "auto" (legacy compatibility)
 	if portVal, ok := env["PORT"]; ok && portVal == "auto" {
 		port, err := findAvailablePort()
 		if err != nil {
@@ -564,20 +564,26 @@ func (p *Plugin) applyProcess(ctx context.Context, name string, props map[string
 		env["PORT"] = strconv.Itoa(port)
 	}
 
-	// Parse readiness check if present and substitute PORT
+	// Parse readiness check if present
+	// Skip readiness check entirely when the endpoint port is 0 (no service exposed)
 	var readiness *ReadinessCheck
 	if readinessMap, ok := props["readiness"].(map[string]interface{}); ok {
 		endpoint := getString(readinessMap, "endpoint")
-		// Substitute PORT if present
+		// Substitute PORT if present (legacy compatibility)
 		if port, ok := env["PORT"]; ok {
 			endpoint = strings.ReplaceAll(endpoint, "${self.environment.PORT}", port)
 		}
 
-		readiness = &ReadinessCheck{
-			Type:     getString(readinessMap, "type"),
-			Endpoint: endpoint,
-			Interval: parseDuration(getString(readinessMap, "interval"), 2*time.Second),
-			Timeout:  parseDuration(getString(readinessMap, "timeout"), 120*time.Second),
+		// Guard: skip readiness check if the endpoint references port 0
+		if strings.Contains(endpoint, "localhost:0") || strings.Contains(endpoint, "localhost:0/") {
+			readiness = nil
+		} else {
+			readiness = &ReadinessCheck{
+				Type:     getString(readinessMap, "type"),
+				Endpoint: endpoint,
+				Interval: parseDuration(getString(readinessMap, "interval"), 2*time.Second),
+				Timeout:  parseDuration(getString(readinessMap, "timeout"), 120*time.Second),
+			}
 		}
 	}
 
@@ -640,12 +646,15 @@ func getStringSlice(props map[string]interface{}, key string) []string {
 
 func getStringMap(props map[string]interface{}, key string) map[string]string {
 	if v, ok := props[key]; ok {
-		if m, ok := v.(map[string]interface{}); ok {
-			result := make(map[string]string)
+		switch m := v.(type) {
+		case map[string]interface{}:
+			result := make(map[string]string, len(m))
 			for k, val := range m {
 				result[k], _ = val.(string)
 			}
 			return result
+		case map[string]string:
+			return m
 		}
 	}
 	return nil

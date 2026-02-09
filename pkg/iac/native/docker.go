@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -388,13 +389,19 @@ func (d *DockerClient) Exec(ctx context.Context, command []string, workDir strin
 		cmd.Dir = workDir
 	}
 
+	// Inherit parent process environment, then overlay task-specific vars
+	cmd.Env = os.Environ()
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return string(output), fmt.Errorf("command failed: %w", err)
+		outStr := strings.TrimSpace(string(output))
+		if outStr != "" {
+			return outStr, fmt.Errorf("command failed: %w\n%s", err, outStr)
+		}
+		return "", fmt.Errorf("command failed: %w", err)
 	}
 
 	return string(output), nil

@@ -91,6 +91,11 @@ type Options struct {
 	// ComponentVariables maps component name to its deployment variables.
 	// Used to populate ComponentState.Variables for re-deploy reconstruction.
 	ComponentVariables map[string]map[string]interface{}
+
+	// ComponentPorts maps component name to port name to specific port number.
+	// Environment-level port overrides take priority over datacenter hooks and
+	// the built-in deterministic port allocator.
+	ComponentPorts map[string]map[string]int
 }
 
 // DefaultOptions returns default executor options.
@@ -248,7 +253,7 @@ func (e *Executor) Execute(ctx context.Context, plan *planner.Plan, g *graph.Gra
 
 		// Check if dependencies are satisfied
 		if change.Node != nil && !e.areDependenciesSatisfied(change.Node, g, result) {
-			depErr := fmt.Errorf("dependencies not satisfied")
+			depErr := e.buildDependencyError(change.Node, result)
 			nodeResult := &NodeResult{
 				NodeID:  change.Node.ID,
 				Action:  change.Action,
@@ -258,6 +263,10 @@ func (e *Executor) Execute(ctx context.Context, plan *planner.Plan, g *graph.Gra
 			result.NodeResults[change.Node.ID] = nodeResult
 			result.Failed++
 			result.Success = false
+
+			// Resolve expressions before saving state so that `cldctl inspect`
+			// shows resolved values (e.g., database URLs) even for cascaded failures.
+			e.resolveComponentExpressions(change.Node, envState)
 
 			// Persist the dependency failure to state so `cldctl inspect` shows it
 			e.stateMu.Lock()
@@ -273,12 +282,13 @@ func (e *Executor) Execute(ctx context.Context, plan *planner.Plan, g *graph.Gra
 				compState.Resources = make(map[string]*types.ResourceState)
 			}
 			compState.Resources[resourceKey(change.Node)] = &types.ResourceState{
-				Component: change.Node.Component,
-				Name:      change.Node.Name,
-				Type:      string(change.Node.Type),
-				Status:    types.ResourceStatusFailed,
-				Inputs:    change.Node.Inputs,
-				UpdatedAt: time.Now(),
+				Component:    change.Node.Component,
+				Name:         change.Node.Name,
+				Type:         string(change.Node.Type),
+				Status:       types.ResourceStatusFailed,
+				StatusReason: depErr.Error(),
+				Inputs:       change.Node.Inputs,
+				UpdatedAt:    time.Now(),
 			}
 			e.saveStateLocked(envState)
 			e.stateMu.Unlock()
@@ -370,6 +380,21 @@ func (e *Executor) Execute(ctx context.Context, plan *planner.Plan, g *graph.Gra
 	return result, nil
 }
 
+// buildDependencyError creates a specific error message identifying which dependencies failed.
+func (e *Executor) buildDependencyError(node *graph.Node, result *ExecutionResult) error {
+	var failedDeps []string
+	for _, depID := range node.DependsOn {
+		depResult, exists := result.NodeResults[depID]
+		if !exists || !depResult.Success {
+			failedDeps = append(failedDeps, depID)
+		}
+	}
+	if len(failedDeps) == 1 {
+		return fmt.Errorf("dependency %s failed", failedDeps[0])
+	}
+	return fmt.Errorf("dependencies failed: %s", strings.Join(failedDeps, ", "))
+}
+
 func (e *Executor) areDependenciesSatisfied(node *graph.Node, g *graph.Graph, result *ExecutionResult) bool {
 	for _, depID := range node.DependsOn {
 		depResult, exists := result.NodeResults[depID]
@@ -423,13 +448,19 @@ func (e *Executor) executeChange(ctx context.Context, change *planner.ResourceCh
 
 	result.Duration = time.Since(startTime)
 
-	// Notify progress: completed or failed
+	// Notify progress: completed or failed.
+	// If the context was cancelled (StopOnError), report "cancelled" instead
+	// of the verbose underlying error (e.g., Docker socket context canceled).
 	if e.options.OnProgress != nil && change.Node != nil {
 		status := "completed"
 		msg := ""
+		progressErr := result.Error
 		if !result.Success {
 			status = "failed"
-			if result.Error != nil {
+			if ctx.Err() != nil {
+				progressErr = fmt.Errorf("cancelled")
+				msg = "cancelled"
+			} else if result.Error != nil {
 				msg = result.Error.Error()
 			}
 		}
@@ -439,7 +470,7 @@ func (e *Executor) executeChange(ctx context.Context, change *planner.ResourceCh
 			NodeType: string(change.Node.Type),
 			Status:   status,
 			Message:  msg,
-			Error:    result.Error,
+			Error:    progressErr,
 		})
 	}
 
@@ -456,6 +487,11 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 	// ${{ dependencies.*.outputs.* }}, ${{ variables.* }}) BEFORE saving state so that
 	// inspect shows resolved values even while the resource is still provisioning.
 	e.resolveComponentExpressions(change.Node, envState)
+
+	// Port nodes use a special allocation flow: env override > datacenter hook > built-in fallback
+	if change.Node.Type == graph.NodeTypePort {
+		return e.executePortAllocation(ctx, change, envState)
+	}
 
 	// Lock for state initialization
 	e.stateMu.Lock()
@@ -497,6 +533,21 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 	if err != nil {
 		result.Error = fmt.Errorf("failed to find matching hook: %w", err)
 		result.Success = false
+
+		// Update resource state to failed (lock for state update)
+		e.stateMu.Lock()
+		compState.Resources[resourceKey(change.Node)] = &types.ResourceState{
+			Component:    change.Node.Component,
+			Name:         change.Node.Name,
+			Type:         string(change.Node.Type),
+			Status:       types.ResourceStatusFailed,
+			StatusReason: result.Error.Error(),
+			Inputs:       change.Node.Inputs,
+			UpdatedAt:    time.Now(),
+		}
+		e.saveStateLocked(envState)
+		e.stateMu.Unlock()
+
 		return result
 	}
 
@@ -524,15 +575,48 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 		result.Error = fmt.Errorf("apply failed: %w", err)
 		result.Success = false
 
+		// Log resource configuration on failure for debugging
+		if os.Getenv("CLDCTL_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "\n[debug] Resource %s/%s failed — configuration:\n", change.Node.Type, change.Node.Name)
+			fmt.Fprintf(os.Stderr, "  Component:        %s\n", change.Node.Component)
+			fmt.Fprintf(os.Stderr, "  Module:           %s (plugin: %s)\n", modulePath, pluginName)
+			if wd, ok := change.Node.Inputs["workingDirectory"]; ok {
+				fmt.Fprintf(os.Stderr, "  Working Directory: %s\n", wd)
+			}
+			if cmd, ok := change.Node.Inputs["command"]; ok {
+				fmt.Fprintf(os.Stderr, "  Command:          %v\n", cmd)
+			}
+			if envMap, ok := change.Node.Inputs["environment"]; ok {
+				fmt.Fprintf(os.Stderr, "  Environment:\n")
+				switch ev := envMap.(type) {
+				case map[string]string:
+					for k, v := range ev {
+						fmt.Fprintf(os.Stderr, "    %s = %s\n", k, v)
+					}
+				case map[string]interface{}:
+					for k, v := range ev {
+						fmt.Fprintf(os.Stderr, "    %s = %v\n", k, v)
+					}
+				default:
+					fmt.Fprintf(os.Stderr, "    %v\n", envMap)
+				}
+			}
+			if rt, ok := change.Node.Inputs["runtime"]; ok && rt != nil {
+				fmt.Fprintf(os.Stderr, "  Runtime:          %v\n", rt)
+			}
+			fmt.Fprintf(os.Stderr, "\n")
+		}
+
 		// Update resource state to failed (lock for state update)
 		e.stateMu.Lock()
 		compState.Resources[resourceKey(change.Node)] = &types.ResourceState{
-			Component: change.Node.Component,
-			Name:      change.Node.Name,
-			Type:      string(change.Node.Type),
-			Status:    types.ResourceStatusFailed,
-			Inputs:    change.Node.Inputs,
-			UpdatedAt: time.Now(),
+			Component:    change.Node.Component,
+			Name:         change.Node.Name,
+			Type:         string(change.Node.Type),
+			Status:       types.ResourceStatusFailed,
+			StatusReason: result.Error.Error(),
+			Inputs:       change.Node.Inputs,
+			UpdatedAt:    time.Now(),
 		}
 		e.saveStateLocked(envState)
 		e.stateMu.Unlock()
@@ -678,6 +762,8 @@ func (e *Executor) getHooksForType(nodeType graph.NodeType) []datacenter.Hook {
 		return hooks.SMTP()
 	case graph.NodeTypeObservability:
 		return hooks.Observability()
+	case graph.NodeTypePort:
+		return hooks.Port()
 	default:
 		return nil
 	}
@@ -725,6 +811,25 @@ func (e *Executor) evaluateWhenHCL(when string, inputs map[string]interface{}) (
 // evaluateWhenStringFallback provides legacy string-based matching for when conditions
 // that cannot be parsed as HCL expressions.
 func (e *Executor) evaluateWhenStringFallback(when string, inputs map[string]interface{}) bool {
+	// Check for "!= null" patterns (before generic "==" check)
+	if contains(when, "!= null") || contains(when, "!=null") {
+		inputName := extractInputName(when)
+		if inputName != "" {
+			val := inputs[inputName]
+			return val != nil && val != ""
+		}
+	}
+
+	// Check for "== null" patterns (before generic "==" check)
+	// Handles conditions like: node.inputs.image == null
+	if (contains(when, "== null") || contains(when, "==null")) {
+		inputName := extractInputName(when)
+		if inputName != "" {
+			val := inputs[inputName]
+			return val == nil || val == ""
+		}
+	}
+
 	// Check for "==" comparisons
 	if contains(when, "==") {
 		parts := splitOnce(when, "==")
@@ -732,15 +837,6 @@ func (e *Executor) evaluateWhenStringFallback(when string, inputs map[string]int
 			left := trimQuotes(e.resolveWhenExpr(parts[0], inputs))
 			right := trimQuotes(parts[1])
 			return left == right
-		}
-	}
-
-	// Check for "!= null" patterns
-	if contains(when, "!= null") || contains(when, "!=null") {
-		inputName := extractInputName(when)
-		if inputName != "" {
-			val := inputs[inputName]
-			return val != nil && val != ""
 		}
 	}
 
@@ -941,7 +1037,9 @@ func (e *Executor) buildModuleInputs(module datacenter.Module, node *graph.Node,
 	host := getStringVar(dcVars, "host", "localhost")
 
 	// Standard name format: ${environment.name}-${node.component}-${node.name}
-	standardName := fmt.Sprintf("%s-%s-%s", envName, node.Component, node.Name)
+	// Sanitize component name for use in Docker resource names (slashes are not allowed)
+	safeComponent := sanitizeResourceName(node.Component)
+	standardName := fmt.Sprintf("%s-%s-%s", envName, safeComponent, node.Name)
 
 	// Try to use the datacenter's input definitions first (if they were evaluated successfully)
 	moduleInputDefs := module.Inputs()
@@ -1002,12 +1100,17 @@ func (e *Executor) buildModuleInputs(module datacenter.Module, node *graph.Node,
 		setIfMissing(inputs, "dockerfile", node.Inputs["dockerfile"])
 		setIfMissing(inputs, "target", node.Inputs["target"])
 		setIfMissing(inputs, "args", node.Inputs["args"])
-		setIfMissing(inputs, "tag", fmt.Sprintf("%s-%s-%s:local", envName, node.Component, node.Name))
+		setIfMissing(inputs, "tag", fmt.Sprintf("%s-%s-%s:local", envName, safeComponent, node.Name))
 
 	case "process":
 		setIfMissing(inputs, "name", standardName)
-		// Map srcPath from function to context for process module
-		setIfMissing(inputs, "context", node.Inputs["srcPath"])
+		// Map source path to context for process module.
+		// Functions use "srcPath"; deployments use "workingDirectory".
+		if node.Inputs["srcPath"] != nil {
+			setIfMissing(inputs, "context", node.Inputs["srcPath"])
+		} else {
+			setIfMissing(inputs, "context", node.Inputs["workingDirectory"])
+		}
 		// Try dev command first, then start, then generic command
 		if cmd := node.Inputs["dev"]; cmd != nil {
 			setIfMissing(inputs, "command", cmd)
@@ -1016,15 +1119,13 @@ func (e *Executor) buildModuleInputs(module datacenter.Module, node *graph.Node,
 		} else {
 			setIfMissing(inputs, "command", node.Inputs["command"])
 		}
+		setIfMissing(inputs, "runtime", node.Inputs["runtime"])
 		setIfMissing(inputs, "framework", node.Inputs["framework"])
 
-		// Inject PORT into environment
-		// Priority: 1) node's own port property (for functions), 2) associated service's port
+		// Resolve port for readiness check (but do NOT inject PORT into environment --
+		// applications opt in via the ports resource and ${{ ports.<name>.port }})
 		env := getEnvironmentMap(node.Inputs["environment"])
 		port := e.resolvePortForWorkload(node)
-		if port > 0 {
-			env["PORT"] = fmt.Sprintf("%d", port)
-		}
 		// Auto-inject OTEL_* env vars if observability.inject is true
 		e.injectOTelEnvironmentIfEnabled(env, node)
 		inputs["environment"] = env
@@ -1049,17 +1150,37 @@ func (e *Executor) buildModuleInputs(module datacenter.Module, node *graph.Node,
 		setIfMissing(inputs, "memory", node.Inputs["memory"])
 		setIfMissing(inputs, "liveness_probe", node.Inputs["liveness_probe"])
 
-		// Inject PORT into environment
-		// Priority: 1) node's own port property (for functions), 2) associated service's port
+		// Resolve port for readiness check (but do NOT inject PORT into environment --
+		// applications opt in via the ports resource and ${{ ports.<name>.port }})
 		env := getEnvironmentMap(node.Inputs["environment"])
 		port := e.resolvePortForWorkload(node)
-		if port > 0 {
-			env["PORT"] = fmt.Sprintf("%d", port)
-		}
 		// Auto-inject OTEL_* env vars if observability.inject is true
 		e.injectOTelEnvironmentIfEnabled(env, node)
 		inputs["environment"] = env
 		inputs["port"] = port
+
+	case "task":
+		// Docker-based task execution (e.g., database migrations with an image)
+		setIfMissing(inputs, "name", standardName)
+		if node.Inputs["image"] != nil {
+			setIfMissing(inputs, "image", node.Inputs["image"])
+		} else {
+			buildImage := e.getBuildImageForNode(node)
+			if buildImage != "" {
+				setIfMissing(inputs, "image", buildImage)
+			}
+		}
+		setIfMissing(inputs, "command", node.Inputs["command"])
+		setIfMissing(inputs, "network", networkName)
+		setIfMissing(inputs, "environment", node.Inputs["environment"])
+
+	case "process_task":
+		// Process-based task execution (e.g., database migrations with runtime or bare process)
+		setIfMissing(inputs, "name", standardName)
+		setIfMissing(inputs, "command", node.Inputs["command"])
+		setIfMissing(inputs, "environment", node.Inputs["environment"])
+		setIfMissing(inputs, "context", node.Inputs["workingDirectory"])
+		setIfMissing(inputs, "runtime", node.Inputs["runtime"])
 
 	default:
 		// For unknown modules, pass node inputs directly
@@ -1258,9 +1379,150 @@ func extractVersionFromType(typeInput interface{}) string {
 	}
 	parts := strings.SplitN(typeStr, ":", 2)
 	if len(parts) > 1 {
-		return parts[1]
+		version := parts[1]
+		// Strip semver range prefixes (^, ~, >=, <=, =) so the version can
+		// be used directly as a Docker image tag (e.g., "^16" → "16").
+		version = strings.TrimLeft(version, "^~>=<!")
+		return version
 	}
 	return ""
+}
+
+// sanitizeResourceName replaces characters that are invalid in Docker resource names
+// (container names, volume names, etc.) with hyphens. Docker allows [a-zA-Z0-9][a-zA-Z0-9_.-].
+// This is primarily needed when component names contain slashes (e.g., "questra/app").
+func sanitizeResourceName(name string) string {
+	var b strings.Builder
+	for i, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+			b.WriteRune(c)
+		case c == '_' || c == '.' || c == '-':
+			b.WriteRune(c)
+		default:
+			// Replace invalid characters (like '/') with '-'
+			// Avoid leading hyphen
+			if i > 0 {
+				b.WriteRune('-')
+			}
+		}
+	}
+	return b.String()
+}
+
+// executePortAllocation handles port node allocation with a three-tier priority:
+// 1. Environment override (from ComponentPorts)
+// 2. Datacenter port hook (if defined)
+// 3. Built-in deterministic hash-based fallback
+func (e *Executor) executePortAllocation(ctx context.Context, change *planner.ResourceChange, envState *types.EnvironmentState) *NodeResult {
+	result := &NodeResult{
+		NodeID: change.Node.ID,
+		Action: change.Action,
+	}
+
+	componentName := change.Node.Component
+	portName := change.Node.Name
+
+	var allocatedPort int
+	var allocated bool
+
+	// Priority 1: Environment override
+	if e.options.ComponentPorts != nil {
+		if compPorts, ok := e.options.ComponentPorts[componentName]; ok {
+			if port, ok := compPorts[portName]; ok {
+				allocatedPort = port
+				allocated = true
+			}
+		}
+	}
+
+	// Priority 2: Datacenter port hook
+	if !allocated {
+		hooks := e.getHooksForType(graph.NodeTypePort)
+		if len(hooks) > 0 {
+			// Dispatch to the hook like any other resource type
+			modulePath, moduleInputs, pluginName, err := e.findMatchingHook(change.Node, envState.Name)
+			if err == nil {
+				if pluginName == "" {
+					pluginName = "native"
+				}
+				plugin, err := e.iacRegistry.Get(pluginName)
+				if err == nil {
+					runOpts := iac.RunOptions{
+						ModuleSource: modulePath,
+						Inputs:       moduleInputs,
+						Environment:  map[string]string{},
+					}
+					applyResult, err := plugin.Apply(ctx, runOpts)
+					if err == nil && applyResult != nil {
+						if portVal, ok := applyResult.Outputs["port"]; ok {
+							switch v := portVal.Value.(type) {
+							case int:
+								allocatedPort = v
+								allocated = true
+							case float64:
+								allocatedPort = int(v)
+								allocated = true
+							case string:
+								if p, err := strconv.Atoi(v); err == nil {
+									allocatedPort = p
+									allocated = true
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Priority 3: Built-in deterministic hash fallback
+	if !allocated {
+		allocatedPort = stablePortForNode(envState.Name, componentName, portName)
+		allocated = true
+	}
+
+	// Save to state
+	outputs := map[string]interface{}{
+		"port": allocatedPort,
+	}
+
+	e.stateMu.Lock()
+	if envState.Components == nil {
+		envState.Components = make(map[string]*types.ComponentState)
+	}
+	compState := envState.Components[componentName]
+	if compState == nil {
+		compState = e.newComponentState(componentName)
+		envState.Components[componentName] = compState
+	}
+	if compState.Resources == nil {
+		compState.Resources = make(map[string]*types.ResourceState)
+	}
+	compState.Resources[resourceKey(change.Node)] = &types.ResourceState{
+		Component: componentName,
+		Name:      portName,
+		Type:      string(change.Node.Type),
+		Status:    types.ResourceStatusReady,
+		Inputs:    change.Node.Inputs,
+		Outputs:   outputs,
+		UpdatedAt: time.Now(),
+	}
+	e.saveStateLocked(envState)
+	e.stateMu.Unlock()
+
+	result.Success = true
+	result.Outputs = outputs
+	return result
+}
+
+// stablePortForNode produces a deterministic port from env/component/port names.
+// Uses the same hashCode helper already used for database port offsets.
+func stablePortForNode(envName, componentName, portName string) int {
+	key := fmt.Sprintf("%s/%s/%s", envName, componentName, portName)
+	h := hashCode(key)
+	// Map into range [10000, 60000) -- avoids privileged ports and common dev ports
+	return 10000 + (h % 50000)
 }
 
 func hashCode(s string) int {
@@ -1370,6 +1632,19 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 					return match
 				}
 				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeRoute, parts[1])
+				depNode, ok := e.graph.Nodes[nodeID]
+				if !ok || depNode.Outputs == nil {
+					return match
+				}
+				if val, ok := depNode.Outputs[parts[2]]; ok {
+					return fmt.Sprintf("%v", val)
+				}
+
+			case "ports":
+				if len(parts) < 3 {
+					return match
+				}
+				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypePort, parts[1])
 				depNode, ok := e.graph.Nodes[nodeID]
 				if !ok || depNode.Outputs == nil {
 					return match
@@ -1573,8 +1848,8 @@ func (e *Executor) evaluateInputExpression(expr string, node *graph.Node, envNam
 		result = strings.ReplaceAll(result, "${environment.name}", envName)
 		// Replace ${node.name}
 		result = strings.ReplaceAll(result, "${node.name}", node.Name)
-		// Replace ${node.component}
-		result = strings.ReplaceAll(result, "${node.component}", node.Component)
+		// Replace ${node.component} - sanitize for use in resource names
+		result = strings.ReplaceAll(result, "${node.component}", sanitizeResourceName(node.Component))
 		// Replace ${node.type}
 		result = strings.ReplaceAll(result, "${node.type}", string(node.Type))
 		// Replace ${node.inputs.*}
@@ -1597,7 +1872,7 @@ func (e *Executor) evaluateInputExpression(expr string, node *graph.Node, envNam
 		return node.Name
 	}
 	if hasPrefix(expr, "node.component") {
-		return node.Component
+		return sanitizeResourceName(node.Component)
 	}
 	if hasPrefix(expr, "node.type") {
 		return string(node.Type)
@@ -1949,6 +2224,11 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 	envState.UpdatedAt = time.Now()
 	_ = e.stateManager.SaveEnvironment(ctx, plan.Datacenter, envState)
 
+	// Create a derived context so StopOnError can cancel in-flight operations
+	// (e.g., Docker builds, image pulls) for fast termination and cleanup.
+	execCtx, execCancel := context.WithCancel(ctx)
+	defer execCancel()
+
 	// Concurrency control
 	var mu sync.Mutex
 	sem := make(chan struct{}, e.options.Parallelism)
@@ -1985,7 +2265,7 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 	var findAndLaunchReady func()
 	findAndLaunchReady = func() {
 		// Don't launch new nodes if context is cancelled
-		if ctx.Err() != nil {
+		if execCtx.Err() != nil {
 			cancelled = true
 			return
 		}
@@ -2012,6 +2292,11 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 						failed[id] = true
 						cascaded = true
 
+						// Resolve expressions before saving state so that `cldctl inspect`
+						// shows resolved values (e.g., database URLs) even for cascaded failures.
+						// Dependencies that succeeded will have their outputs available in the graph.
+						e.resolveComponentExpressions(change.Node, envState)
+
 						// Persist the cascaded failure to state so `cldctl inspect` shows it
 						e.stateMu.Lock()
 						if envState.Components == nil {
@@ -2026,12 +2311,13 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 							compState.Resources = make(map[string]*types.ResourceState)
 						}
 						compState.Resources[resourceKey(change.Node)] = &types.ResourceState{
-							Component: change.Node.Component,
-							Name:      change.Node.Name,
-							Type:      string(change.Node.Type),
-							Status:    types.ResourceStatusFailed,
-							Inputs:    change.Node.Inputs,
-							UpdatedAt: time.Now(),
+							Component:    change.Node.Component,
+							Name:         change.Node.Name,
+							Type:         string(change.Node.Type),
+							Status:       types.ResourceStatusFailed,
+							StatusReason: depErr.Error(),
+							Inputs:       change.Node.Inputs,
+							UpdatedAt:    time.Now(),
 						}
 						e.saveStateLocked(envState)
 						e.stateMu.Unlock()
@@ -2054,6 +2340,70 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 			if !cascaded {
 				break
 			}
+		}
+
+		// If StopOnError is set and any node has failed, don't launch new work.
+		// Mark all remaining pending (non-in-flight) nodes as failed so the
+		// executor terminates quickly once in-flight goroutines finish.
+		if e.options.StopOnError && len(failed) > 0 {
+			for id, change := range pending {
+				if inFlight[id] {
+					continue
+				}
+				stopErr := fmt.Errorf("deployment stopped: a previous resource failed")
+				result.NodeResults[id] = &NodeResult{
+					NodeID:  id,
+					Action:  change.Action,
+					Success: false,
+					Error:   stopErr,
+				}
+				result.Failed++
+				result.Success = false
+				delete(pending, id)
+				failed[id] = true
+
+				// Resolve expressions and persist so inspect shows useful data
+				e.resolveComponentExpressions(change.Node, envState)
+
+				e.stateMu.Lock()
+				if envState.Components == nil {
+					envState.Components = make(map[string]*types.ComponentState)
+				}
+				compState := envState.Components[change.Node.Component]
+				if compState == nil {
+					compState = e.newComponentState(change.Node.Component)
+					envState.Components[change.Node.Component] = compState
+				}
+				if compState.Resources == nil {
+					compState.Resources = make(map[string]*types.ResourceState)
+				}
+				compState.Resources[resourceKey(change.Node)] = &types.ResourceState{
+					Component:    change.Node.Component,
+					Name:         change.Node.Name,
+					Type:         string(change.Node.Type),
+					Status:       types.ResourceStatusFailed,
+					StatusReason: stopErr.Error(),
+					Inputs:       change.Node.Inputs,
+					UpdatedAt:    time.Now(),
+				}
+				e.saveStateLocked(envState)
+				e.stateMu.Unlock()
+
+				if e.options.OnProgress != nil {
+					e.options.OnProgress(ProgressEvent{
+						NodeID:   change.Node.ID,
+						NodeName: change.Node.Name,
+						NodeType: string(change.Node.Type),
+						Status:   "failed",
+						Message:  stopErr.Error(),
+						Error:    stopErr,
+					})
+				}
+			}
+			// Cancel the execution context so in-flight operations (Docker
+			// builds, image pulls, etc.) are interrupted immediately.
+			execCancel()
+			return
 		}
 
 		// Second pass: find and launch ready nodes
@@ -2084,8 +2434,8 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 					select {
 					case sem <- struct{}{}:
 						// Got semaphore
-					case <-ctx.Done():
-						// Context cancelled while waiting for semaphore
+					case <-execCtx.Done():
+						// Context cancelled (user interrupt or StopOnError)
 						wg.Done()
 						mu.Lock()
 						delete(inFlight, c.Node.ID)
@@ -2094,7 +2444,7 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 							NodeID:  c.Node.ID,
 							Action:  c.Action,
 							Success: false,
-							Error:   ctx.Err(),
+							Error:   fmt.Errorf("cancelled"),
 						}
 						result.Failed++
 						result.Success = false
@@ -2109,7 +2459,13 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 						fmt.Fprintf(os.Stderr, "[debug] Goroutine started for %s, calling executeChange\n", c.Node.ID)
 					}
 
-					nodeResult := e.executeChange(ctx, c, envState)
+					nodeResult := e.executeChange(execCtx, c, envState)
+
+					// If this node failed because StopOnError cancelled the
+					// execution context (not a user Ctrl+C), use a clean error.
+					if !nodeResult.Success && execCtx.Err() != nil && ctx.Err() == nil {
+						nodeResult.Error = fmt.Errorf("cancelled")
+					}
 
 					if os.Getenv("CLDCTL_DEBUG") != "" {
 						fmt.Fprintf(os.Stderr, "[debug] executeChange completed for %s, success=%v\n", c.Node.ID, nodeResult.Success)
@@ -2176,23 +2532,25 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 	// Wait for all goroutines to complete
 	wg.Wait()
 
-	// Check if context was cancelled
+	// Check if execution was stopped (user interrupt or StopOnError)
 	mu.Lock()
-	if cancelled || ctx.Err() != nil {
-		// Mark remaining pending nodes as cancelled
+	if cancelled || execCtx.Err() != nil {
+		// Mark remaining pending nodes
 		for id, change := range pending {
 			if !inFlight[id] && !completed[id] && !failed[id] {
 				result.NodeResults[id] = &NodeResult{
 					NodeID:  id,
 					Action:  change.Action,
 					Success: false,
-					Error:   ctx.Err(),
+					Error:   fmt.Errorf("cancelled"),
 				}
 				result.Failed++
 			}
 		}
 		result.Success = false
-		result.Errors = append(result.Errors, ctx.Err())
+		if ctx.Err() != nil {
+			result.Errors = append(result.Errors, ctx.Err())
+		}
 		mu.Unlock()
 
 		// Still save state and return

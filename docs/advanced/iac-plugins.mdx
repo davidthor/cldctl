@@ -223,7 +223,7 @@ outputs:
   port:
     value: "${resources.container.ports[0].host}"
   url:
-    value: "postgres://postgres:${resources.container.environment.POSTGRES_PASSWORD}@localhost:${resources.container.ports[0].host}/postgres"
+    value: "postgresql://postgres:${resources.container.environment.POSTGRES_PASSWORD}@localhost:${resources.container.ports[0].host}/postgres"
     sensitive: true
 ```
 

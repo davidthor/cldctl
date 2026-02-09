@@ -8,8 +8,8 @@ import (
 func TestNewUpCmd(t *testing.T) {
 	cmd := newUpCmd()
 
-	if cmd.Use != "up [path]" {
-		t.Errorf("expected use 'up [path]', got '%s'", cmd.Use)
+	if cmd.Use != "up" {
+		t.Errorf("expected use 'up', got '%s'", cmd.Use)
 	}
 
 	// Check that the command has no aliases
@@ -17,7 +17,7 @@ func TestNewUpCmd(t *testing.T) {
 		t.Error("expected no aliases for up command")
 	}
 
-	// Verify the command accepts arguments
+	// Verify the command accepts no positional arguments
 	if cmd.Args == nil {
 		t.Error("expected Args validator")
 	}
@@ -27,7 +27,7 @@ func TestUpCmd_Flags(t *testing.T) {
 	cmd := newUpCmd()
 
 	// Check flags including required datacenter
-	flags := []string{"file", "datacenter", "name", "var", "var-file", "detach", "no-open", "port"}
+	flags := []string{"component", "environment", "datacenter", "name", "var", "var-file", "detach", "no-open", "port"}
 	for _, flagName := range flags {
 		if cmd.Flags().Lookup(flagName) == nil {
 			t.Errorf("expected --%s flag", flagName)
@@ -35,8 +35,11 @@ func TestUpCmd_Flags(t *testing.T) {
 	}
 
 	// Check shorthands
-	if cmd.Flags().ShorthandLookup("f") == nil {
-		t.Error("expected -f shorthand for --file")
+	if cmd.Flags().ShorthandLookup("c") == nil {
+		t.Error("expected -c shorthand for --component")
+	}
+	if cmd.Flags().ShorthandLookup("e") == nil {
+		t.Error("expected -e shorthand for --environment")
 	}
 	if cmd.Flags().ShorthandLookup("n") == nil {
 		t.Error("expected -n shorthand for --name")
@@ -93,6 +96,7 @@ func TestUpCmd_LongDescription(t *testing.T) {
 	expectedPhrases := []string{
 		"local development",
 		"cloud.component.yml",
+		"cloud.environment.yml",
 		"provisions all required resources",
 		"file changes",
 	}
@@ -109,7 +113,7 @@ func TestUpParseVarFile(t *testing.T) {
 # Environment variables
 API_KEY=secret123
 DEBUG=true
-DATABASE_URL="postgres://localhost/db"
+DATABASE_URL="postgresql://localhost/db"
 `
 	vars := make(map[string]string)
 	err := upParseVarFile([]byte(content), vars)
@@ -120,7 +124,7 @@ DATABASE_URL="postgres://localhost/db"
 	expected := map[string]string{
 		"API_KEY":      "secret123",
 		"DEBUG":        "true",
-		"DATABASE_URL": "postgres://localhost/db",
+		"DATABASE_URL": "postgresql://localhost/db",
 	}
 
 	for key, expectedValue := range expected {
@@ -225,17 +229,31 @@ func TestUpCmd_VariableFlags(t *testing.T) {
 	}
 }
 
-func TestUpCmd_FileFlag(t *testing.T) {
+func TestUpCmd_ComponentFlag(t *testing.T) {
 	cmd := newUpCmd()
 
-	fileFlag := cmd.Flags().Lookup("file")
-	if fileFlag == nil {
-		t.Fatal("expected --file flag")
+	compFlag := cmd.Flags().Lookup("component")
+	if compFlag == nil {
+		t.Fatal("expected --component flag")
 	}
 
 	// Default should be empty
-	if fileFlag.DefValue != "" {
-		t.Errorf("expected empty default for --file, got '%s'", fileFlag.DefValue)
+	if compFlag.DefValue != "" {
+		t.Errorf("expected empty default for --component, got '%s'", compFlag.DefValue)
+	}
+}
+
+func TestUpCmd_EnvironmentFlag(t *testing.T) {
+	cmd := newUpCmd()
+
+	envFlag := cmd.Flags().Lookup("environment")
+	if envFlag == nil {
+		t.Fatal("expected --environment flag")
+	}
+
+	// Default should be empty
+	if envFlag.DefValue != "" {
+		t.Errorf("expected empty default for --environment, got '%s'", envFlag.DefValue)
 	}
 }
 

@@ -275,7 +275,6 @@ routes:
               value: /api
         backendRefs:
           - service: api
-            port: 3000
         filters:
           - type: URLRewrite
             urlRewrite:
@@ -294,7 +293,6 @@ routes:
               value: /graphql
         backendRefs:
           - service: api
-            port: 3000
         timeouts:
           request: 60s
 
@@ -306,7 +304,6 @@ routes:
               value: /webhooks
         backendRefs:
           - service: api
-            port: 3000
 
       # Health check
       - name: health
@@ -316,7 +313,6 @@ routes:
               value: /health
         backendRefs:
           - service: api
-            port: 3000
 
       # Front-end (catch-all for UI)
       - name: frontend
@@ -326,4 +322,3 @@ routes:
               value: /
         backendRefs:
           - service: front
-            port: 80

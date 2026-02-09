@@ -167,7 +167,6 @@ routes:
               value: /
         backendRefs:
           - service: query-service
-            port: 8080
 
   # OTLP ingestion endpoints (separate route for telemetry data)
   otlp:
@@ -181,6 +180,5 @@ routes:
               value: /v1
         backendRefs:
           - service: otel-http
-            port: 4318
         timeouts:
           request: 30s

@@ -49,7 +49,7 @@ func TestModuleResponse_Marshal(t *testing.T) {
 		Outputs: map[string]OutputValue{
 			"host": {Value: "db.example.com"},
 			"port": {Value: 5432},
-			"url":  {Value: "postgres://...", Sensitive: true},
+			"url":  {Value: "postgresql://...", Sensitive: true},
 		},
 	}
 

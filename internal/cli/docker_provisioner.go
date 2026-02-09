@@ -126,7 +126,7 @@ func (p *DockerProvisioner) provisionPostgres(ctx context.Context, db component.
 			Username: "app",
 			Password: password,
 			Database: dbName,
-			URL:      fmt.Sprintf("postgres://app:%s@localhost:%d/%s?sslmode=disable", password, hostPort, dbName),
+			URL:      fmt.Sprintf("postgresql://app:%s@localhost:%d/%s?sslmode=disable", password, hostPort, dbName),
 		}
 
 		p.resources[fmt.Sprintf("database/%s", db.Name())] = &types.ResourceState{
@@ -189,7 +189,7 @@ func (p *DockerProvisioner) provisionPostgres(ctx context.Context, db component.
 		Username: "app",
 		Password: password,
 		Database: dbName,
-		URL:      fmt.Sprintf("postgres://app:%s@localhost:%d/%s?sslmode=disable", password, hostPort, dbName),
+		URL:      fmt.Sprintf("postgresql://app:%s@localhost:%d/%s?sslmode=disable", password, hostPort, dbName),
 	}
 
 	p.resources[fmt.Sprintf("database/%s", db.Name())] = &types.ResourceState{

@@ -16,6 +16,9 @@ builds:
   api:
     context: ./api
     dockerfile: Dockerfile
+  migrations:
+    context: ./database
+    dockerfile: Dockerfile.migrations
 
 databases:
   main:
@@ -23,9 +26,7 @@ databases:
     # Database migrations configuration
     # Runs after database is provisioned, before deployments start
     migrations:
-      build:
-        context: ./database
-        dockerfile: Dockerfile.migrations
+      image: ${{ builds.migrations.image }}
       command: ["npm", "run", "migrate:up"]
       environment:
         MIGRATION_TABLE: "_migrations"
@@ -80,7 +81,6 @@ routes:
               value: /api
         backendRefs:
           - service: api
-            port: 3000
         filters:
           - type: URLRewrite
             urlRewrite:

@@ -360,6 +360,7 @@ func (p *Parser) parseEnvironment(block *hcl.Block) (*EnvironmentBlockV1, hcl.Di
 			{Type: "secret"},
 			{Type: "dockerBuild"},
 			{Type: "observability"},
+			{Type: "port"},
 		},
 	}
 
@@ -395,6 +396,7 @@ func (p *Parser) parseEnvironment(block *hcl.Block) (*EnvironmentBlockV1, hcl.Di
 		"secret":            &env.SecretHooks,
 		"dockerBuild":       &env.DockerBuildHooks,
 		"observability":     &env.ObservabilityHooks,
+		"port":              &env.PortHooks,
 	}
 
 	for hookType, hooks := range hookTypes {
@@ -516,7 +518,12 @@ func (p *Parser) parseHook(block *hcl.Block) (*HookBlockV1, hcl.Diagnostics) {
 			if rng.Filename != "" {
 				data, err := os.ReadFile(rng.Filename)
 				if err == nil && rng.Start.Byte < len(data) && rng.End.Byte <= len(data) {
-					hook.Error = string(data[rng.Start.Byte:rng.End.Byte])
+					source := string(data[rng.Start.Byte:rng.End.Byte])
+					// Strip HCL string quotes from the source text
+					if len(source) >= 2 && source[0] == '"' && source[len(source)-1] == '"' {
+						source = source[1 : len(source)-1]
+					}
+					hook.Error = source
 				}
 			}
 		}

@@ -1,13 +1,14 @@
 builds:
   api:
     context: ./api
+  migrations:
+    context: ./migrations
 
 databases:
   main:
     type: postgres:^15
     migrations:
-      build:
-        context: ./migrations
+      image: ${{ builds.migrations.image }}
       command: ["npm", "run", "migrate"]
 
 deployments:
@@ -39,7 +40,6 @@ routes:
               value: /api
         backendRefs:
           - service: api
-            port: 8080
 
 variables:
   log_level:

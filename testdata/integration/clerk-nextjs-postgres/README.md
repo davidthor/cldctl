@@ -5,6 +5,7 @@ This integration test validates the full deployment flow of a Next.js applicatio
 ## Overview
 
 The test deploys:
+
 - **Clerk component** - Configuration passthrough for Clerk authentication credentials
 - **Next.js application** - With protected API routes and database connectivity
 - **PostgreSQL database** - For data persistence
@@ -20,19 +21,19 @@ The test deploys:
 
 ### Required Environment Variables
 
-| Variable | Description | Example |
-|----------|-------------|---------|
+| Variable                | Description           | Example       |
+| ----------------------- | --------------------- | ------------- |
 | `CLERK_PUBLISHABLE_KEY` | Clerk publishable key | `pk_test_...` |
-| `CLERK_SECRET_KEY` | Clerk secret key | `sk_test_...` |
+| `CLERK_SECRET_KEY`      | Clerk secret key      | `sk_test_...` |
 
 **Note:** Clerk automatically infers the domain from the publishable key, so `CLERK_DOMAIN` is not required.
 
 ### Optional Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
+| Variable        | Description           | Default                |
+| --------------- | --------------------- | ---------------------- |
 | `CLDCTL_BINARY` | Path to cldctl binary | Auto-detected or built |
-| `TEST_TIMEOUT` | Maximum test duration | `5m` |
+| `TEST_TIMEOUT`  | Maximum test duration | `5m`                   |
 
 ## Running the Tests
 
@@ -116,6 +117,7 @@ clerk-nextjs-postgres/
 Returns application and database health status.
 
 **Response (200 OK):**
+
 ```json
 {
   "status": "healthy",
@@ -129,6 +131,7 @@ Returns application and database health status.
 Returns user info and database query result.
 
 **Response (401 Unauthorized):**
+
 ```json
 {
   "error": "Unauthorized",
@@ -137,6 +140,7 @@ Returns user info and database query result.
 ```
 
 **Response (200 OK with valid Clerk session):**
+
 ```json
 {
   "success": true,
@@ -203,7 +207,7 @@ cd app
 pnpm install
 
 # Set environment variables
-export DATABASE_URL="postgres://user:pass@localhost:5432/testdb"
+export DATABASE_URL="postgresql://user:pass@localhost:5432/testdb"
 export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="pk_test_..."
 export CLERK_SECRET_KEY="sk_test_..."
 

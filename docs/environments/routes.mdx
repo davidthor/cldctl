@@ -12,7 +12,7 @@ Configure hostnames and TLS certificates for component routes at the environment
 ```yaml
 components:
   my-app:
-    component: ghcr.io/org/my-app:v1.0.0
+    image: ghcr.io/org/my-app:v1.0.0
     routes:
       main:                       # Route name from component
         hostnames:
@@ -112,7 +112,7 @@ Configure different routes independently:
 ```yaml
 components:
   my-app:
-    component: ghcr.io/org/my-app:v1.0.0
+    image: ghcr.io/org/my-app:v1.0.0
     routes:
       main:
         hostnames:
@@ -143,7 +143,7 @@ Simple subdomain without TLS:
 ```yaml
 components:
   my-app:
-    component: ./
+    path: ./
     routes:
       main:
         hostnames:
@@ -157,7 +157,7 @@ Subdomain with TLS:
 ```yaml
 components:
   my-app:
-    component: ghcr.io/org/my-app:v1.0.0
+    image: ghcr.io/org/my-app:v1.0.0
     routes:
       main:
         hostnames:
@@ -173,7 +173,7 @@ Custom domains with managed certificates:
 ```yaml
 components:
   my-app:
-    component: ghcr.io/org/my-app:v1.0.0
+    image: ghcr.io/org/my-app:v1.0.0
     routes:
       main:
         hostnames:
@@ -193,7 +193,7 @@ name: preview-${{ pr_number }}
 
 components:
   my-app:
-    component: ghcr.io/org/my-app:pr-${{ pr_number }}
+    image: ghcr.io/org/my-app:pr-${{ pr_number }}
     routes:
       main:
         hostnames:
@@ -213,7 +213,7 @@ locals:
 
 components:
   auth-service:
-    component: ghcr.io/myorg/auth:v2.1.0
+    image: ghcr.io/myorg/auth:v2.1.0
     routes:
       public:
         hostnames:
@@ -222,7 +222,7 @@ components:
           enabled: true
 
   web-app:
-    component: ghcr.io/myorg/web-app:v1.5.0
+    image: ghcr.io/myorg/web-app:v1.5.0
     routes:
       main:
         hostnames:
@@ -238,7 +238,7 @@ components:
           enabled: true
 
   admin-portal:
-    component: ghcr.io/myorg/admin:v1.0.0
+    image: ghcr.io/myorg/admin:v1.0.0
     routes:
       admin:
         hostnames:

@@ -193,10 +193,11 @@ environment {
       plugin = "native"
       build  = "./modules/local-task"
       inputs = {
-        name        = "${environment.name}-${node.component}-${node.name}"
-        image       = node.inputs.image
-        command     = node.inputs.command
-        environment = node.inputs.environment
+        name             = "${environment.name}-${node.component}-${node.name}"
+        image            = node.inputs.image
+        command          = node.inputs.command
+        environment      = node.inputs.environment
+        workingDirectory = node.inputs.workingDirectory
       }
     }
 

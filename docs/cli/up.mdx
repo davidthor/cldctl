@@ -5,28 +5,23 @@ description: "Quick start command for local development"
 
 # cldctl up
 
-The `up` command provides a streamlined experience for local development. It deploys your component with all its dependencies to a local environment with minimal configuration.
+The `up` command provides a streamlined experience for local development. It deploys your component or environment with all dependencies to a local environment with minimal configuration.
 
 ## Synopsis
 
 ```bash
-cldctl up [path] [options]
+cldctl up [options]
 ```
-
-## Arguments
-
-| Argument | Description |
-|----------|-------------|
-| `[path]` | Path to the component directory (defaults to current directory) |
 
 ## Options
 
 | Option | Description |
 |--------|-------------|
-| `-f, --file <path>` | Path to cloud.component.yml if not in default location |
+| `-c, --component <path>` | Path to component file or directory |
+| `-e, --environment <path>` | Path to environment file |
 | `-d, --datacenter <name>` | Target datacenter (resolved from flag, `CLDCTL_DATACENTER` env var, or CLI config default) |
-| `-n, --name <name>` | Environment name (default: auto-generated from component name) |
-| `--var <key=value>` | Set a component variable (repeatable) |
+| `-n, --name <name>` | Environment name (default: auto-generated) |
+| `--var <key=value>` | Set a variable (repeatable) |
 | `--var-file <path>` | Load variables from a file |
 | `--detach` | Run in background (don't watch for changes) |
 | `--no-open` | Don't open browser to application URL |
@@ -34,42 +29,65 @@ cldctl up [path] [options]
 
 ## Description
 
-The `up` command is designed for rapid local development. It:
+The `up` command supports two modes:
+
+### Component Mode (`-c`)
+
+Deploys a single component from a `cloud.component.yml` file:
 
 1. **Parses** your `cloud.component.yml` file
-2. **Creates** a local development environment
-3. **Provisions** all required resources (databases, etc.)
-4. **Builds** and deploys your application
-5. **Watches** for file changes and auto-reloads
+2. **Resolves** dependencies and prompts for missing variables
+3. **Creates** a local development environment
+4. **Provisions** all required resources (databases, etc.) in parallel
+5. **Builds** and deploys your application
+6. **Watches** for file changes and auto-reloads
+7. **Exposes** routes for local access
+
+### Environment Mode (`-e`)
+
+Deploys all components defined in a `cloud.environment.yml` file:
+
+1. **Parses** your `cloud.environment.yml` file
+2. **Resolves** environment variables from OS env vars, `.env` files, and defaults
+3. **Loads** all component configurations
+4. **Creates** a local development environment
+5. **Provisions** all resources across all components in parallel
 6. **Exposes** routes for local access
+
+### Auto-Detection
+
+When neither `-c` nor `-e` is provided, the command auto-detects by looking in the
+current directory for `cloud.component.yml` first, then `cloud.environment.yml`.
 
 ## Examples
 
-### Basic Usage
+### Component Mode
 
 ```bash
-# Start from current directory
+# Start from current directory (auto-detect cloud.component.yml)
 cldctl up
 
-# Start from specific path
-cldctl up ./services/api
+# Specify component path
+cldctl up -c ./services/api
+
+# With variables
+cldctl up -c ./my-app --var log_level=debug --var api_key=test123
+
+# Named environment
+cldctl up -c ./my-app --name my-feature-branch
 ```
 
-### With Variables
+### Environment Mode
 
 ```bash
-# Set variables inline
-cldctl up --var log_level=debug --var api_key=test123
+# Deploy from an environment file
+cldctl up -e cloud.environment.yml
 
-# Load variables from file
-cldctl up --var-file .env.local
-```
+# Environment file in a subdirectory
+cldctl up -e ./envs/dev.yml -d local
 
-### Named Environment
-
-```bash
-# Create a named environment (useful for multiple instances)
-cldctl up --name my-feature-branch
+# With variable overrides
+cldctl up -e cloud.environment.yml --var stripe_key=sk_test_123
 ```
 
 ### Background Mode
@@ -79,7 +97,7 @@ cldctl up --name my-feature-branch
 cldctl up --detach
 
 # Later, stop the environment
-cldctl env destroy my-app-dev
+cldctl destroy environment my-app-dev
 ```
 
 ## Output
@@ -87,10 +105,11 @@ cldctl env destroy my-app-dev
 When you run `cldctl up`, you'll see progress for each resource:
 
 ```
-$ cldctl up
+$ cldctl up -c ./my-app
 
 Component: my-app
-Environment: my-app-dev (local)
+Datacenter: local
+Environment: my-app-dev
 
 [provision] Creating database "main"...
 [provision] Creating database "cache"...
@@ -115,7 +134,7 @@ The watch behavior respects `.dockerignore` and common ignore patterns.
 
 ## Automatic Dependency Deployment
 
-When your component declares dependencies on other components, `cldctl up` will automatically pull and deploy any that are not already present in the environment. Dependencies are resolved transitively.
+In component mode, when your component declares dependencies on other components, `cldctl up` will automatically pull and deploy any that are not already present in the environment. Dependencies are resolved transitively.
 
 If a dependency has required variables without defaults, you will be prompted to enter values:
 
@@ -131,6 +150,18 @@ Dependencies already deployed in the environment are skipped.
   In-depth guide on recursive dependency deployment, ephemeral environments, pass-through components, and CI/CD patterns
 </Card>
 
+## Environment Variable Resolution (Environment Mode)
+
+When using `-e`, environment-level variables declared in the environment file are resolved
+using the following priority chain (highest priority first):
+
+1. `--var` CLI flags
+2. OS environment variables
+3. `.env` file chain (`.env`, `.env.local`, `.env.<name>`, `.env.<name>.local`)
+4. Default values from the variable declaration
+
+The `.env` files are loaded from the environment file's directory.
+
 ## Local Environment
 
 The local environment uses:
@@ -143,10 +174,12 @@ Resources are cleaned up when you stop the `up` command (Ctrl+C), unless using `
 
 ## Comparison with deploy
 
-| Feature | `cldctl up` | `cldctl component deploy` |
+| Feature | `cldctl up` | `cldctl deploy component` |
 |---------|-------------|---------------------------|
 | Target | Local development | Any environment |
 | Configuration | Minimal | Full control |
+| Component mode | Single component | Single component |
+| Environment mode | Multi-component via env file | N/A (use `update environment`) |
 | File watching | Yes | No |
 | State backend | Local only | Configurable |
 | Use case | Development | Staging/Production |

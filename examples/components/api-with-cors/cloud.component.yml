@@ -55,7 +55,6 @@ routes:
               value: /
         backendRefs:
           - service: api
-            port: 3000
         # Add CORS headers at the route level
         # Note: For multiple origins, the application should dynamically respond
         # with the matching origin from CORS_ORIGINS. The route-level header

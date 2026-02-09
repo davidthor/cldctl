@@ -255,7 +255,7 @@ func TestManager_ResolveSecrets(t *testing.T) {
 
 	t.Run("inline secret in string", func(t *testing.T) {
 		data := map[string]interface{}{
-			"url": "postgres://user:${secret:db-password}@localhost/db",
+			"url": "postgresql://user:${secret:db-password}@localhost/db",
 		}
 
 		result, err := m.ResolveSecrets(ctx, data)
@@ -263,7 +263,7 @@ func TestManager_ResolveSecrets(t *testing.T) {
 			t.Fatalf("ResolveSecrets failed: %v", err)
 		}
 
-		expected := "postgres://user:supersecret@localhost/db"
+		expected := "postgresql://user:supersecret@localhost/db"
 		if result["url"] != expected {
 			t.Errorf("url: got %q, want %q", result["url"], expected)
 		}

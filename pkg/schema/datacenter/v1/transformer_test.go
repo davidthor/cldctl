@@ -76,6 +76,28 @@ func TestExprToString_ComplexExpression(t *testing.T) {
 	}
 }
 
+func TestExprToString_StringTemplate(t *testing.T) {
+	// String templates with interpolation include quotes in source text.
+	// exprToString should strip them.
+	tmpDir := t.TempDir()
+	hclFile := filepath.Join(tmpDir, "test.hcl")
+	hclContent := `"${environment.name}-${node.component}-${node.name}"`
+	if err := os.WriteFile(hclFile, []byte(hclContent), 0644); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+
+	expr, diags := hclsyntax.ParseExpression([]byte(hclContent), hclFile, hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() {
+		t.Fatalf("failed to parse expression: %s", diags.Error())
+	}
+
+	result := exprToString(expr)
+	expected := "${environment.name}-${node.component}-${node.name}"
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
 func TestExprToString_FileNotReadable(t *testing.T) {
 	// Parse with a non-existent filename
 	expr, diags := hclsyntax.ParseExpression(

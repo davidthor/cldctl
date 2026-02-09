@@ -143,7 +143,7 @@ func (pm *ProcessManager) StartProcess(ctx context.Context, opts ProcessOptions)
 	// Wait for readiness if configured
 	if opts.Readiness != nil {
 		if err := pm.waitForReady(ctx, opts.Readiness); err != nil {
-			_ = pm.StopProcess(opts.Name, 5*time.Second) // Best effort cleanup; ignore error
+			_ = pm.stopProcessLocked(opts.Name, 5*time.Second) // Best effort cleanup; ignore error
 			return nil, fmt.Errorf("process failed readiness check: %w", err)
 		}
 	}
@@ -156,6 +156,11 @@ func (pm *ProcessManager) StopProcess(name string, timeout time.Duration) error 
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
+	return pm.stopProcessLocked(name, timeout)
+}
+
+// stopProcessLocked stops a running process. Caller must hold pm.mu.
+func (pm *ProcessManager) stopProcessLocked(name string, timeout time.Duration) error {
 	mp, exists := pm.processes[name]
 	if !exists {
 		return nil // Already stopped

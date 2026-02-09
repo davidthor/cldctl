@@ -2,9 +2,10 @@
 package internal
 
 // InternalEnvironment is the canonical internal representation for environment configurations.
-// Note: Name and Datacenter are not part of the config - they are provided via CLI
-// when creating/updating an environment.
 type InternalEnvironment struct {
+	// Optional environment name from the config file
+	Name string
+
 	// Environment-level variable declarations
 	Variables map[string]InternalEnvironmentVariable
 
@@ -31,14 +32,21 @@ type InternalEnvironmentVariable struct {
 }
 
 // InternalComponentConfig represents the configuration for a component in an environment.
-// The component key (map key) is the registry address (e.g., ghcr.io/org/my-app).
-// Source is either a version tag (e.g., v1.0.0) or a file path (e.g., ./path/to/component).
+// Exactly one of Path or Image must be set.
 type InternalComponentConfig struct {
-	// Source is the version tag (e.g., "v1.0.0") or file path (e.g., "./path/to/component")
-	Source string
+	// Path is a local file path to the component directory or file.
+	// Mutually exclusive with Image.
+	Path string
+
+	// Image is an OCI registry reference for the component (e.g., "ghcr.io/org/my-app:v1.0.0").
+	// Mutually exclusive with Path.
+	Image string
 
 	// Variable values for the component
 	Variables map[string]interface{}
+
+	// Port overrides (maps port name to specific port number)
+	Ports map[string]int
 
 	// Scaling configuration per deployment
 	Scaling map[string]InternalScalingConfig

@@ -123,11 +123,17 @@ func (v *Validator) validateComponent(name string, comp ComponentConfigV1) []Val
 	var errors []ValidationError
 	prefix := fmt.Sprintf("components.%s", name)
 
-	// Source is required (version tag or file path)
-	if comp.Source == "" {
+	// Exactly one of path or image must be set
+	if comp.Path == "" && comp.Image == "" {
 		errors = append(errors, ValidationError{
-			Field:   prefix + ".source",
-			Message: "source is required (version tag or file path)",
+			Field:   prefix,
+			Message: "either path or image is required",
+		})
+	}
+	if comp.Path != "" && comp.Image != "" {
+		errors = append(errors, ValidationError{
+			Field:   prefix,
+			Message: "path and image are mutually exclusive",
 		})
 	}
 

@@ -5,6 +5,7 @@ import (
 
 	"github.com/davidthor/cldctl/pkg/schema/datacenter/internal"
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -81,22 +82,21 @@ func (t *Transformer) transformComponent(c ComponentBlockV1) internal.InternalDa
 	// Variable values may reference datacenter variables (e.g., variable.stripe_key)
 	// that are only known at deploy time.
 	if c.VariablesExpr != nil {
-		// Try to get the expression value to extract key-value pairs
+		// Try to evaluate the expression directly (works for literal-only variables)
 		val, diags := c.VariablesExpr.Value(nil)
 		if !diags.HasErrors() && (val.Type().IsObjectType() || val.Type().IsMapType()) {
 			for k, v := range val.AsValueMap() {
 				ic.Variables[k] = ctyValueToString(v)
 			}
-		} else {
-			// Expression references runtime values - store individual attribute expressions
-			// by reading from the source file
-			rng := c.VariablesExpr.Range()
-			if rng.Filename != "" {
-				data, err := os.ReadFile(rng.Filename)
-				if err == nil && rng.Start.Byte < len(data) && rng.End.Byte <= len(data) {
-					// Store the entire expression as a single entry for runtime evaluation
-					ic.Variables["__expr__"] = string(data[rng.Start.Byte:rng.End.Byte])
+		} else if objExpr, ok := c.VariablesExpr.(*hclsyntax.ObjectConsExpr); ok {
+			// Direct evaluation failed (e.g., variables contain variable references).
+			// Walk the AST to extract each key-value pair as expression strings.
+			for _, item := range objExpr.Items {
+				key, keyDiags := item.KeyExpr.Value(nil)
+				if keyDiags.HasErrors() {
+					continue
 				}
+				ic.Variables[key.AsString()] = exprToString(item.ValueExpr)
 			}
 		}
 	}
@@ -119,12 +119,29 @@ func (t *Transformer) transformModule(m ModuleBlockV1) internal.InternalModule {
 		im.Plugin = "pulumi"
 	}
 
-	// Transform inputs - store as HCL expression strings
+	// Transform inputs - store as HCL expression strings so the engine can
+	// evaluate them at deploy time with actual variable values.
 	if m.InputsExpr != nil {
-		// Try to get the expression value to extract key-value pairs
+		// Try to evaluate the expression directly (works for literal-only inputs)
 		val, diags := m.InputsExpr.Value(nil)
 		if !diags.HasErrors() && (val.Type().IsObjectType() || val.Type().IsMapType()) {
 			for k, v := range val.AsValueMap() {
+				im.Inputs[k] = ctyValueToString(v)
+			}
+		} else if objExpr, ok := m.InputsExpr.(*hclsyntax.ObjectConsExpr); ok {
+			// Direct evaluation failed (e.g., inputs contain variable references).
+			// Walk the AST to extract each key-value pair as expression strings
+			// so they can be resolved at deploy time.
+			for _, item := range objExpr.Items {
+				key, keyDiags := item.KeyExpr.Value(nil)
+				if keyDiags.HasErrors() {
+					continue
+				}
+				im.Inputs[key.AsString()] = exprToString(item.ValueExpr)
+			}
+		} else if m.InputsEvaluated != nil {
+			// Fallback: use values that were evaluated during parsing with context
+			for k, v := range m.InputsEvaluated {
 				im.Inputs[k] = ctyValueToString(v)
 			}
 		}
@@ -169,6 +186,7 @@ func (t *Transformer) transformEnvironment(env *EnvironmentBlockV1) internal.Int
 	ie.Hooks.Secret = t.transformHooks(env.SecretHooks)
 	ie.Hooks.DockerBuild = t.transformHooks(env.DockerBuildHooks)
 	ie.Hooks.Observability = t.transformHooks(env.ObservabilityHooks)
+	ie.Hooks.Port = t.transformHooks(env.PortHooks)
 
 	return ie
 }
@@ -177,8 +195,16 @@ func (t *Transformer) transformHooks(hooks []HookBlockV1) []internal.InternalHoo
 	var result []internal.InternalHook
 
 	for _, h := range hooks {
+		when := h.When
+		// If the when condition couldn't be evaluated at parse time (e.g., it
+		// references node.inputs which are only available at deploy time), fall
+		// back to the raw expression source text so the executor can evaluate it.
+		if when == "" && h.WhenExpr != nil {
+			when = exprToString(h.WhenExpr)
+		}
+
 		ih := internal.InternalHook{
-			When:    h.When,
+			When:    when,
 			Error:   h.Error,
 			Outputs: make(map[string]string),
 		}
@@ -225,7 +251,14 @@ func exprToString(expr hcl.Expression) string {
 	if rng.Filename != "" {
 		data, err := os.ReadFile(rng.Filename)
 		if err == nil && rng.Start.Byte < len(data) && rng.End.Byte <= len(data) {
-			return string(data[rng.Start.Byte:rng.End.Byte])
+			source := string(data[rng.Start.Byte:rng.End.Byte])
+			// Strip surrounding HCL string quotes – the range for a string template
+			// expression like "${env}-${name}" includes the quote delimiters, but
+			// the semantic value should not contain them.
+			if len(source) >= 2 && source[0] == '"' && source[len(source)-1] == '"' {
+				source = source[1 : len(source)-1]
+			}
+			return source
 		}
 	}
 

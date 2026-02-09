@@ -159,7 +159,7 @@ const db = new aws.rds.Instance("database", {
 export const endpoint = db.endpoint;
 export const port = db.port;
 export const database_name = db.dbName;
-export const connection_url = pulumi.interpolate`postgres://${db.username}:${db.password}@${db.endpoint}/${db.dbName}`;
+export const connection_url = pulumi.interpolate`postgresql://${db.username}:${db.password}@${db.endpoint}/${db.dbName}`;
 ```
 
 ## Example OpenTofu Module
@@ -205,7 +205,7 @@ output "database_name" {
 }
 
 output "connection_url" {
-  value     = "postgres://${aws_db_instance.database.username}:${random_password.db_password.result}@${aws_db_instance.database.endpoint}/${aws_db_instance.database.db_name}"
+  value     = "postgresql://${aws_db_instance.database.username}:${random_password.db_password.result}@${aws_db_instance.database.endpoint}/${aws_db_instance.database.db_name}"
   sensitive = true
 }
 ```

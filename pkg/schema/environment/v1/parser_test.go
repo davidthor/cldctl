@@ -7,17 +7,15 @@ import (
 func TestParser_ParseBytes(t *testing.T) {
 	parser := NewParser()
 
-	// Note: name and datacenter are not part of the config file anymore
-	// They are provided via CLI flags when creating/updating an environment
 	yaml := `
 locals:
   base_domain: example.com
   log_level: debug
 
 components:
-  # Local component - key is identifier, source is file path
+  # Local component - uses path
   api:
-    source: ./api
+    path: ./api
     variables:
       log_level: debug
     scaling:
@@ -32,9 +30,9 @@ components:
         tls:
           enabled: true
 
-  # OCI component - key is registry address, source is version tag
+  # OCI component - uses image
   registry.example.com/worker:
-    source: v1.0.0
+    image: registry.example.com/worker:v1.0.0
     variables:
       queue: redis
 `
@@ -64,8 +62,11 @@ components:
 		t.Fatal("expected 'api' component")
 	}
 
-	if api.Source != "./api" {
-		t.Errorf("expected source path './api', got %q", api.Source)
+	if api.Path != "./api" {
+		t.Errorf("expected path './api', got %q", api.Path)
+	}
+	if api.Image != "" {
+		t.Errorf("expected empty image for path-based component, got %q", api.Image)
 	}
 
 	if len(api.Scaling) != 1 {
@@ -87,14 +88,17 @@ components:
 		t.Errorf("expected 1 route config, got %d", len(api.Routes))
 	}
 
-	// Check worker component (OCI reference - key is registry address, source is version)
+	// Check worker component (OCI image reference)
 	worker, ok := schema.Components["registry.example.com/worker"]
 	if !ok {
 		t.Fatal("expected 'registry.example.com/worker' component")
 	}
 
-	if worker.Source != "v1.0.0" {
-		t.Errorf("expected source version 'v1.0.0', got %q", worker.Source)
+	if worker.Image != "registry.example.com/worker:v1.0.0" {
+		t.Errorf("expected image 'registry.example.com/worker:v1.0.0', got %q", worker.Image)
+	}
+	if worker.Path != "" {
+		t.Errorf("expected empty path for image-based component, got %q", worker.Path)
 	}
 }
 

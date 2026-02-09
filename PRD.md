@@ -120,42 +120,52 @@ databases:
 Databases can optionally include migration or seeding configuration. This allows you to define a container that runs database migrations or seeds data after the database is provisioned.
 
 ```yaml
+builds:
+  migrations:
+    context: ./database # Build context for migration container
+    dockerfile: Dockerfile
+
 databases:
   main:
     type: postgres:^15
 
-    # Option 1: Build from source (for development and CI builds)
+    # Option 1: Reference a top-level build (recommended for production)
     migrations:
-      build:
-        context: ./database # Required. Build context directory for the migration container
-        dockerfile: Dockerfile # Optional. Defaults to "Dockerfile"
-      command: ["npm", "run", "migrate"] # Optional. Command to run migrations (defaults to container entrypoint)
-      environment: # Optional. Additional environment variables for migration container
+      image: ${{ builds.migrations.image }}
+      command: ["npm", "run", "migrate"]
+      environment:
         MIGRATION_MODE: "up"
 
   analytics:
     type: postgres:^15
 
-    # Option 2: Use pre-built image (for compiled components or shared migration images)
+    # Option 2: Use pre-built image
     migrations:
       image: myregistry.io/myorg/analytics-migrations:v1.0.0
       command: ["python", "seed.py", "--env", "production"]
+
+  dev-db:
+    type: postgres:^15
+
+    # Option 3: Use runtime for process-based execution (no Docker)
+    migrations:
+      runtime: node:20
+      command: ["npx", "prisma", "migrate", "deploy"]
 ```
 
-**Note:** When a component is built using `cldctl build component`, any `build:` blocks are compiled into `image:` references pointing to the built child artifacts. This allows the compiled component to be portable and self-contained.
+**Note:** Migrations support three modes: Docker image (via top-level `builds`), pre-built image, or process-based execution (via `runtime`). The `image` and `runtime` fields are mutually exclusive. When neither is set, the datacenter decides how to execute.
 
 **Database properties:**
 
-| Property                      | Type     | Default        | Description                                                                      |
-| ----------------------------- | -------- | -------------- | -------------------------------------------------------------------------------- |
-| `type`                        | string   | required       | Database type with optional semver constraint (`postgres:^15`, `mysql:^8`, etc.) |
-| `migrations`                  | object   | -              | Optional migration/seeding configuration                                         |
-| `migrations.build`            | object   | -              | Build configuration for migration container (mutually exclusive with `image`)    |
-| `migrations.build.context`    | string   | required       | Build context directory                                                          |
-| `migrations.build.dockerfile` | string   | `"Dockerfile"` | Path to Dockerfile within context                                                |
-| `migrations.image`            | string   | -              | Pre-built migration container image (mutually exclusive with `build`)            |
-| `migrations.command`          | string[] | -              | Command to run migrations (overrides container default)                          |
-| `migrations.environment`      | map      | -              | Additional environment variables for migration container                         |
+| Property                      | Type          | Default       | Description                                                                                                |
+| ----------------------------- | ------------- | ------------- | ---------------------------------------------------------------------------------------------------------- |
+| `type`                        | string        | required      | Database type with optional semver constraint (`postgres:^15`, `mysql:^8`, etc.)                           |
+| `migrations`                  | object        | -             | Optional migration/seeding configuration                                                                   |
+| `migrations.image`            | string        | -             | Container image for migrations (e.g., `${{ builds.migrations.image }}`, mutually exclusive with `runtime`) |
+| `migrations.runtime`          | string/object | -             | Runtime environment for process-based migrations (mutually exclusive with `image`)                         |
+| `migrations.command`          | string[]      | -             | Command to run migrations                                                                                  |
+| `migrations.environment`      | map           | -             | Additional environment variables for migration                                                             |
+| `migrations.workingDirectory` | string        | component dir | Working directory for process-based execution                                                              |
 
 **Notes:**
 
@@ -990,7 +1000,7 @@ outputs:
     value: "${resources.container.environment.POSTGRES_PASSWORD}"
     sensitive: true
   url:
-    value: "postgres://app:${resources.container.environment.POSTGRES_PASSWORD}@localhost:${resources.container.ports[0].host}/${inputs.database}"
+    value: "postgresql://app:${resources.container.environment.POSTGRES_PASSWORD}@localhost:${resources.container.ports[0].host}/${inputs.database}"
     sensitive: true
 ```
 
@@ -4241,14 +4251,13 @@ To support both source and compiled forms, the migrations schema accepts either 
 
 **Database Migrations Properties (updated):**
 
-| Property                      | Type     | Description                                                                                |
-| ----------------------------- | -------- | ------------------------------------------------------------------------------------------ |
-| `migrations.build`            | object   | Build configuration for migration container (source form, mutually exclusive with `image`) |
-| `migrations.build.context`    | string   | Build context directory                                                                    |
-| `migrations.build.dockerfile` | string   | Path to Dockerfile within context (default: `"Dockerfile"`)                                |
-| `migrations.image`            | string   | Pre-built migration container image (compiled form, mutually exclusive with `build`)       |
-| `migrations.command`          | string[] | Command to run migrations (overrides container default)                                    |
-| `migrations.environment`      | map      | Additional environment variables for migration container                                   |
+| Property                      | Type          | Description                                                                                 |
+| ----------------------------- | ------------- | ------------------------------------------------------------------------------------------- |
+| `migrations.image`            | string        | Container image (e.g., `${{ builds.migrations.image }}`, mutually exclusive with `runtime`) |
+| `migrations.runtime`          | string/object | Runtime environment for process-based execution (mutually exclusive with `image`)           |
+| `migrations.command`          | string[]      | Command to run migrations                                                                   |
+| `migrations.environment`      | map           | Additional environment variables for migration                                              |
+| `migrations.workingDirectory` | string        | Working directory for process-based execution (defaults to component directory)             |
 
 **Example - Using pre-built migration image:**
 

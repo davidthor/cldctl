@@ -81,6 +81,14 @@ cldctl inspect staging/my-app/api -o json            # JSON output
 cldctl inspect component ./my-app                    # Visualize resource graph
 cldctl inspect component ./my-app --expand           # Include dependencies
 
+# Local development (up command)
+cldctl up                                         # Auto-detect cloud.component.yml or cloud.environment.yml in CWD
+cldctl up -c ./my-app -d local                    # Component mode: deploy single component
+cldctl up -e cloud.environment.yml -d local       # Environment mode: deploy all components from env file
+cldctl up -c ./my-app --name my-feature -d local  # Named environment
+cldctl up -e ./envs/dev.yml --var key=secret      # Environment mode with variable overrides
+cldctl up --detach                                # Run in background
+
 # Logs and observability
 cldctl logs -e staging -d my-datacenter           # All logs in the environment
 cldctl logs -e staging my-app                     # Logs from one component (uses default DC)
@@ -258,6 +266,44 @@ deployments:
     replicas: 5
 ```
 
+### Dynamic Ports
+
+Use the `ports` block to request dynamically allocated ports. Applications reference these via `${{ ports.<name>.port }}` expressions. This is opt-in — fixed-port applications don't need it.
+
+```yaml
+# Dynamic port allocation
+ports:
+  api:
+    description: "Port for the API server"
+
+deployments:
+  api:
+    command: ["node", "server.js"]
+    environment:
+      PORT: ${{ ports.api.port }}
+
+services:
+  api:
+    deployment: api
+    port: ${{ ports.api.port }}
+```
+
+```yaml
+# Fixed-port apps work without ports block
+deployments:
+  inngest:
+    command: ["npx", "inngest-cli@latest", "dev"]
+
+services:
+  inngest:
+    deployment: inngest
+    port: 8288
+```
+
+Ports support boolean shorthand (`ports: { api: true }`) and an optional `description` field.
+
+Port allocation priority: environment override > datacenter hook > built-in deterministic hash fallback.
+
 ### Observability (OpenTelemetry)
 
 Components can declare observability preferences using the optional `observability` block.
@@ -354,6 +400,7 @@ a value the component author explicitly set.
 - `buckets.<name>.endpoint|bucket|accessKeyId|secretAccessKey`
 - `encryptionKeys.<name>.privateKey|publicKey|privateKeyBase64|publicKeyBase64|key|keyBase64`
 - `smtp.<name>.host|port|username|password`
+- `ports.<name>.port` (dynamically allocated port number)
 - `services.<name>.url|host|port`
 - `observability.endpoint|protocol|attributes` (OTel config; attributes merges datacenter + component + auto-generated)
 - `variables.<name>`
@@ -426,7 +473,9 @@ component "myorg/stripe" {
 | `function` | `id`, `endpoint` |
 | `service` | `host`, `port`, `url` |
 | `route` | `url`, `host`, `port` |
+| `task` | `id`, `status` |
 | `observability` | `endpoint`, `protocol`, `attributes`; optional: `query_type`, `query_endpoint`, `dashboard_url` |
+| `port` | `port` (optional hook — engine has built-in deterministic fallback) |
 
 ### Error Hooks
 
@@ -484,7 +533,7 @@ variables:
 
 components:
   my-app/clerk:
-    source: latest
+    image: my-app/clerk:latest
     variables:
       secret_key: ${{ variables.clerk_secret_key }}
 ```

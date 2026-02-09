@@ -58,7 +58,7 @@ variables:
 
 components:
   questra/clerk:
-    source: latest
+    image: questra/clerk:latest
     variables:
       publishable_key: ${{ variables.clerk_publishable_key }}
       secret_key: ${{ variables.clerk_secret_key }}
@@ -171,29 +171,29 @@ variables:
 
 components:
   questra/clerk:
-    source: latest
+    image: questra/clerk:latest
     variables:
       publishable_key: ${{ variables.clerk_publishable_key }}
       secret_key: ${{ variables.clerk_secret_key }}
 
   questra/anthropic:
-    source: latest
+    image: questra/anthropic:latest
     variables:
       api_key: ${{ variables.anthropic_api_key }}
 
   questra/google-vertex:
-    source: latest
+    image: questra/google-vertex:latest
     variables:
       project_id: ${{ variables.google_project_id }}
 
   questra/posthog:
-    source: latest
+    image: questra/posthog:latest
     variables:
       key: ${{ variables.posthog_key }}
       debug: ${{ variables.posthog_debug }}
 
   questra/app:
-    source: latest
+    image: questra/app:latest
 ```
 
 ### Local secrets file (gitignored)
@@ -257,7 +257,7 @@ locals:
 
 components:
   my-app:
-    source: v1.0.0
+    image: ghcr.io/myorg/my-app:v1.0.0
     variables:
       api_key: ${{ variables.api_key }}
       log_level: ${{ locals.log_level }}

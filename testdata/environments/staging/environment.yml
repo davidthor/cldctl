@@ -7,9 +7,9 @@ locals:
   log_level: debug
 
 components:
-  # Local component - key is identifier, source is file path
+  # Local component - uses path to local directory
   api:
-    source: ./../../components/basic
+    path: ./../../components/basic
     variables:
       log_level: ${{ locals.log_level }}
     scaling:
@@ -24,9 +24,9 @@ components:
         tls:
           enabled: true
 
-  # OCI component - key is registry address, source is version tag
+  # OCI component - uses image reference
   registry.example.com/org/worker:
-    source: v1.0.0
+    image: registry.example.com/org/worker:v1.0.0
     variables:
       log_level: info
     scaling:

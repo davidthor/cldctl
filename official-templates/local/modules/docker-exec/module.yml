@@ -41,8 +41,5 @@ resources:
 
 outputs:
   container_id:
-    value: "${resources.container.id}"
+    value: "${resources.container.container_id}"
     description: Docker container ID
-  exit_code:
-    value: "${resources.container.exit_code}"
-    description: Container exit code

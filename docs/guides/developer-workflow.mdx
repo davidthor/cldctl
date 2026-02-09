@@ -343,7 +343,7 @@ cldctl deploy ghcr.io/myorg/my-app:v1.1.0 -e production
     DATABASE_URL: ${{ databases.main.url }}
     
     # Bad
-    DATABASE_URL: postgres://localhost:5432/mydb
+    DATABASE_URL: postgresql://localhost:5432/mydb
     ```
   </Accordion>
 </AccordionGroup>
@@ -372,12 +372,26 @@ cldctl deploy ghcr.io/myorg/my-app:v1.1.0 -e production
   <Accordion title="Use database migrations">
     Keep database schemas in version control:
     ```yaml
+    builds:
+      migrations:
+        context: ./database/migrations
+
     databases:
       main:
         type: postgres:^15
         migrations:
-          build:
-            context: ./database/migrations
+          image: ${{ builds.migrations.image }}
+          command: ["npm", "run", "migrate"]
+    ```
+    
+    For local development, use `runtime` to run migrations as processes:
+    ```yaml
+    databases:
+      main:
+        type: postgres:^15
+        migrations:
+          runtime: node:20
+          command: ["npx", "prisma", "migrate", "deploy"]
     ```
   </Accordion>
 </AccordionGroup>

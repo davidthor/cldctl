@@ -1,0 +1,43 @@
+# Native module for running one-time tasks as local processes (migrations, scripts, etc.)
+# Ideal for fast local development without Docker build overhead
+# Uses exec resource type which runs to completion and reports success/failure
+plugin: native
+type: exec
+
+inputs:
+  name:
+    type: string
+    required: true
+    description: Task identifier
+  context:
+    type: string
+    required: true
+    description: Working directory for task execution
+  command:
+    type: list
+    required: true
+    description: Command to run
+  environment:
+    type: map
+    default: {}
+    description: Environment variables
+  runtime:
+    type: map
+    description: Runtime configuration (language, setup commands, packages, etc.)
+
+resources:
+  task:
+    type: exec
+    properties:
+      name: "${inputs.name}"
+      working_dir: "${inputs.context}"
+      command: "${inputs.command}"
+      environment: "${inputs.environment}"
+
+outputs:
+  id:
+    value: "${inputs.name}"
+    description: Task identifier
+  output:
+    value: "${resources.task.output}"
+    description: Command output

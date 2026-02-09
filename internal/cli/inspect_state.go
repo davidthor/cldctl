@@ -301,6 +301,11 @@ func findResource(resources map[string]*types.ResourceState, name, resourceType 
 
 // resourceSummary returns a brief detail string for a resource (used in component table view).
 func resourceSummary(res *types.ResourceState) string {
+	// For failed resources, show the failure reason
+	if res.Status == types.ResourceStatusFailed && res.StatusReason != "" {
+		return res.StatusReason
+	}
+
 	if res.Outputs == nil {
 		return ""
 	}

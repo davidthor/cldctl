@@ -11,6 +11,7 @@ import (
 	"github.com/davidthor/cldctl/pkg/graph"
 	"github.com/davidthor/cldctl/pkg/resolver"
 	"github.com/davidthor/cldctl/pkg/schema/component"
+	"github.com/davidthor/cldctl/pkg/state/types"
 	"github.com/spf13/cobra"
 )
 
@@ -31,6 +32,12 @@ func newInspectCmd() *cobra.Command {
   cldctl inspect <environment>/<component>               Show component details
   cldctl inspect <environment>/<component>/<resource>    Show resource details
 
+Component names may contain slashes (e.g., "myorg/app"). Use the full name
+in the path:
+
+  cldctl inspect staging/myorg/app         # Component "myorg/app" in env "staging"
+  cldctl inspect staging/myorg/app/api     # Resource "api" in component "myorg/app"
+
 Resources can be qualified with type if the name is ambiguous:
   cldctl inspect staging/my-app/deployment/api
 
@@ -43,6 +50,9 @@ Examples:
 
   # Inspect a component within an environment
   cldctl inspect staging/my-app
+
+  # Component names with slashes (use full name)
+  cldctl inspect staging/myorg/app
 
   # Inspect a specific resource to see its environment variables
   cldctl inspect staging/my-app/api
@@ -86,53 +96,44 @@ Examples:
 				return fmt.Errorf("environment %q not found in datacenter %q: %w", envName, dc, err)
 			}
 
-			switch len(parts) {
-			case 1:
+			if len(parts) == 1 {
 				// Environment only
 				return inspectEnvironmentState(env, dc, outputFormat)
+			}
 
-			case 2:
-				// Environment/component
-				comp, ok := env.Components[parts[1]]
-				if !ok {
-					var available []string
-					for name := range env.Components {
-						available = append(available, name)
-					}
-					if len(available) == 0 {
-						return fmt.Errorf("component %q not found in environment %q (no components deployed)", parts[1], envName)
-					}
-					return fmt.Errorf("component %q not found in environment %q\n\nAvailable components:\n  %s",
-						parts[1], envName, strings.Join(available, "\n  "))
-				}
+			// Resolve the component and any remaining resource path from the
+			// remaining segments. Component names may contain slashes (e.g.,
+			// "questra/app"), so we can't simply use parts[1] as the name.
+			compName, resourceParts, err := resolveInspectPath(parts[1:], env.Components, envName)
+			if err != nil {
+				return err
+			}
+
+			comp := env.Components[compName]
+
+			switch len(resourceParts) {
+			case 0:
+				// Component view
 				return inspectComponentState(comp, dc, envName, outputFormat)
 
-			case 3:
-				// Environment/component/resource (match by name)
-				comp, ok := env.Components[parts[1]]
-				if !ok {
-					return fmt.Errorf("component %q not found in environment %q", parts[1], envName)
-				}
-				res, err := findResource(comp.Resources, parts[2], "")
+			case 1:
+				// Resource by name
+				res, err := findResource(comp.Resources, resourceParts[0], "")
 				if err != nil {
 					return err
 				}
 				return inspectResourceState(res, dc, envName, outputFormat)
 
-			case 4:
-				// Environment/component/type/name
-				comp, ok := env.Components[parts[1]]
-				if !ok {
-					return fmt.Errorf("component %q not found in environment %q", parts[1], envName)
-				}
-				res, err := findResource(comp.Resources, parts[3], parts[2])
+			case 2:
+				// Resource by type/name
+				res, err := findResource(comp.Resources, resourceParts[1], resourceParts[0])
 				if err != nil {
 					return err
 				}
 				return inspectResourceState(res, dc, envName, outputFormat)
 
 			default:
-				return fmt.Errorf("invalid path %q: expected environment[/component[/resource]]", args[0])
+				return fmt.Errorf("invalid path %q: too many segments after component name", args[0])
 			}
 		},
 	}
@@ -229,6 +230,50 @@ Examples:
 	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to cloud.component.yml if not in default location")
 
 	return cmd
+}
+
+// resolveInspectPath resolves the path segments after the environment name to a
+// component name and optional resource path segments. Component names may contain
+// slashes (e.g., "questra/app"), so simple splitting is ambiguous.
+//
+// This function tries progressively shorter prefixes of the remaining segments
+// against the known component names (longest match first). For example, given
+// segments ["questra", "app", "api"] and a component named "questra/app":
+//
+//   - Try "questra/app/api" → no match
+//   - Try "questra/app"     → match! resource parts = ["api"]
+//
+// The full component name must always be specified. For a component named
+// "questra/app" in environment "questra", the inspect path is:
+//
+//	cldctl inspect questra/questra/app
+func resolveInspectPath(remaining []string, components map[string]*types.ComponentState, envName string) (compName string, resourceParts []string, err error) {
+	if len(remaining) == 0 {
+		return "", nil, fmt.Errorf("expected a component name")
+	}
+
+	// Try progressively shorter prefixes as the component name (longest first).
+	// This ensures "questra/app" matches before "questra" if both exist.
+	for i := len(remaining); i >= 1; i-- {
+		candidate := strings.Join(remaining[:i], "/")
+		if _, ok := components[candidate]; ok {
+			return candidate, remaining[i:], nil
+		}
+	}
+
+	// No match found
+	var available []string
+	for name := range components {
+		available = append(available, name)
+	}
+	sort.Strings(available)
+
+	if len(available) == 0 {
+		return "", nil, fmt.Errorf("no components deployed in environment %q", envName)
+	}
+
+	return "", nil, fmt.Errorf("component %q not found in environment %q\n\nAvailable components:\n  %s",
+		strings.Join(remaining, "/"), envName, strings.Join(available, "\n  "))
 }
 
 // formatResolveError formats resolution errors to show validation details

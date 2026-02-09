@@ -16,7 +16,7 @@ locals:
 
 components:
   my-app:
-    component: ghcr.io/myorg/my-app:v1.0.0
+    image: ghcr.io/myorg/my-app:v1.0.0
     variables:
       api_domain: ${{ locals.domain }}
       log_level: ${{ locals.log_level }}
@@ -33,7 +33,7 @@ locals:
 
 components:
   my-app:
-    component: ghcr.io/myorg/my-app:v1.0.0
+    image: ghcr.io/myorg/my-app:v1.0.0
     variables:
       stripe_key: ${{ locals.stripe_key }}
 ```
@@ -49,19 +49,19 @@ locals:
 
 components:
   api:
-    component: ghcr.io/myorg/api:v1.0.0
+    image: ghcr.io/myorg/api:v1.0.0
     variables:
       log_level: ${{ locals.log_level }}
       env: ${{ locals.environment }}
 
   worker:
-    component: ghcr.io/myorg/worker:v1.0.0
+    image: ghcr.io/myorg/worker:v1.0.0
     variables:
       log_level: ${{ locals.log_level }}
       env: ${{ locals.environment }}
 
   frontend:
-    component: ghcr.io/myorg/frontend:v1.0.0
+    image: ghcr.io/myorg/frontend:v1.0.0
     variables:
       log_level: ${{ locals.log_level }}
 ```
@@ -76,12 +76,12 @@ locals:
 
 components:
   auth:
-    component: ghcr.io/myorg/auth:v1.0.0
+    image: ghcr.io/myorg/auth:v1.0.0
     variables:
       jwt_secret: ${{ locals.jwt_secret }}
 
   api:
-    component: ghcr.io/myorg/api:v1.0.0
+    image: ghcr.io/myorg/api:v1.0.0
     variables:
       stripe_key: ${{ locals.stripe_key }}
       db_password: ${{ locals.database_password }}
@@ -97,14 +97,14 @@ locals:
 
 components:
   api:
-    component: ghcr.io/myorg/api:v1.0.0
+    image: ghcr.io/myorg/api:v1.0.0
     routes:
       main:
         hostnames:
           - subdomain: ${{ locals.api_subdomain }}
 
   frontend:
-    component: ghcr.io/myorg/frontend:v1.0.0
+    image: ghcr.io/myorg/frontend:v1.0.0
     environment:
       web:
         NEXT_PUBLIC_API_URL: https://${{ locals.api_subdomain }}.${{ locals.base_domain }}
@@ -126,7 +126,7 @@ locals:
 
 components:
   api:
-    component: ghcr.io/myorg/api:v1.0.0
+    image: ghcr.io/myorg/api:v1.0.0
     scaling:
       api:
         replicas: ${{ locals.api_replicas }}
@@ -134,7 +134,7 @@ components:
         memory: ${{ locals.api_memory }}
 
   worker:
-    component: ghcr.io/myorg/worker:v1.0.0
+    image: ghcr.io/myorg/worker:v1.0.0
     scaling:
       processor:
         replicas: ${{ locals.worker_replicas }}

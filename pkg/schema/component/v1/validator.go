@@ -94,22 +94,16 @@ func (v *Validator) validateDatabases(databases map[string]DatabaseV1) []Validat
 
 		// Validate migrations
 		if db.Migrations != nil {
-			if db.Migrations.Build != nil && db.Migrations.Image != "" {
+			if db.Migrations.Image != "" && db.Migrations.Runtime != nil {
 				errs = append(errs, ValidationError{
 					Field:   fmt.Sprintf("databases.%s.migrations", name),
-					Message: "build and image are mutually exclusive",
+					Message: "image and runtime are mutually exclusive",
 				})
 			}
-			if db.Migrations.Build == nil && db.Migrations.Image == "" {
+			if db.Migrations.Runtime != nil && db.Migrations.Runtime.Language == "" {
 				errs = append(errs, ValidationError{
-					Field:   fmt.Sprintf("databases.%s.migrations", name),
-					Message: "either build or image is required",
-				})
-			}
-			if db.Migrations.Build != nil && db.Migrations.Build.Context == "" {
-				errs = append(errs, ValidationError{
-					Field:   fmt.Sprintf("databases.%s.migrations.build.context", name),
-					Message: "context is required for build",
+					Field:   fmt.Sprintf("databases.%s.migrations.runtime.language", name),
+					Message: "language is required for runtime",
 				})
 			}
 		}

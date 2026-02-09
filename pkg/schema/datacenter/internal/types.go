@@ -88,6 +88,7 @@ type InternalHooks struct {
 	Secret            []InternalHook
 	DockerBuild       []InternalHook
 	Observability     []InternalHook
+	Port              []InternalHook
 }
 
 // InternalHook represents a resource hook.

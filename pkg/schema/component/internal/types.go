@@ -16,6 +16,7 @@ type InternalComponent struct {
 	Buckets        []InternalBucket
 	EncryptionKeys []InternalEncryptionKey
 	SMTP           []InternalSMTP
+	Ports          []InternalPort
 	Deployments    []InternalDeployment
 	Functions      []InternalFunction
 	Services       []InternalService
@@ -64,16 +65,19 @@ type InternalDatabase struct {
 }
 
 // InternalMigrations represents database migration configuration.
+// Image and Runtime are mutually exclusive. When neither is set, the datacenter
+// decides how to execute (e.g., as a local process for development).
 type InternalMigrations struct {
-	// Source form (mutually exclusive with Image)
-	Build *InternalBuild
+	// Image source (optional — may reference a top-level build via expression)
+	Image string // Pre-built image reference or ${{ builds.<name>.image }} expression
 
-	// Compiled form (mutually exclusive with Build)
-	Image string
+	// Runtime environment (optional — describes VM/managed runtime requirements)
+	Runtime *InternalRuntime
 
 	// Common fields
-	Command     []string
-	Environment map[string]string
+	Command          []string
+	Environment      map[string]string
+	WorkingDirectory string // Working directory for process-based execution (defaults to component dir)
 }
 
 // InternalBuild represents a container build configuration.
@@ -106,6 +110,14 @@ type InternalEncryptionKey struct {
 type InternalSMTP struct {
 	Name        string
 	Description string // Optional description
+}
+
+// InternalPort represents a dynamic port allocation request.
+// The engine (or datacenter hook) allocates a port number and exposes it
+// via ${{ ports.<name>.port }} expressions.
+type InternalPort struct {
+	Name        string
+	Description string
 }
 
 // InternalDeployment represents a deployment workload.
@@ -199,8 +211,8 @@ type InternalService struct {
 	URL        string // External URL (virtual service)
 
 	// Configuration
-	Port     int
-	Protocol string // http, https, tcp, grpc
+	Port     Expression // Port number or expression (e.g., "8080" or "${{ ports.api.port }}")
+	Protocol string     // http, https, tcp, grpc
 }
 
 // InternalRoute represents external traffic routing configuration.
@@ -215,7 +227,6 @@ type InternalRoute struct {
 	// Simplified form (alternative to Rules)
 	Service  string // Direct service reference
 	Function string // Direct function reference
-	Port     int
 }
 
 // InternalRouteRule represents a routing rule.
@@ -269,7 +280,6 @@ type InternalGRPCMethodMatch struct {
 type InternalBackendRef struct {
 	Service  string
 	Function string
-	Port     int
 	Weight   int
 }
 
@@ -320,7 +330,6 @@ type InternalPathModifier struct {
 // InternalMirror represents request mirroring.
 type InternalMirror struct {
 	Service string
-	Port    int
 }
 
 // InternalTimeouts represents timeout configuration.

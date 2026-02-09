@@ -12,7 +12,10 @@ import (
 
 	"github.com/davidthor/cldctl/pkg/engine"
 	"github.com/davidthor/cldctl/pkg/engine/executor"
+	"github.com/davidthor/cldctl/pkg/engine/planner"
+	"github.com/davidthor/cldctl/pkg/envfile"
 	"github.com/davidthor/cldctl/pkg/schema/component"
+	"github.com/davidthor/cldctl/pkg/schema/environment"
 	"github.com/davidthor/cldctl/pkg/state"
 	"github.com/davidthor/cldctl/pkg/state/types"
 	"github.com/spf13/cobra"
@@ -23,77 +26,72 @@ func resourceID(component, resourceType, name string) string {
 	return fmt.Sprintf("%s/%s/%s", component, resourceType, name)
 }
 
+// upMode determines which mode the up command should run in.
+type upMode int
+
+const (
+	upModeComponent   upMode = iota
+	upModeEnvironment
+)
+
 func newUpCmd() *cobra.Command {
 	var (
-		file       string
-		name       string
-		datacenter string
-		variables  []string
-		varFile    string
-		detach     bool
-		noOpen     bool
-		port       int
+		componentFile string
+		envFile       string
+		name          string
+		datacenter    string
+		variables     []string
+		varFile       string
+		detach        bool
+		noOpen        bool
+		port          int
 	)
 
 	cmd := &cobra.Command{
-		Use:   "up [path]",
-		Short: "Deploy a component to a local environment",
+		Use:   "up",
+		Short: "Deploy a component or environment to a local environment",
 		Long: `The up command provides a streamlined experience for local development.
-It deploys your component with all its dependencies to an environment
-using the specified datacenter.
+It deploys your component or environment with all dependencies to an
+environment using the specified datacenter.
+
+You can specify either a component or an environment file:
+  -c, --component   Path to a component file or directory
+  -e, --environment Path to an environment file
+
+If neither flag is provided, the command auto-detects by looking for
+cloud.component.yml or cloud.environment.yml in the current directory.
 
 The up command:
-  1. Parses your cloud.component.yml file
+  1. Parses your cloud.component.yml or cloud.environment.yml file
   2. Creates or uses an existing environment with the specified datacenter
   3. Provisions all required resources (databases, etc.) in parallel
-  4. Builds and deploys your application
+  4. Builds and deploys your application(s)
   5. Watches for file changes and auto-reloads (unless --detach)
   6. Exposes routes for local access
 
 Examples:
-  cldctl up ./my-app -d local
-  cldctl up -d my-datacenter --name my-env
-  cldctl up ./my-app -d local --var API_KEY=secret`,
-		Args:         cobra.MaximumNArgs(1),
+  # Component mode (single component)
+  cldctl up -c ./my-app -d local
+  cldctl up -c ./my-app -d local --var API_KEY=secret
+
+  # Environment mode (multi-component)
+  cldctl up -e cloud.environment.yml -d local
+  cldctl up -e ./envs/dev.yml -d my-datacenter
+
+  # Auto-detect mode (looks for cloud.component.yml or cloud.environment.yml in CWD)
+  cldctl up -d local`,
+		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := "."
-			if len(args) > 0 {
-				path = args[0]
+			// Validate mutually exclusive flags
+			if componentFile != "" && envFile != "" {
+				return fmt.Errorf("flags -c/--component and -e/--environment are mutually exclusive")
 			}
 
-			// Get absolute path for reliable operations
-			absPath, err := filepath.Abs(path)
+			// Determine mode
+			mode, resolvedPath, err := resolveUpMode(componentFile, envFile)
 			if err != nil {
-				return fmt.Errorf("failed to resolve path: %w", err)
-			}
-
-			// Determine cloud.component.yml location
-			componentFile := file
-			if componentFile == "" {
-				// Check if path is a file or directory
-				info, err := os.Stat(absPath)
-				if err != nil {
-					return fmt.Errorf("failed to access path: %w", err)
-				}
-				if info.IsDir() {
-					// Look for cloud.component.yml in the directory
-					componentFile = filepath.Join(absPath, "cloud.component.yml")
-					if _, err := os.Stat(componentFile); os.IsNotExist(err) {
-						componentFile = filepath.Join(absPath, "cloud.component.yaml")
-					}
-				} else {
-					// Path is a file, use it directly
-					componentFile = absPath
-					absPath = filepath.Dir(absPath)
-				}
-			}
-
-			// Load the component
-			loader := component.NewLoader()
-			comp, err := loader.Load(componentFile)
-			if err != nil {
-				return fmt.Errorf("failed to load component: %w", err)
+				return err
 			}
 
 			// Resolve datacenter
@@ -102,39 +100,23 @@ Examples:
 				return err
 			}
 
-			// Determine environment name from flag or derive from directory name
-			envName := name
-			if envName == "" {
-				dirName := filepath.Base(absPath)
-				envName = fmt.Sprintf("%s-dev", dirName)
-			}
-
-			// Load variables from file if specified
-			vars := make(map[string]string)
+			// Parse CLI variable overrides
+			cliVars := make(map[string]string)
 			if varFile != "" {
 				data, err := os.ReadFile(varFile)
 				if err != nil {
 					return fmt.Errorf("failed to read var file: %w", err)
 				}
-				if err := upParseVarFile(data, vars); err != nil {
+				if err := upParseVarFile(data, cliVars); err != nil {
 					return fmt.Errorf("failed to parse var file: %w", err)
 				}
 			}
-
-			// Parse inline variables
 			for _, v := range variables {
 				parts := strings.SplitN(v, "=", 2)
 				if len(parts) == 2 {
-					vars[parts[0]] = parts[1]
+					cliVars[parts[0]] = parts[1]
 				}
 			}
-
-			componentName := filepath.Base(absPath)
-
-			fmt.Printf("Component: %s\n", componentName)
-			fmt.Printf("Datacenter: %s\n", dc)
-			fmt.Printf("Environment: %s\n", envName)
-			fmt.Println()
 
 			// Create state manager (always local for 'up')
 			mgr, err := upCreateStateManager()
@@ -152,110 +134,35 @@ Examples:
 				return fmt.Errorf("datacenter %q not found: %w\nDeploy a datacenter first with: cldctl deploy datacenter <name> <path>", dc, err)
 			}
 
-			// Create the engine early for dependency resolution
+			// Build component/variable maps and loaded components based on mode
+			var (
+				componentsMap map[string]string
+				variablesMap  map[string]map[string]interface{}
+				envName       string
+				loadedComps   map[string]component.Component // for progress table
+			)
+
+			switch mode {
+			case upModeComponent:
+				componentsMap, variablesMap, envName, loadedComps, err = prepareComponentMode(ctx, resolvedPath, name, cliVars, dc, mgr)
+			case upModeEnvironment:
+				componentsMap, variablesMap, envName, loadedComps, err = prepareEnvironmentMode(resolvedPath, name, cliVars, dc)
+			}
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Datacenter: %s\n", dc)
+			fmt.Printf("Environment: %s\n", envName)
+			fmt.Println()
+
+			// Create the engine
 			eng := createEngine(mgr)
 
-			// Convert vars to interface{} map
-			varsInterface := make(map[string]interface{})
-			for k, v := range vars {
-				varsInterface[k] = v
-			}
-
-			// Build initial component and variable maps
-			componentsMap := map[string]string{componentName: componentFile}
-			variablesMap := map[string]map[string]interface{}{componentName: varsInterface}
-
-			// Resolve dependencies that are not yet deployed in the environment
-			deps, err := eng.ResolveDependencies(ctx, engine.DeployOptions{
-				Environment: envName,
-				Datacenter:  dc,
-				Components:  componentsMap,
-				Variables:   variablesMap,
-			})
-			if err != nil {
-				return fmt.Errorf("failed to resolve dependencies: %w", err)
-			}
-
-			// Handle dependency variables - prompt or error
-			for i := range deps {
-				dep := &deps[i]
-				if len(dep.MissingVariables) > 0 {
-					if !isInteractive() {
-						var names []string
-						for _, v := range dep.MissingVariables {
-							names = append(names, v.Name())
-						}
-						return fmt.Errorf("cannot auto-deploy dependency %q: missing required variables: %s\nProvide values with --var or deploy the dependency manually first",
-							dep.Name, strings.Join(names, ", "))
-					}
-
-					// Prompt for dependency variables
-					fmt.Printf("Dependency %q requires the following variables:\n", dep.Name)
-					fmt.Println()
-
-					depVars := make(map[string]interface{})
-					for _, v := range dep.MissingVariables {
-						value, err := promptForVariable(v)
-						if err != nil {
-							return fmt.Errorf("failed to read variable %q for dependency %q: %w", v.Name(), dep.Name, err)
-						}
-						depVars[v.Name()] = value
-					}
-					fmt.Println()
-					variablesMap[dep.Name] = depVars
-				}
-
-				// Add dependency to the components map
-				componentsMap[dep.Name] = dep.LocalPath
-			}
-
-			// Display auto-deployed dependencies
-			if len(deps) > 0 {
-				fmt.Println("Dependencies to deploy:")
-				for _, dep := range deps {
-					fmt.Printf("  %s (%s)\n", dep.Name, dep.OCIRef)
-				}
-				fmt.Println()
-			}
-
-			// Track if we've started provisioning (for cleanup purposes)
-			provisioningStarted := false
-
-			// cleanupEnvironment handles full cleanup of the environment
-			cleanupEnvironment := func(reason string) {
-				if !provisioningStarted {
-					return
-				}
-
-				fmt.Println()
-				fmt.Printf("Cleaning up (%s)...\n", reason)
-
-				// Use a fresh context since the original may be cancelled
-				cleanupCtx := context.Background()
-
-				// Use the engine to destroy the environment
-				cleanupEng := createEngine(mgr)
-				_, err := cleanupEng.Destroy(cleanupCtx, engine.DestroyOptions{
-					Environment: envName,
-					Datacenter:  dc,
-					Output:      os.Stdout,
-					DryRun:      false,
-					AutoApprove: true,
-				})
-				if err != nil {
-					// Fall back to direct cleanup if engine destroy fails
-					_ = CleanupByEnvName(cleanupCtx, envName)
-				}
-
-				// Delete environment state
-				if err := mgr.DeleteEnvironment(cleanupCtx, dc, envName); err != nil {
-					fmt.Printf("Warning: failed to delete environment state: %v\n", err)
-				}
-
-				fmt.Println("Cleanup complete.")
-			}
-
 			// Set up signal handling for graceful shutdown during provisioning
+			provisioningStarted := false
+			cleanupEnvironment := makeCleanupFunc(&provisioningStarted, mgr, envName, dc)
+
 			sigChan := make(chan os.Signal, 1)
 			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 			var cancelCount int
@@ -268,7 +175,6 @@ Examples:
 						cancel()
 					} else {
 						fmt.Println("\nForce quitting...")
-						// Force cleanup by environment name
 						_ = CleanupByEnvName(context.Background(), envName)
 						os.Exit(1)
 					}
@@ -295,19 +201,15 @@ Examples:
 			// Mark that provisioning has started (for cleanup purposes)
 			provisioningStarted = true
 
-			// Create progress table
+			// Create progress table (populated from the real plan via OnPlan callback)
 			progress := NewProgressTable(os.Stdout)
 
-			// Add dependency component resources to progress table first
-			for _, dep := range deps {
-				addComponentToProgressTable(progress, dep.Name, dep.Component)
+			// OnPlan populates the progress table from the real execution plan
+			// so that dependency information is accurate and complete.
+			onPlan := func(plan *planner.Plan) {
+				populateProgressFromPlan(progress, plan)
+				progress.PrintInitial()
 			}
-
-			// Add primary component resources to progress table
-			addComponentToProgressTable(progress, componentName, comp)
-
-			// Print initial progress table
-			progress.PrintInitial()
 
 			// Create progress callback for engine updates
 			onProgress := func(event executor.ProgressEvent) {
@@ -333,9 +235,7 @@ Examples:
 				progress.PrintUpdate(event.NodeID)
 			}
 
-			// Execute deployment using the engine with parallelism
-			// Note: We pass nil for Output to suppress the plan summary which would
-			// interfere with the progress table's ANSI cursor management
+			// Execute deployment
 			result, err := eng.Deploy(ctx, engine.DeployOptions{
 				Environment: envName,
 				Datacenter:  dc,
@@ -344,25 +244,22 @@ Examples:
 				Output:      nil, // Suppress plan summary - progress table handles display
 				DryRun:      false,
 				AutoApprove: true,
-				Parallelism: defaultParallelism, // Enable parallel execution
+				Parallelism: defaultParallelism,
 				OnProgress:  onProgress,
+				OnPlan:      onPlan,
 			})
 
+			// Always print the final progress summary so the user sees a clear
+			// success/failure report with resource counts and error details.
+			progress.PrintFinalSummary()
+
 			if err != nil {
-				fmt.Fprintln(os.Stderr)
-				fmt.Fprintln(os.Stderr, "Some resources may have been provisioned before the failure.")
-				fmt.Fprintf(os.Stderr, "Inspect the current state with:\n  cldctl inspect %s\n\n", envName)
-				fmt.Fprintf(os.Stderr, "Clean up with:\n  cldctl destroy environment %s\n\n", envName)
+				cleanupEnvironment("failed")
 				return fmt.Errorf("deployment failed: %w", err)
 			}
 
 			if !result.Success {
-				// Don't clean up on failure — preserve state so the user
-				// can inspect what succeeded and what failed.
-				fmt.Fprintln(os.Stderr)
-				fmt.Fprintln(os.Stderr, "Some resources failed to deploy. Successful resources are still running.")
-				fmt.Fprintf(os.Stderr, "Inspect the current state with:\n  cldctl inspect %s\n\n", envName)
-				fmt.Fprintf(os.Stderr, "Clean up with:\n  cldctl destroy environment %s\n\n", envName)
+				cleanupEnvironment("failed")
 				if result.Execution != nil && len(result.Execution.Errors) > 0 {
 					return fmt.Errorf("deployment failed: %v", result.Execution.Errors[0])
 				}
@@ -375,37 +272,8 @@ Examples:
 				return ctx.Err()
 			}
 
-			// Print final progress summary
-			progress.PrintFinalSummary()
-
-			// Get route URLs from the deployed state
-			routeURLs := make(map[string]string)
-			basePort := port
-			if basePort == 0 {
-				basePort = 8080
-			}
-
-			// Try to get route URLs from state
-			updatedEnv, err := mgr.GetEnvironment(ctx, dc, envName)
-			if err == nil {
-				if compState, ok := updatedEnv.Components[componentName]; ok {
-					for resName, resState := range compState.Resources {
-						if resState.Type == "route" {
-							if url, ok := resState.Outputs["url"].(string); ok {
-								routeURLs[resName] = url
-							}
-						}
-					}
-				}
-			}
-
-			// If no routes found from state, construct default URL
-			if len(routeURLs) == 0 && len(comp.Routes()) > 0 {
-				for _, route := range comp.Routes() {
-					routeURLs[route.Name()] = fmt.Sprintf("http://localhost:%d", basePort)
-					break
-				}
-			}
+			// Get route URLs from all deployed components
+			routeURLs := collectRouteURLs(ctx, mgr, dc, envName, componentsMap, loadedComps, port)
 
 			if len(routeURLs) > 0 {
 				var primaryURL string
@@ -415,7 +283,6 @@ Examples:
 				}
 				fmt.Printf("\nApplication running at %s\n", primaryURL)
 
-				// Open browser unless --no-open is specified
 				if !noOpen && !detach {
 					openBrowserURL(primaryURL)
 				}
@@ -429,10 +296,8 @@ Examples:
 				fmt.Println()
 				fmt.Println("Press Ctrl+C to stop...")
 
-				// Wait for context cancellation (already set up above)
 				<-ctx.Done()
 
-				// Clean up everything and remove the environment
 				cleanupEnvironment("interrupted")
 			}
 
@@ -440,16 +305,339 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to cloud.component.yml if not in default location")
+	cmd.Flags().StringVarP(&componentFile, "component", "c", "", "Path to component file or directory")
+	cmd.Flags().StringVarP(&envFile, "environment", "e", "", "Path to environment file")
 	cmd.Flags().StringVarP(&datacenter, "datacenter", "d", "", "Datacenter to use for provisioning (uses default if not set)")
-	cmd.Flags().StringVarP(&name, "name", "n", "", "Environment name (default: auto-generated from component name)")
-	cmd.Flags().StringArrayVar(&variables, "var", nil, "Set a component variable (key=value)")
+	cmd.Flags().StringVarP(&name, "name", "n", "", "Environment name (default: auto-generated)")
+	cmd.Flags().StringArrayVar(&variables, "var", nil, "Set a variable (key=value)")
 	cmd.Flags().StringVar(&varFile, "var-file", "", "Load variables from a file")
 	cmd.Flags().BoolVar(&detach, "detach", false, "Run in background (don't watch for changes)")
 	cmd.Flags().BoolVar(&noOpen, "no-open", false, "Don't open browser to application URL")
 	cmd.Flags().IntVar(&port, "port", 0, "Override the port for local access (default: 8080)")
 
 	return cmd
+}
+
+// resolveUpMode determines the mode and resolved file path for the up command.
+func resolveUpMode(componentFile, envFile string) (upMode, string, error) {
+	if componentFile != "" {
+		absPath, err := filepath.Abs(componentFile)
+		if err != nil {
+			return 0, "", fmt.Errorf("failed to resolve component path: %w", err)
+		}
+		return upModeComponent, absPath, nil
+	}
+
+	if envFile != "" {
+		absPath, err := filepath.Abs(envFile)
+		if err != nil {
+			return 0, "", fmt.Errorf("failed to resolve environment path: %w", err)
+		}
+		return upModeEnvironment, absPath, nil
+	}
+
+	// Auto-detect from CWD
+	cwd, err := os.Getwd()
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	// Check for component files first
+	for _, filename := range []string{"cloud.component.yml", "cloud.component.yaml"} {
+		candidate := filepath.Join(cwd, filename)
+		if _, err := os.Stat(candidate); err == nil {
+			return upModeComponent, candidate, nil
+		}
+	}
+
+	// Check for environment files
+	for _, filename := range []string{"cloud.environment.yml", "cloud.environment.yaml"} {
+		candidate := filepath.Join(cwd, filename)
+		if _, err := os.Stat(candidate); err == nil {
+			return upModeEnvironment, candidate, nil
+		}
+	}
+
+	return 0, "", fmt.Errorf("no component or environment file found in current directory\nCreate a cloud.component.yml or cloud.environment.yml, or specify one with -c or -e")
+}
+
+// prepareComponentMode loads a single component and resolves its dependencies,
+// returning the maps needed for engine.Deploy.
+func prepareComponentMode(
+	ctx context.Context,
+	resolvedPath string,
+	nameFlag string,
+	cliVars map[string]string,
+	dc string,
+	mgr state.Manager,
+) (
+	componentsMap map[string]string,
+	variablesMap map[string]map[string]interface{},
+	envName string,
+	loadedComps map[string]component.Component,
+	err error,
+) {
+	// Determine the component file path
+	componentFile := resolvedPath
+	absDir := resolvedPath
+
+	info, err := os.Stat(resolvedPath)
+	if err != nil {
+		return nil, nil, "", nil, fmt.Errorf("failed to access path: %w", err)
+	}
+	if info.IsDir() {
+		componentFile = filepath.Join(resolvedPath, "cloud.component.yml")
+		if _, err := os.Stat(componentFile); os.IsNotExist(err) {
+			componentFile = filepath.Join(resolvedPath, "cloud.component.yaml")
+		}
+	} else {
+		absDir = filepath.Dir(resolvedPath)
+	}
+
+	// Load the component
+	loader := component.NewLoader()
+	comp, err := loader.Load(componentFile)
+	if err != nil {
+		return nil, nil, "", nil, fmt.Errorf("failed to load component: %w", err)
+	}
+
+	// Determine environment name
+	envName = nameFlag
+	if envName == "" {
+		dirName := filepath.Base(absDir)
+		envName = fmt.Sprintf("%s-dev", dirName)
+	}
+
+	// Convert CLI vars to interface map
+	varsInterface := make(map[string]interface{})
+	for k, v := range cliVars {
+		varsInterface[k] = v
+	}
+
+	componentName := filepath.Base(absDir)
+	componentsMap = map[string]string{componentName: componentFile}
+	variablesMap = map[string]map[string]interface{}{componentName: varsInterface}
+	loadedComps = map[string]component.Component{componentName: comp}
+
+	fmt.Printf("Component: %s\n", componentName)
+
+	// Resolve dependencies
+	eng := createEngine(mgr)
+	deps, err := eng.ResolveDependencies(ctx, engine.DeployOptions{
+		Environment: envName,
+		Datacenter:  dc,
+		Components:  componentsMap,
+		Variables:   variablesMap,
+	})
+	if err != nil {
+		return nil, nil, "", nil, fmt.Errorf("failed to resolve dependencies: %w", err)
+	}
+
+	// Handle dependency variables - prompt or error
+	for i := range deps {
+		dep := &deps[i]
+		if len(dep.MissingVariables) > 0 {
+			if !isInteractive() {
+				var names []string
+				for _, v := range dep.MissingVariables {
+					names = append(names, v.Name())
+				}
+				return nil, nil, "", nil, fmt.Errorf("cannot auto-deploy dependency %q: missing required variables: %s\nProvide values with --var or deploy the dependency manually first",
+					dep.Name, strings.Join(names, ", "))
+			}
+
+			fmt.Printf("Dependency %q requires the following variables:\n", dep.Name)
+			fmt.Println()
+
+			depVars := make(map[string]interface{})
+			for _, v := range dep.MissingVariables {
+				value, err := promptForVariable(v)
+				if err != nil {
+					return nil, nil, "", nil, fmt.Errorf("failed to read variable %q for dependency %q: %w", v.Name(), dep.Name, err)
+				}
+				depVars[v.Name()] = value
+			}
+			fmt.Println()
+			variablesMap[dep.Name] = depVars
+		}
+
+		componentsMap[dep.Name] = dep.LocalPath
+		loadedComps[dep.Name] = dep.Component
+	}
+
+	if len(deps) > 0 {
+		fmt.Println("Dependencies to deploy:")
+		for _, dep := range deps {
+			fmt.Printf("  %s (%s)\n", dep.Name, dep.OCIRef)
+		}
+		fmt.Println()
+	}
+
+	return componentsMap, variablesMap, envName, loadedComps, nil
+}
+
+// prepareEnvironmentMode loads an environment file, resolves variables,
+// and builds the component/variable maps needed for engine.Deploy.
+func prepareEnvironmentMode(
+	resolvedPath string,
+	nameFlag string,
+	cliVars map[string]string,
+	dc string,
+) (
+	componentsMap map[string]string,
+	variablesMap map[string]map[string]interface{},
+	envName string,
+	loadedComps map[string]component.Component,
+	err error,
+) {
+	// Load the environment file
+	envLoader := environment.NewLoader()
+	envConfig, err := envLoader.Load(resolvedPath)
+	if err != nil {
+		return nil, nil, "", nil, fmt.Errorf("failed to load environment config: %w", err)
+	}
+
+	// Determine environment name: --name flag > config file name > directory-based default
+	envName = nameFlag
+	if envName == "" {
+		envName = envConfig.Name()
+	}
+	if envName == "" {
+		dirName := filepath.Base(filepath.Dir(resolvedPath))
+		envName = fmt.Sprintf("%s-dev", dirName)
+	}
+
+	// Load dotenv file chain from the current working directory (consistent with
+	// `update environment`). The .env files live alongside the user's project,
+	// not necessarily alongside the environment file.
+	envDir := filepath.Dir(resolvedPath)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, nil, "", nil, fmt.Errorf("failed to get working directory: %w", err)
+	}
+	dotenvVars, err := envfile.Load(cwd, envName)
+	if err != nil {
+		return nil, nil, "", nil, fmt.Errorf("failed to load .env files: %w", err)
+	}
+
+	// Resolve environment-level variables and substitute expressions
+	if err := environment.ResolveVariables(envConfig.Internal(), environment.ResolveOptions{
+		CLIVars:    cliVars,
+		DotenvVars: dotenvVars,
+		EnvName:    envName,
+	}); err != nil {
+		return nil, nil, "", nil, fmt.Errorf("failed to resolve environment variables: %w", err)
+	}
+
+	// Build component and variable maps from the environment config
+	envComponents := envConfig.Components()
+	componentsMap = make(map[string]string, len(envComponents))
+	variablesMap = make(map[string]map[string]interface{}, len(envComponents))
+	loadedComps = make(map[string]component.Component, len(envComponents))
+
+	compLoader := component.NewLoader()
+
+	for compName, compConfig := range envComponents {
+		var source string
+		if compConfig.Path() != "" {
+			// Local path: resolve relative to the environment file directory
+			source = filepath.Join(envDir, compConfig.Path())
+		} else {
+			// OCI image reference
+			source = compConfig.Image()
+		}
+
+		componentsMap[compName] = source
+		variablesMap[compName] = compConfig.Variables()
+
+		// Load component for the progress table
+		// For local paths, load directly; for OCI references the engine handles pulling
+		if compConfig.Path() != "" {
+			comp, err := compLoader.Load(source)
+			if err != nil {
+				return nil, nil, "", nil, fmt.Errorf("failed to load component %q from %s: %w", compName, source, err)
+			}
+			loadedComps[compName] = comp
+		}
+	}
+
+	return componentsMap, variablesMap, envName, loadedComps, nil
+}
+
+// makeCleanupFunc creates the cleanup function used during shutdown.
+func makeCleanupFunc(provisioningStarted *bool, mgr state.Manager, envName, dc string) func(string) {
+	return func(reason string) {
+		if !*provisioningStarted {
+			return
+		}
+
+		fmt.Println()
+		fmt.Printf("Cleaning up (%s)...\n", reason)
+
+		cleanupCtx := context.Background()
+
+		cleanupEng := createEngine(mgr)
+		_, err := cleanupEng.Destroy(cleanupCtx, engine.DestroyOptions{
+			Environment: envName,
+			Datacenter:  dc,
+			Output:      os.Stdout,
+			DryRun:      false,
+			AutoApprove: true,
+		})
+		if err != nil {
+			_ = CleanupByEnvName(cleanupCtx, envName)
+		}
+
+		if err := mgr.DeleteEnvironment(cleanupCtx, dc, envName); err != nil {
+			fmt.Printf("Warning: failed to delete environment state: %v\n", err)
+		}
+
+		fmt.Println("Cleanup complete.")
+	}
+}
+
+// collectRouteURLs gathers route URLs from the deployed environment state.
+func collectRouteURLs(
+	ctx context.Context,
+	mgr state.Manager,
+	dc, envName string,
+	componentsMap map[string]string,
+	loadedComps map[string]component.Component,
+	portOverride int,
+) map[string]string {
+	routeURLs := make(map[string]string)
+	basePort := portOverride
+	if basePort == 0 {
+		basePort = 8080
+	}
+
+	// Try to get route URLs from state for all components
+	updatedEnv, err := mgr.GetEnvironment(ctx, dc, envName)
+	if err == nil {
+		for compName := range componentsMap {
+			if compState, ok := updatedEnv.Components[compName]; ok {
+				for resName, resState := range compState.Resources {
+					if resState.Type == "route" {
+						if url, ok := resState.Outputs["url"].(string); ok {
+							routeURLs[fmt.Sprintf("%s/%s", compName, resName)] = url
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// If no routes found from state, construct default URLs from loaded components
+	if len(routeURLs) == 0 {
+		for compName, comp := range loadedComps {
+			for _, route := range comp.Routes() {
+				routeURLs[fmt.Sprintf("%s/%s", compName, route.Name())] = fmt.Sprintf("http://localhost:%d", basePort)
+				break
+			}
+		}
+	}
+
+	return routeURLs
 }
 
 // openBrowser is an alias for the shared openBrowserURL utility (in browser.go)

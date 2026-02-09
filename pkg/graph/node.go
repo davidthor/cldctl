@@ -22,6 +22,7 @@ const (
 	NodeTypeDockerBuild   NodeType = "dockerBuild"
 	NodeTypeTask          NodeType = "task"
 	NodeTypeObservability NodeType = "observability"
+	NodeTypePort          NodeType = "port"
 )
 
 // Node represents a resource in the dependency graph.

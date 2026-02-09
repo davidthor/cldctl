@@ -271,3 +271,88 @@ cronjobs:
 		t.Error("expected cronjob to depend on task node")
 	}
 }
+
+func TestBuilder_TaskFromMigration_WithRuntime(t *testing.T) {
+	builder := NewBuilder("test-env", "test-dc")
+
+	comp := loadComponent(t, `
+databases:
+  main:
+    type: postgres:^16
+    migrations:
+      runtime: node:20
+      command: ["npx", "prisma", "migrate", "deploy"]
+`)
+
+	err := builder.AddComponent("my-app", comp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := builder.Build()
+
+	// Should have task node
+	taskNode := g.GetNode("my-app/task/main-migration")
+	if taskNode == nil {
+		t.Fatal("expected task node to exist")
+	}
+
+	// Task should have runtime input
+	if taskNode.Inputs["runtime"] == nil {
+		t.Error("expected task node to have runtime input")
+	}
+
+	// Task should have workingDirectory input
+	if taskNode.Inputs["workingDirectory"] == nil {
+		t.Error("expected task node to have workingDirectory input")
+	}
+
+	// Task should NOT have image input
+	if taskNode.Inputs["image"] != nil {
+		t.Error("expected task node to NOT have image input")
+	}
+
+	// No dockerBuild node should exist (runtime-based, no inline builds)
+	buildNodes := g.GetNodesByType(NodeTypeDockerBuild)
+	if len(buildNodes) != 0 {
+		t.Errorf("expected 0 dockerBuild nodes, got %d", len(buildNodes))
+	}
+}
+
+func TestBuilder_TaskFromMigration_ProcessBased(t *testing.T) {
+	builder := NewBuilder("test-env", "test-dc")
+
+	// Migration with no image and no runtime — bare process execution
+	comp := loadComponent(t, `
+databases:
+  main:
+    type: postgres:^16
+    migrations:
+      command: ["npm", "run", "migrate"]
+`)
+
+	err := builder.AddComponent("my-app", comp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := builder.Build()
+
+	taskNode := g.GetNode("my-app/task/main-migration")
+	if taskNode == nil {
+		t.Fatal("expected task node to exist")
+	}
+
+	// Task should have workingDirectory defaulted to component directory
+	if taskNode.Inputs["workingDirectory"] == nil {
+		t.Error("expected task node to have workingDirectory input")
+	}
+
+	// No image or runtime
+	if taskNode.Inputs["image"] != nil {
+		t.Error("expected task node to NOT have image input")
+	}
+	if taskNode.Inputs["runtime"] != nil {
+		t.Error("expected task node to NOT have runtime input")
+	}
+}

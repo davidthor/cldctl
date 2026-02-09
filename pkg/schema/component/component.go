@@ -19,6 +19,7 @@ type Component interface {
 	Buckets() []Bucket
 	EncryptionKeys() []EncryptionKey
 	SMTP() []SMTPConnection
+	Ports() []Port
 	Deployments() []Deployment
 	Functions() []Function
 	Services() []Service
@@ -66,11 +67,14 @@ type Database interface {
 }
 
 // Migrations represents database migration configuration.
+// Image and Runtime are mutually exclusive. When neither is set, the datacenter
+// decides how to execute (e.g., as a local process for development).
 type Migrations interface {
 	Image() string
-	Build() Build
+	Runtime() Runtime
 	Command() []string
 	Environment() map[string]string
+	WorkingDirectory() string
 }
 
 // Build represents a container build configuration.
@@ -100,6 +104,14 @@ type EncryptionKey interface {
 
 // SMTPConnection represents an SMTP email connection requirement.
 type SMTPConnection interface {
+	Name() string
+	Description() string
+}
+
+// Port represents a dynamic port allocation request.
+// Ports are allocated by the engine or a datacenter hook and can be referenced
+// in environment variables and service ports via ${{ ports.<name>.port }}.
+type Port interface {
 	Name() string
 	Description() string
 }
@@ -179,11 +191,13 @@ type FunctionContainer interface {
 
 // Service represents internal service exposure for deployments.
 // Note: Functions don't need services - routes can point directly to functions.
+// Port() returns the raw string value which may be an integer string ("8080") or
+// an expression ("${{ ports.api.port }}").
 type Service interface {
 	Name() string
 	Deployment() string
 	URL() string
-	Port() int
+	Port() string
 	Protocol() string
 }
 
@@ -195,7 +209,6 @@ type Route interface {
 	Rules() []RouteRule
 	Service() string
 	Function() string
-	Port() int
 }
 
 // RouteRule represents a routing rule.
@@ -246,7 +259,6 @@ type GRPCMethodMatch interface {
 type BackendRef interface {
 	Service() string
 	Function() string
-	Port() int
 	Weight() int
 }
 

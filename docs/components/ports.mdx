@@ -1,0 +1,110 @@
+---
+title: "Ports"
+description: "Declare dynamic port allocations in cldctl components"
+---
+
+# Ports
+
+Declare dynamic port allocations for your component. Ports are allocated by the engine (or a datacenter hook) and exposed via `${{ ports.<name>.port }}` expressions. This is useful for applications that need to listen on a dynamically assigned port rather than a hardcoded one.
+
+<Note>
+  Most applications listen on a fixed port (e.g., 8288 for Inngest, 3000 for Next.js). You only need the `ports` block when you want the platform to assign a port dynamically. Fixed-port applications should just set the port directly on the service.
+</Note>
+
+## Basic Usage
+
+```yaml
+ports:
+  api:
+    description: "Port for the API server"
+
+deployments:
+  api:
+    command: ["node", "server.js"]
+    environment:
+      PORT: ${{ ports.api.port }}
+
+services:
+  api:
+    deployment: api
+    port: ${{ ports.api.port }}
+```
+
+## Boolean Shorthand
+
+If you don't need a description, you can use the boolean shorthand:
+
+```yaml
+ports:
+  api: true
+```
+
+## Properties
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `description` | string | No | Human-readable description of the port's purpose |
+
+## Expressions
+
+Ports expose a single output:
+
+| Expression | Type | Description |
+|-----------|------|-------------|
+| `${{ ports.<name>.port }}` | int | The allocated port number |
+
+## Port Allocation
+
+Ports are resolved in the following priority order:
+
+1. **Environment override**: If the environment file specifies a port number, that value is used directly
+2. **Datacenter hook**: If the datacenter defines a `port` hook, the hook allocates the port
+3. **Built-in fallback**: The engine uses deterministic hashing based on the environment name, component name, and port name to produce a stable port assignment
+
+The deterministic fallback ensures that the same application gets the same port across restarts, avoiding the frustration of changing port numbers in development.
+
+## Environment Overrides
+
+Environments can pin specific port numbers for components:
+
+```yaml
+# environment.yml
+components:
+  my-app:
+    path: ./my-app
+    ports:
+      api: 3000
+      admin: 3001
+```
+
+## Fixed-Port Applications
+
+Applications that listen on a fixed port don't need the `ports` block at all. Just set the port directly:
+
+```yaml
+deployments:
+  inngest:
+    command: ["npx", "inngest-cli@latest", "dev", "--no-discovery"]
+
+services:
+  inngest:
+    deployment: inngest
+    port: 8288
+```
+
+## Expression-Aware Service Ports
+
+Service ports can be either integer literals or expressions:
+
+```yaml
+services:
+  # Fixed port
+  inngest:
+    deployment: inngest
+    port: 8288
+
+  # Dynamic port from ports block
+  api:
+    deployment: api
+    port: ${{ ports.api.port }}
+```

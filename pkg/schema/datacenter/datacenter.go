@@ -92,6 +92,7 @@ type Hooks interface {
 	Secret() []Hook
 	DockerBuild() []Hook
 	Observability() []Hook
+	Port() []Hook
 }
 
 // Hook represents a resource hook.

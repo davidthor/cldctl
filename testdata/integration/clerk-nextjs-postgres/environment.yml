@@ -10,14 +10,14 @@
 
 components:
   # Clerk authentication provider (configuration passthrough)
-  # Source is a file path for local development
+  # Path is relative to this environment.yml
   clerk:
-    source: ../../../examples/components/clerk
+    path: ../../../examples/components/clerk
     variables:
       publishable_key: ${CLERK_PUBLISHABLE_KEY}
       secret_key: ${CLERK_SECRET_KEY}
 
   # The test application with PostgreSQL and Clerk auth
-  # Source is a file path relative to this environment.yml
+  # Path is relative to this environment.yml
   clerk-nextjs-app:
-    source: .
+    path: .

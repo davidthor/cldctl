@@ -1,0 +1,70 @@
+---
+title: "Port Hook"
+description: "Custom port allocation for components"
+---
+
+# Port Hook
+
+The port hook is an **optional** hook that lets datacenters control how dynamic ports are allocated. If no port hook is defined, the engine uses a built-in deterministic allocator that produces stable port assignments based on hashing.
+
+## Basic Usage
+
+```hcl
+environment {
+  port {
+    module "port_alloc" {
+      plugin = "native"
+      build  = "./modules/port-allocator"
+      inputs = {
+        name      = "${environment.name}-${node.component}-${node.name}"
+        base_port = variable.base_port
+      }
+    }
+
+    outputs = {
+      port = module.port_alloc.port
+    }
+  }
+}
+```
+
+## Inputs
+
+Available via `node.inputs`:
+
+| Input | Type | Description |
+|-------|------|-------------|
+| `description` | string | Optional description from the port declaration |
+
+Available via `node.*`:
+
+| Input | Type | Description |
+|-------|------|-------------|
+| `node.name` | string | The port name from the component |
+| `node.component` | string | The component name |
+
+## Required Outputs
+
+| Output | Type | Description |
+|--------|------|-------------|
+| `port` | int | The allocated port number |
+
+## Allocation Priority
+
+When a component declares a `ports` block, the engine resolves each port in this order:
+
+1. **Environment override** (highest priority): If the environment file specifies `ports.<name>: <number>`, that value is used directly—the hook is not called
+2. **Datacenter hook**: If defined, the hook allocates the port
+3. **Built-in fallback**: Deterministic hashing produces a stable port in the range [10000, 60000)
+
+## When to Use
+
+Most datacenters don't need a port hook. The built-in allocator works well for:
+- Local development
+- Single-machine deployments
+- Environments where port conflicts are unlikely
+
+Consider defining a port hook when:
+- You need to allocate ports from a specific range managed by infrastructure
+- You need to register ports with a service mesh or load balancer
+- You want to integrate with an external port management system

@@ -12,6 +12,7 @@ type EvalContext struct {
 	Buckets        map[string]BucketOutputs
 	EncryptionKeys map[string]EncryptionKeyOutputs
 	SMTP           map[string]SMTPOutputs
+	Ports          map[string]PortOutputs
 	Services       map[string]ServiceOutputs
 	Routes         map[string]RouteOutputs
 	Functions      map[string]FunctionOutputs
@@ -66,6 +67,11 @@ type SMTPOutputs struct {
 	Password string
 }
 
+// PortOutputs contains outputs from a provisioned port allocation.
+type PortOutputs struct {
+	Port int // The allocated port number
+}
+
 // ServiceOutputs contains outputs from a provisioned service.
 type ServiceOutputs struct {
 	URL      string
@@ -114,6 +120,7 @@ func NewEvalContext() *EvalContext {
 		Buckets:        make(map[string]BucketOutputs),
 		EncryptionKeys: make(map[string]EncryptionKeyOutputs),
 		SMTP:           make(map[string]SMTPOutputs),
+		Ports:          make(map[string]PortOutputs),
 		Services:       make(map[string]ServiceOutputs),
 		Routes:         make(map[string]RouteOutputs),
 		Functions:      make(map[string]FunctionOutputs),
@@ -221,6 +228,8 @@ func (e *Evaluator) evaluateReference(ref ReferenceSegment, ctx *EvalContext) (i
 		value, err = e.resolveDependency(ref.Path[1:], ctx.Dependencies)
 	case "dependents":
 		value, err = e.resolveDependents(ref.Path[1:], ctx.Dependents)
+	case "ports":
+		value, err = e.resolvePort(ref.Path[1:], ctx.Ports)
 	case "observability":
 		value, err = e.resolveObservability(ref.Path[1:], ctx.Observability)
 	default:
@@ -357,6 +366,27 @@ func (e *Evaluator) resolveEncryptionKey(path []string, encryptionKeys map[strin
 		return ek.KeyBase64, nil
 	default:
 		return nil, fmt.Errorf("unknown encryption key property: %s", prop)
+	}
+}
+
+func (e *Evaluator) resolvePort(path []string, ports map[string]PortOutputs) (interface{}, error) {
+	if len(path) < 2 {
+		return nil, fmt.Errorf("invalid port reference: need name and property")
+	}
+
+	name := path[0]
+	prop := path[1]
+
+	p, ok := ports[name]
+	if !ok {
+		return nil, fmt.Errorf("port %q not found", name)
+	}
+
+	switch prop {
+	case "port":
+		return p.Port, nil
+	default:
+		return nil, fmt.Errorf("unknown port property: %s", prop)
 	}
 }
 

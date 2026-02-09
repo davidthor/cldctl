@@ -2,10 +2,12 @@
 package v1
 
 // SchemaV1 represents the v1 environment schema.
-// Note: Name and Datacenter are not part of the config file - they are provided
-// via CLI flags when creating/updating an environment.
 type SchemaV1 struct {
 	Version string `yaml:"version,omitempty" json:"version,omitempty"`
+
+	// Optional environment name. When provided, used as the default environment
+	// name by commands like `cldctl up -e`. Can be overridden with --name flag.
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
 
 	// Environment-level variables resolved from env vars, dotenv files, or defaults
 	Variables map[string]EnvironmentVariableV1 `yaml:"variables,omitempty" json:"variables,omitempty"`
@@ -39,14 +41,21 @@ type EnvironmentVariableV1 struct {
 }
 
 // ComponentConfigV1 represents a component configuration in v1 schema.
-// The component key (map key) is the registry address (e.g., ghcr.io/org/my-app).
-// Source is either a version tag (e.g., v1.0.0) or a file path (e.g., ./path/to/component).
+// Exactly one of Path or Image must be set.
 type ComponentConfigV1 struct {
-	// Source is the version tag (e.g., "v1.0.0") or file path (e.g., "./path/to/component")
-	Source string `yaml:"source" json:"source"`
+	// Path is a local file path to the component directory or file (e.g., "./path/to/component").
+	// Mutually exclusive with Image.
+	Path string `yaml:"path,omitempty" json:"path,omitempty"`
+
+	// Image is an OCI registry reference for the component (e.g., "ghcr.io/org/my-app:v1.0.0").
+	// Mutually exclusive with Path.
+	Image string `yaml:"image,omitempty" json:"image,omitempty"`
 
 	// Variable values
 	Variables map[string]interface{} `yaml:"variables,omitempty" json:"variables,omitempty"`
+
+	// Port overrides per port name (maps port name to specific port number)
+	Ports map[string]int `yaml:"ports,omitempty" json:"ports,omitempty"`
 
 	// Scaling configuration per deployment
 	Scaling map[string]ScalingConfigV1 `yaml:"scaling,omitempty" json:"scaling,omitempty"`

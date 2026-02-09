@@ -561,6 +561,54 @@ func TestEvaluateWhenCondition_NotNullFalse(t *testing.T) {
 	}
 }
 
+func TestEvaluateWhenCondition_EqualNullTrue(t *testing.T) {
+	sm := newMockStateManager()
+	exec := NewExecutor(sm, newTestRegistry(), DefaultOptions())
+
+	// image is not in the inputs map at all (simulates a runtime-based deployment)
+	inputs := map[string]interface{}{
+		"runtime": map[string]interface{}{"language": "node:22"},
+		"command": []string{"npx", "inngest-cli", "dev"},
+	}
+	when := `node.inputs.image == null`
+
+	result := exec.evaluateWhenCondition(when, inputs)
+	if !result {
+		t.Error("should return true when image is not in inputs (missing key is null)")
+	}
+}
+
+func TestEvaluateWhenCondition_EqualNullFalse(t *testing.T) {
+	sm := newMockStateManager()
+	exec := NewExecutor(sm, newTestRegistry(), DefaultOptions())
+
+	inputs := map[string]interface{}{
+		"image": "nginx:latest",
+	}
+	when := `node.inputs.image == null`
+
+	result := exec.evaluateWhenCondition(when, inputs)
+	if result {
+		t.Error("should return false when image is set")
+	}
+}
+
+func TestEvaluateWhenCondition_EqualNullNilValue(t *testing.T) {
+	sm := newMockStateManager()
+	exec := NewExecutor(sm, newTestRegistry(), DefaultOptions())
+
+	// image is explicitly set to nil (present in map but nil value)
+	inputs := map[string]interface{}{
+		"image": nil,
+	}
+	when := `node.inputs.image == null`
+
+	result := exec.evaluateWhenCondition(when, inputs)
+	if !result {
+		t.Error("should return true when image is explicitly nil")
+	}
+}
+
 func TestEvaluateWhenCondition_HCLExpression(t *testing.T) {
 	sm := newMockStateManager()
 	exec := NewExecutor(sm, newTestRegistry(), DefaultOptions())
@@ -668,5 +716,219 @@ func TestEvaluateErrorMessage_FallbackOnInvalidTemplate(t *testing.T) {
 
 	if result != msg {
 		t.Errorf("expected %q, got %q", msg, result)
+	}
+}
+
+func TestExtractVersionFromType(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    interface{}
+		expected string
+	}{
+		{"simple version", "postgres:16", "16"},
+		{"semver caret", "postgres:^16", "16"},
+		{"semver tilde", "redis:~7", "7"},
+		{"semver range", "postgres:>=14", "14"},
+		{"full semver", "mysql:8.0.32", "8.0.32"},
+		{"no version", "redis", ""},
+		{"empty string", "", ""},
+		{"nil input", nil, ""},
+		{"non-string", 42, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractVersionFromType(tt.input)
+			if result != tt.expected {
+				t.Errorf("extractVersionFromType(%v) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSanitizeResourceName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"simple name", "my-app", "my-app"},
+		{"with slash", "questra/app", "questra-app"},
+		{"multiple slashes", "org/team/app", "org-team-app"},
+		{"dots and underscores", "my_app.v2", "my_app.v2"},
+		{"leading slash", "/app", "app"},
+		{"empty", "", ""},
+		{"alphanumeric", "abc123", "abc123"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := sanitizeResourceName(tt.input)
+			if result != tt.expected {
+				t.Errorf("sanitizeResourceName(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExecute_CascadedFailure_ResolvesExpressions(t *testing.T) {
+	// Test that when a node fails due to a dependency cascade, expressions in its
+	// inputs are still resolved (using outputs from completed dependency nodes).
+	// This ensures `cldctl inspect` shows resolved values even for cascaded failures.
+	sm := newMockStateManager()
+	registry := newTestRegistry()
+
+	g := graph.NewGraph("test-env", "test-dc")
+
+	// Create a database node (will succeed via noop, pre-populate outputs)
+	dbNode := graph.NewNode(graph.NodeTypeDatabase, "my-app", "main")
+	dbNode.SetInput("type", "postgres:16")
+	dbNode.Outputs = map[string]interface{}{
+		"url":      "postgresql://user:pass@localhost:5432/main",
+		"host":     "localhost",
+		"port":     5432,
+		"username": "user",
+		"password": "pass",
+		"database": "main",
+	}
+	dbNode.State = graph.NodeStateCompleted
+	_ = g.AddNode(dbNode)
+
+	// Create a task node that depends on database (will be ActionCreate and fail
+	// because there's no datacenter configured — simulates a real migration failure)
+	taskNode := graph.NewNode(graph.NodeTypeTask, "my-app", "main-migration")
+	taskNode.AddDependency(dbNode.ID)
+	dbNode.AddDependent(taskNode.ID)
+	_ = g.AddNode(taskNode)
+
+	// Create a deployment node that depends on database AND task
+	deployNode := graph.NewNode(graph.NodeTypeDeployment, "my-app", "api")
+	deployNode.SetInput("environment", map[string]string{
+		"DATABASE_URL": "${{ databases.main.url }}",
+		"API_PORT":     "8080",
+	})
+	deployNode.SetInput("command", []string{"node", "api.js"})
+	deployNode.AddDependency(dbNode.ID)
+	dbNode.AddDependent(deployNode.ID)
+	deployNode.AddDependency(taskNode.ID)
+	taskNode.AddDependent(deployNode.ID)
+	_ = g.AddNode(deployNode)
+
+	// Build a plan:
+	// - database is noop (already completed)
+	// - task is create (will fail — no datacenter configured)
+	// - deployment is create (should cascade fail due to task failure)
+	plan := &planner.Plan{
+		Environment: "test-env",
+		Datacenter:  "test-dc",
+		ToCreate:    2, // task + deployment
+		Changes: []*planner.ResourceChange{
+			{Node: dbNode, Action: planner.ActionNoop},
+			{Node: taskNode, Action: planner.ActionCreate},
+			{Node: deployNode, Action: planner.ActionCreate},
+		},
+	}
+
+	opts := DefaultOptions()
+	opts.StopOnError = false // Allow cascade to process remaining nodes
+	exec := NewExecutor(sm, registry, opts)
+
+	result, err := exec.Execute(context.Background(), plan, g)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	// Task should have failed (no datacenter configured)
+	taskResult := result.NodeResults[taskNode.ID]
+	if taskResult == nil {
+		t.Fatal("expected task result to be present")
+	}
+	if taskResult.Success {
+		t.Error("expected task to fail")
+	}
+
+	// Deployment should have failed due to cascade
+	deployResult := result.NodeResults[deployNode.ID]
+	if deployResult == nil {
+		t.Fatal("expected deployment result to be present")
+	}
+	if deployResult.Success {
+		t.Error("expected deployment to fail due to cascaded dependency failure")
+	}
+
+	// Check that the saved state has resolved expressions
+	envState := sm.environments["test-dc/test-env"]
+	if envState == nil {
+		t.Fatal("expected environment state to be saved")
+	}
+
+	compState := envState.Components["my-app"]
+	if compState == nil {
+		t.Fatal("expected component state to be saved")
+	}
+
+	resState := compState.Resources["deployment.api"]
+	if resState == nil {
+		t.Fatal("expected deployment resource state to be saved")
+	}
+
+	// Check status reason includes dependency info
+	if resState.StatusReason == "" {
+		t.Error("expected StatusReason to be set for cascaded failure")
+	}
+	if !contains(resState.StatusReason, taskNode.ID) {
+		t.Errorf("StatusReason should reference failed task, got: %s", resState.StatusReason)
+	}
+
+	// Check that the DATABASE_URL expression was resolved
+	envVars, ok := resState.Inputs["environment"]
+	if !ok {
+		t.Fatal("expected environment input to be present")
+	}
+
+	switch env := envVars.(type) {
+	case map[string]string:
+		dbURL := env["DATABASE_URL"]
+		if dbURL == "${{ databases.main.url }}" {
+			t.Error("DATABASE_URL should be resolved, still contains ${{ }} expression")
+		}
+		if dbURL != "postgresql://user:pass@localhost:5432/main" {
+			t.Errorf("DATABASE_URL = %q, want %q", dbURL, "postgresql://user:pass@localhost:5432/main")
+		}
+
+		apiPort := env["API_PORT"]
+		if apiPort != "8080" {
+			t.Errorf("API_PORT = %q, want %q", apiPort, "8080")
+		}
+	default:
+		t.Errorf("environment input is %T, want map[string]string", envVars)
+	}
+}
+
+func TestBuildDependencyError(t *testing.T) {
+	exec := &Executor{}
+
+	node := graph.NewNode(graph.NodeTypeDeployment, "app", "api")
+	node.AddDependency("app/task/main-migration")
+	node.AddDependency("app/database/main")
+
+	result := &ExecutionResult{
+		NodeResults: map[string]*NodeResult{
+			"app/task/main-migration": {NodeID: "app/task/main-migration", Success: false},
+			"app/database/main":       {NodeID: "app/database/main", Success: true},
+		},
+	}
+
+	err := exec.buildDependencyError(node, result)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	// Should mention the failed dependency
+	errStr := err.Error()
+	if !contains(errStr, "app/task/main-migration") {
+		t.Errorf("error should mention failed dep: %s", errStr)
+	}
+	// Should use singular "dependency" for single failure
+	if !contains(errStr, "dependency") {
+		t.Errorf("error should contain 'dependency': %s", errStr)
 	}
 }

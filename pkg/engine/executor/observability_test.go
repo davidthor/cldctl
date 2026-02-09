@@ -166,7 +166,7 @@ func TestResolveComponentExpressions_ObservabilityEndpoint(t *testing.T) {
 		"OTEL_EXPORTER_OTLP_ENDPOINT": "${{ observability.endpoint }}",
 		"OTEL_EXPORTER_OTLP_PROTOCOL": "${{ observability.protocol }}",
 		"OTEL_RESOURCE_ATTRIBUTES":    "${{ observability.attributes }}",
-		"DATABASE_URL":                "postgres://localhost/mydb",
+		"DATABASE_URL":                "postgresql://localhost/mydb",
 	})
 	_ = g.AddNode(deployNode)
 
@@ -181,7 +181,7 @@ func TestResolveComponentExpressions_ObservabilityEndpoint(t *testing.T) {
 	assertEnvVar(t, env, "OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4318")
 	assertEnvVar(t, env, "OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
 	assertEnvVar(t, env, "OTEL_RESOURCE_ATTRIBUTES", "service.namespace=my-app,deployment.environment=test-env,team=payments")
-	assertEnvVar(t, env, "DATABASE_URL", "postgres://localhost/mydb")
+	assertEnvVar(t, env, "DATABASE_URL", "postgresql://localhost/mydb")
 }
 
 func TestResolveComponentExpressions_ObservabilityNotConfigured(t *testing.T) {
@@ -270,7 +270,7 @@ func TestInjectOTelEnvironmentIfEnabled_InjectTrue(t *testing.T) {
 	_ = g.AddNode(deployNode)
 
 	env := map[string]string{
-		"DATABASE_URL": "postgres://localhost/mydb",
+		"DATABASE_URL": "postgresql://localhost/mydb",
 	}
 	executor.injectOTelEnvironmentIfEnabled(env, deployNode)
 
@@ -287,7 +287,7 @@ func TestInjectOTelEnvironmentIfEnabled_InjectTrue(t *testing.T) {
 	assertContains(t, attrs, "team=backend")
 	assertContains(t, attrs, "service.type=deployment")
 
-	assertEnvVar(t, env, "DATABASE_URL", "postgres://localhost/mydb")
+	assertEnvVar(t, env, "DATABASE_URL", "postgresql://localhost/mydb")
 }
 
 func TestInjectOTelEnvironmentIfEnabled_InjectFalse(t *testing.T) {
@@ -305,7 +305,7 @@ func TestInjectOTelEnvironmentIfEnabled_InjectFalse(t *testing.T) {
 
 	executor := &Executor{graph: g}
 
-	env := map[string]string{"DATABASE_URL": "postgres://localhost/mydb"}
+	env := map[string]string{"DATABASE_URL": "postgresql://localhost/mydb"}
 	executor.injectOTelEnvironmentIfEnabled(env, deployNode)
 
 	otelKeys := []string{

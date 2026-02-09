@@ -39,14 +39,15 @@ variables:
 builds:
   api:
     context: ./api
+  migrations:
+    context: ./database
+    dockerfile: Dockerfile.migrations
 
 databases:
   main:
     type: mysql:^8
     migrations:
-      build:
-        context: ./database
-        dockerfile: Dockerfile.migrations
+      image: ${{ builds.migrations.image }}
       command: ["npm", "run", "migrate:up"]
       environment:
         MIGRATION_TABLE: "_migrations"
@@ -119,26 +120,30 @@ routes:
 
 ### Database Migrations
 
-Configure automatic migrations that run after database provisioning:
+Configure automatic migrations that run after database provisioning. Use a top-level `builds` entry for the migration image:
 
 ```yaml
+builds:
+  migrations:
+    context: ./database
+    dockerfile: Dockerfile.migrations
+
 databases:
   main:
     type: mysql:^8
     migrations:
-      build:
-        context: ./database
-        dockerfile: Dockerfile.migrations
+      image: ${{ builds.migrations.image }}
       command: ["npm", "run", "migrate:up"]
       environment:
         MIGRATION_TABLE: "_migrations"
 ```
 
-The migration container:
-- Builds from the specified Dockerfile
+The migration task:
+- Image is built via a top-level `builds` entry
 - Receives `DATABASE_URL` automatically
 - Runs before deployments start
 - Must exit successfully for deployment to continue
+- Alternatively, use `runtime` instead of `image` for process-based execution without Docker
 
 ### Multi-stage Routing
 

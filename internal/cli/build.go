@@ -131,13 +131,8 @@ If no tag is provided, the artifact is identified by its content digest
 				}
 			}
 
-			// Process database migrations
-			for _, db := range comp.Databases() {
-				if db.Migrations() != nil && db.Migrations().Build() != nil {
-					childRef := fmt.Sprintf("%s-migration-%s%s", baseRef, db.Name(), tagPart)
-					childArtifacts[fmt.Sprintf("migrations/%s", db.Name())] = childRef
-				}
-			}
+			// Note: Migrations no longer have inline builds.
+			// Use top-level `builds` and reference via image: ${{ builds.<key>.image }}
 
 			// Apply artifact tag overrides
 			for _, override := range artifactTags {
@@ -209,18 +204,8 @@ If no tag is provided, the artifact is identified by its content digest
 				}
 			}
 
-			// Collect build info from migrations
-			for _, db := range comp.Databases() {
-				if db.Migrations() != nil && db.Migrations().Build() != nil {
-					key := fmt.Sprintf("migrations/%s", db.Name())
-					childBuilds[key] = buildInfo{
-						context:    db.Migrations().Build().Context(),
-						dockerfile: db.Migrations().Build().Dockerfile(),
-						target:     db.Migrations().Build().Target(),
-						args:       db.Migrations().Build().Args(),
-					}
-				}
-			}
+			// Note: Migrations no longer have inline builds.
+			// Migration images are built via top-level `builds` entries.
 
 			// Build child artifacts (container images)
 			fmt.Println()

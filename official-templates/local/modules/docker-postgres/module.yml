@@ -72,7 +72,7 @@ outputs:
     sensitive: true
     description: Database password
   url:
-    value: "postgres://app:localdevpassword@localhost:${inputs.port}/${inputs.database}"
+    value: "postgresql://app:localdevpassword@localhost:${inputs.port}/${inputs.database}"
     sensitive: true
     description: Full connection URL
   container_id:

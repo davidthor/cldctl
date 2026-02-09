@@ -243,7 +243,6 @@ routes:
               value: /healthz
         backendRefs:
           - service: server
-            port: 3000
 
       # API routes
       - name: api
@@ -253,7 +252,6 @@ routes:
               value: /api
         backendRefs:
           - service: server
-            port: 3000
         timeouts:
           request: 60s
           backendRequest: 55s
@@ -266,7 +264,6 @@ routes:
               value: /graphql
         backendRefs:
           - service: server
-            port: 3000
         timeouts:
           request: 60s
 
@@ -278,7 +275,6 @@ routes:
               value: /rest
         backendRefs:
           - service: server
-            port: 3000
         timeouts:
           request: 60s
 
@@ -290,7 +286,6 @@ routes:
               value: /auth
         backendRefs:
           - service: server
-            port: 3000
 
       # Files endpoint
       - name: files
@@ -300,7 +295,6 @@ routes:
               value: /files
         backendRefs:
           - service: server
-            port: 3000
 
       # Main application (catch-all for UI)
       - name: frontend
@@ -310,4 +304,3 @@ routes:
               value: /
         backendRefs:
           - service: server
-            port: 3000

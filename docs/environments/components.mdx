@@ -9,48 +9,52 @@ Each component in an environment can be configured with variables, scaling rules
 
 ## Basic Structure
 
-Components are keyed by their registry address (for OCI references) or an identifier (for local paths). The `source` field specifies the version tag or file path.
+Each component uses either `path` (for local directories) or `image` (for OCI registry references). These two properties are mutually exclusive.
 
 ```yaml
 components:
-  # OCI component - key is registry address, source is version tag
-  registry.example.com/org/my-app:
-    source: v1.0.0
+  # OCI component - uses image reference
+  web-app:
+    image: ghcr.io/myorg/web-app:v1.0.0
     variables: { ... }
     scaling: { ... }
     functions: { ... }
     environment: { ... }
     routes: { ... }
 
-  # Local component - key is identifier, source is file path
+  # Local component - uses path to local directory
   my-local-app:
-    source: ./path/to/component
+    path: ./path/to/component
     variables: { ... }
 ```
 
 ## Component Source
 
-### OCI Registry
+### OCI Image
 
-Reference a pre-built component artifact. The key is the registry address and `source` is the version tag:
+Reference a pre-built component artifact using the `image` field:
 
 ```yaml
 components:
-  ghcr.io/myorg/my-app:
-    source: v1.0.0
+  web-app:
+    image: ghcr.io/myorg/my-app:v1.0.0
 ```
 
 ### Local Path
 
-For development, use a local identifier as the key and the file path as the source:
+For development, use the `path` field to point to a local component directory:
 
 ```yaml
 components:
   my-app:
-    source: ./services/my-app
+    path: ./services/my-app
 ```
 
-When using a local path (starting with `./`, `../`, or `/`), cldctl invokes the datacenter's `dockerBuild` hook to build images.
+Paths are resolved relative to the environment file's directory. When using a local path, cldctl invokes the datacenter's `dockerBuild` hook to build images.
+
+<Warning>
+  `path` and `image` are mutually exclusive. Setting both on the same component is a validation error.
+</Warning>
 
 ## Variables
 
@@ -58,8 +62,8 @@ Pass values to component variables:
 
 ```yaml
 components:
-  ghcr.io/org/my-app:
-    source: v1.0.0
+  web-app:
+    image: ghcr.io/org/my-app:v1.0.0
     variables:
       log_level: "info"
       api_key: ${{ locals.api_key }}
@@ -68,14 +72,29 @@ components:
 
 Variables defined in the component's `cloud.component.yml` are resolved with these values at deployment time.
 
+## Port Overrides
+
+Pin specific port numbers for a component's dynamic ports:
+
+```yaml
+components:
+  web-app:
+    image: ghcr.io/org/my-app:v1.0.0
+    ports:
+      api: 3000
+      admin: 3001
+```
+
+Port overrides take the highest priority in port allocation, overriding both datacenter hooks and the built-in deterministic allocator. This is useful for local development or when specific ports are required by infrastructure.
+
 ## Environment Variable Overrides
 
 Add or override environment variables for specific deployments:
 
 ```yaml
 components:
-  ghcr.io/org/my-app:
-    source: v1.0.0
+  web-app:
+    image: ghcr.io/org/my-app:v1.0.0
     environment:
       api:                      # Deployment name
         FEATURE_FLAG: "true"
@@ -97,14 +116,14 @@ locals:
   log_level: "debug"
 
 components:
-  ghcr.io/myorg/auth:
-    source: v2.1.0
+  auth:
+    image: ghcr.io/myorg/auth:v2.1.0
     variables:
       jwt_secret: ${{ locals.jwt_secret }}
       log_level: ${{ locals.log_level }}
 
-  ghcr.io/myorg/web-app:
-    source: v1.5.0
+  web-app:
+    image: ghcr.io/myorg/web-app:v1.5.0
     variables:
       stripe_key: ${{ locals.stripe_key }}
       log_level: ${{ locals.log_level }}
@@ -112,8 +131,8 @@ components:
       frontend:
         NEXT_PUBLIC_API_URL: https://api.staging.example.com
 
-  ghcr.io/myorg/worker:
-    source: v1.2.0
+  worker:
+    image: ghcr.io/myorg/worker:v1.2.0
     variables:
       log_level: "info"  # Override for this component
 ```

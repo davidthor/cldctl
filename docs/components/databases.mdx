@@ -24,10 +24,11 @@ databases:
 |----------|------|----------|-------------|
 | `type` | string | Yes | Database type with optional semver constraint |
 | `migrations` | object | No | Migration/seeding configuration |
-| `migrations.build` | object | No | Build config for migration container |
-| `migrations.image` | string | No | Pre-built migration image (alternative to build) |
+| `migrations.image` | string | No | Container image for migrations (e.g., `${{ builds.migrations.image }}`) |
+| `migrations.runtime` | string/object | No | Runtime environment for process-based migrations (mutually exclusive with `image`) |
 | `migrations.command` | string[] | No | Command to run migrations |
 | `migrations.environment` | map | No | Additional environment variables |
+| `migrations.workingDirectory` | string | No | Working directory for process-based execution (defaults to component directory) |
 
 ## Supported Types
 
@@ -86,18 +87,23 @@ deployments:
 
 ## Database Migrations
 
-Configure automatic migrations that run when the database is provisioned:
+Configure automatic migrations that run when the database is provisioned. Migrations support three modes:
 
-### Build from Source
+### Docker Image (via top-level builds)
+
+Use a top-level `builds` entry and reference its image. This is the recommended approach for production deployments:
 
 ```yaml
+builds:
+  migrations:
+    context: ./database/migrations
+    dockerfile: Dockerfile
+
 databases:
   main:
     type: postgres:^15
     migrations:
-      build:
-        context: ./database/migrations
-        dockerfile: Dockerfile
+      image: ${{ builds.migrations.image }}
       command: ["npm", "run", "migrate:up"]
       environment:
         MIGRATION_DIR: /migrations
@@ -114,34 +120,48 @@ databases:
       command: ["flyway", "migrate"]
 ```
 
-### Migration with Database URL
+### Runtime (Process-based)
 
-The database URL is automatically injected:
+Use `runtime` to run migrations as a local process without Docker. Ideal for development:
 
 ```yaml
 databases:
   main:
     type: postgres:^15
     migrations:
-      build:
-        context: ./migrations
+      runtime: node:20
       command: ["npx", "prisma", "migrate", "deploy"]
       environment:
-        # DATABASE_URL is automatically set to the provisioned database
-        PRISMA_SCHEMA: /app/prisma/schema.prisma
+        PRISMA_SCHEMA: ./prisma/schema.prisma
+```
+
+### Bare Process (No Image or Runtime)
+
+When neither `image` nor `runtime` is specified, the datacenter decides how to execute. Locally, this runs as a plain process:
+
+```yaml
+databases:
+  main:
+    type: postgres:^15
+    migrations:
+      command: ["npm", "run", "migrate"]
+      workingDirectory: ./database
 ```
 
 ## Complete Example
 
 ```yaml
-name: my-app
+builds:
+  api:
+    context: ./api
+  migrations:
+    context: ./database
 
 databases:
   main:
     type: postgres:^15
     migrations:
-      build:
-        context: ./database
+      image: ${{ builds.migrations.image }}
       command: ["npm", "run", "migrate"]
 
   cache:
@@ -149,10 +169,6 @@ databases:
 
   analytics:
     type: postgres:^15
-
-builds:
-  api:
-    context: ./api
 
 deployments:
   api:

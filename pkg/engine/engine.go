@@ -122,6 +122,9 @@ type DeployOptions struct {
 	// Variables to pass to components
 	Variables map[string]map[string]interface{}
 
+	// Ports overrides for components (maps component name to port name to port number)
+	Ports map[string]map[string]int
+
 	// Output writer for progress
 	Output io.Writer
 
@@ -136,6 +139,11 @@ type DeployOptions struct {
 
 	// OnProgress is called when resource status changes
 	OnProgress executor.ProgressCallback
+
+	// OnPlan is called after the execution plan is created but before execution
+	// begins. This allows callers to inspect the plan (e.g., to populate a
+	// progress table with real dependency information from the graph).
+	OnPlan func(plan *planner.Plan)
 
 	// ForceUpdate converts Noop actions to Update, used when datacenter config
 	// changes and all resources need re-evaluation against new hooks.
@@ -208,6 +216,11 @@ func (e *Engine) Deploy(ctx context.Context, opts DeployOptions) (*DeployResult,
 
 	result.Plan = plan
 
+	// Notify caller about the plan before execution begins
+	if opts.OnPlan != nil {
+		opts.OnPlan(plan)
+	}
+
 	// Print plan summary
 	if opts.Output != nil {
 		e.printPlanSummary(opts.Output, plan)
@@ -237,6 +250,7 @@ func (e *Engine) Deploy(ctx context.Context, opts DeployOptions) (*DeployResult,
 		DatacenterVariables: dcVars,
 		ComponentSources:    opts.Components,
 		ComponentVariables:  opts.Variables,
+		ComponentPorts:      opts.Ports,
 	}
 
 	exec := executor.NewExecutor(e.stateManager, e.iacRegistry, execOpts)
@@ -655,18 +669,20 @@ func (e *Engine) DeployFromEnvironmentFile(ctx context.Context, envPath string, 
 	if opts.Variables == nil {
 		opts.Variables = make(map[string]map[string]interface{})
 	}
+	if opts.Ports == nil {
+		opts.Ports = make(map[string]map[string]int)
+	}
 
 	for name, compConfig := range env.Components() {
-		// The key is the registry address, source is the version tag or file path
-		// If source starts with "./" or "../" or "/", it's a file path, otherwise it's a version tag
-		source := compConfig.Source()
-		if isFilePath(source) {
-			opts.Components[name] = source
+		if compConfig.Path() != "" {
+			opts.Components[name] = compConfig.Path()
 		} else {
-			// Combine registry address (key) with version tag to get full OCI reference
-			opts.Components[name] = name + ":" + source
+			opts.Components[name] = compConfig.Image()
 		}
 		opts.Variables[name] = compConfig.Variables()
+		if compConfig.Ports() != nil {
+			opts.Ports[name] = compConfig.Ports()
+		}
 	}
 
 	return e.Deploy(ctx, opts)
@@ -1366,11 +1382,6 @@ func evaluateModuleExpression(expr string, dcVars map[string]interface{}, module
 	}
 
 	return expr
-}
-
-// isFilePath checks if a source string is a file path (starts with "./", "../", or "/").
-func isFilePath(source string) bool {
-	return strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../") || strings.HasPrefix(source, "/")
 }
 
 // findComponentFile looks for a component config file in the given directory.

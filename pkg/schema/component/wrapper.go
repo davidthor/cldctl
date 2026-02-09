@@ -61,6 +61,14 @@ func (c *componentWrapper) SMTP() []SMTPConnection {
 	return result
 }
 
+func (c *componentWrapper) Ports() []Port {
+	result := make([]Port, len(c.ic.Ports))
+	for i := range c.ic.Ports {
+		result[i] = &portWrapper{p: &c.ic.Ports[i]}
+	}
+	return result
+}
+
 func (c *componentWrapper) Deployments() []Deployment {
 	result := make([]Deployment, len(c.ic.Deployments))
 	for i := range c.ic.Deployments {
@@ -161,15 +169,16 @@ type migrationsWrapper struct {
 	m *internal.InternalMigrations
 }
 
-func (m *migrationsWrapper) Image() string               { return m.m.Image }
-func (m *migrationsWrapper) Command() []string           { return m.m.Command }
+func (m *migrationsWrapper) Image() string                  { return m.m.Image }
+func (m *migrationsWrapper) Command() []string              { return m.m.Command }
 func (m *migrationsWrapper) Environment() map[string]string { return m.m.Environment }
+func (m *migrationsWrapper) WorkingDirectory() string       { return m.m.WorkingDirectory }
 
-func (m *migrationsWrapper) Build() Build {
-	if m.m.Build == nil {
+func (m *migrationsWrapper) Runtime() Runtime {
+	if m.m.Runtime == nil {
 		return nil
 	}
-	return &buildWrapper{b: m.m.Build}
+	return &runtimeWrapper{rt: m.m.Runtime}
 }
 
 // Build wrapper
@@ -221,6 +230,14 @@ type smtpWrapper struct {
 
 func (s *smtpWrapper) Name() string        { return s.s.Name }
 func (s *smtpWrapper) Description() string { return s.s.Description }
+
+// Port wrapper
+type portWrapper struct {
+	p *internal.InternalPort
+}
+
+func (p *portWrapper) Name() string        { return p.p.Name }
+func (p *portWrapper) Description() string { return p.p.Description }
 
 // Deployment wrapper
 type deploymentWrapper struct {
@@ -358,7 +375,7 @@ type serviceWrapper struct {
 func (s *serviceWrapper) Name() string       { return s.svc.Name }
 func (s *serviceWrapper) Deployment() string { return s.svc.Deployment }
 func (s *serviceWrapper) URL() string        { return s.svc.URL }
-func (s *serviceWrapper) Port() int          { return s.svc.Port }
+func (s *serviceWrapper) Port() string       { return s.svc.Port.Raw }
 func (s *serviceWrapper) Protocol() string   { return s.svc.Protocol }
 
 // Route wrapper
@@ -371,7 +388,6 @@ func (r *routeWrapper) Type() string     { return r.rt.Type }
 func (r *routeWrapper) Internal() bool   { return r.rt.Internal }
 func (r *routeWrapper) Service() string  { return r.rt.Service }
 func (r *routeWrapper) Function() string { return r.rt.Function }
-func (r *routeWrapper) Port() int        { return r.rt.Port }
 
 func (r *routeWrapper) Rules() []RouteRule {
 	result := make([]RouteRule, len(r.rt.Rules))
@@ -497,7 +513,6 @@ type backendRefWrapper struct {
 
 func (b *backendRefWrapper) Service() string  { return b.ref.Service }
 func (b *backendRefWrapper) Function() string { return b.ref.Function }
-func (b *backendRefWrapper) Port() int        { return b.ref.Port }
 func (b *backendRefWrapper) Weight() int      { return b.ref.Weight }
 
 // RouteFilter wrapper

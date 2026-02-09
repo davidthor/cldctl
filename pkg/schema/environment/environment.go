@@ -6,9 +6,11 @@ import (
 )
 
 // Environment represents a parsed and validated environment configuration.
-// Note: Name and Datacenter are not part of the config - they are provided via CLI
-// when creating/updating an environment.
 type Environment interface {
+	// Name returns the optional environment name from the config file.
+	// Returns empty string if not specified.
+	Name() string
+
 	// Variables returns environment-level variable declarations
 	Variables() map[string]EnvironmentVariable
 
@@ -50,14 +52,19 @@ type EnvironmentVariable interface {
 }
 
 // ComponentConfig represents a component's configuration within an environment.
-// The component key (map key) is the registry address (e.g., ghcr.io/org/my-app).
-// Source is either a version tag (e.g., v1.0.0) or a file path (e.g., ./path/to/component).
+// Exactly one of Path or Image will be set.
 type ComponentConfig interface {
-	// Source returns the version tag (e.g., "v1.0.0") or file path (e.g., "./path/to/component")
-	Source() string
+	// Path returns the local file path to the component, or empty string if using an image.
+	Path() string
+
+	// Image returns the OCI registry reference, or empty string if using a path.
+	Image() string
 
 	// Variable values
 	Variables() map[string]interface{}
+
+	// Port overrides (maps port name to specific port number)
+	Ports() map[string]int
 
 	// Scaling configurations per deployment
 	Scaling() map[string]ScalingConfig

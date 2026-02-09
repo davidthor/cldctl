@@ -73,11 +73,11 @@ func TestParseEnvFile_EmptyValue(t *testing.T) {
 }
 
 func TestParseEnvFile_ValueWithEquals(t *testing.T) {
-	content := []byte(`DATABASE_URL=postgres://user:pass@host:5432/db?sslmode=require`)
+	content := []byte(`DATABASE_URL=postgresql://user:pass@host:5432/db?sslmode=require`)
 	vars := make(map[string]string)
 	err := parseEnvFile(content, vars)
 	require.NoError(t, err)
-	assert.Equal(t, "postgres://user:pass@host:5432/db?sslmode=require", vars["DATABASE_URL"])
+	assert.Equal(t, "postgresql://user:pass@host:5432/db?sslmode=require", vars["DATABASE_URL"])
 }
 
 func TestLoad_BasicChain(t *testing.T) {

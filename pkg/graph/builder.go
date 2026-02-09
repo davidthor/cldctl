@@ -64,25 +64,38 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 			if db.Migrations().Image() != "" {
 				migNode.SetInput("image", db.Migrations().Image())
 			}
+			if db.Migrations().Runtime() != nil {
+				rt := db.Migrations().Runtime()
+				runtimeMap := map[string]interface{}{
+					"language": rt.Language(),
+				}
+				if rt.OS() != "" {
+					runtimeMap["os"] = rt.OS()
+				}
+				if rt.Arch() != "" {
+					runtimeMap["arch"] = rt.Arch()
+				}
+				if len(rt.Packages()) > 0 {
+					runtimeMap["packages"] = rt.Packages()
+				}
+				if len(rt.Setup()) > 0 {
+					runtimeMap["setup"] = rt.Setup()
+				}
+				migNode.SetInput("runtime", runtimeMap)
+			}
 			migNode.SetInput("command", db.Migrations().Command())
 			migNode.SetInput("environment", db.Migrations().Environment())
+
+			// Set working directory: explicit value or default to component directory
+			if db.Migrations().WorkingDirectory() != "" {
+				migNode.SetInput("workingDirectory", resolveBuildContext(compDir, db.Migrations().WorkingDirectory()))
+			} else {
+				migNode.SetInput("workingDirectory", compDir)
+			}
 
 			// Migration depends on database
 			migNode.AddDependency(node.ID)
 			node.AddDependent(migNode.ID)
-
-			// If migrations have a build, add docker build node
-			if db.Migrations().Build() != nil {
-				buildNode := NewNode(NodeTypeDockerBuild, componentName, db.Name()+"-migration-build")
-				buildNode.SetInput("context", resolveBuildContext(compDir, db.Migrations().Build().Context()))
-				buildNode.SetInput("dockerfile", resolveBuildContext(compDir, db.Migrations().Build().Dockerfile()))
-				buildNode.SetInput("args", db.Migrations().Build().Args())
-
-				migNode.AddDependency(buildNode.ID)
-				buildNode.AddDependent(migNode.ID)
-
-				_ = b.graph.AddNode(buildNode)
-			}
 
 			_ = b.graph.AddNode(migNode)
 		}
@@ -107,6 +120,14 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		node.SetInput("type", bucket.Type())
 		node.SetInput("versioning", bucket.Versioning())
 		node.SetInput("public", bucket.Public())
+
+		_ = b.graph.AddNode(node)
+	}
+
+	// Add ports (no dependencies - they are depended on by workloads/services via expressions)
+	for _, p := range comp.Ports() {
+		node := NewNode(NodeTypePort, componentName, p.Name())
+		node.SetInput("description", p.Description())
 
 		_ = b.graph.AddNode(node)
 	}
@@ -365,6 +386,18 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		}
 	}
 
+	// Scan service port fields for expression dependencies (e.g., ${{ ports.api.port }})
+	for _, svc := range comp.Services() {
+		nodeID := fmt.Sprintf("%s/%s/%s", componentName, NodeTypeService, svc.Name())
+		node := b.graph.GetNode(nodeID)
+		if node == nil {
+			continue
+		}
+		if svc.Port() != "" {
+			b.addEnvDependencies(componentName, node, svc.Port())
+		}
+	}
+
 	return nil
 }
 
@@ -442,6 +475,8 @@ func (b *Builder) resolveDepReference(componentName, ref string) string {
 		nodeType = NodeTypeFunction
 	case "builds":
 		nodeType = NodeTypeDockerBuild
+	case "ports":
+		nodeType = NodeTypePort
 	case "observability":
 		// Observability is a singleton per component, always named "observability"
 		return fmt.Sprintf("%s/%s/%s", componentName, NodeTypeObservability, "observability")

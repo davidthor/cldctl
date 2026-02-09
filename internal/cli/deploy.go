@@ -12,6 +12,7 @@ import (
 
 	"github.com/davidthor/cldctl/pkg/engine"
 	"github.com/davidthor/cldctl/pkg/engine/executor"
+	"github.com/davidthor/cldctl/pkg/engine/planner"
 	"github.com/davidthor/cldctl/pkg/oci"
 	"github.com/davidthor/cldctl/pkg/registry"
 	"github.com/davidthor/cldctl/pkg/schema/component"
@@ -357,19 +358,14 @@ Examples:
 
 			fmt.Println()
 
-			// Build progress table from component resources
+			// Build progress table (populated from the real plan via OnPlan callback)
 			progress := NewProgressTable(os.Stdout)
 
-			// Add dependency component resources to progress table first
-			for _, dep := range deps {
-				addComponentToProgressTable(progress, dep.Name, dep.Component)
+			// OnPlan populates the progress table from the real execution plan
+			onPlan := func(plan *planner.Plan) {
+				populateProgressFromPlan(progress, plan)
+				progress.PrintInitial()
 			}
-
-			// Build dependency graph for progress display
-			addComponentToProgressTable(progress, componentName, comp)
-
-			// Print initial progress table
-			progress.PrintInitial()
 
 			// Create progress callback
 			onProgress := func(event executor.ProgressEvent) {
@@ -406,7 +402,12 @@ Examples:
 				AutoApprove: autoApprove,
 				Parallelism: defaultParallelism,
 				OnProgress:  onProgress,
+				OnPlan:      onPlan,
 			})
+			// Always print the final progress summary so the user sees a clear
+			// success/failure report with resource counts and error details.
+			progress.PrintFinalSummary()
+
 			if err != nil {
 				return fmt.Errorf("deployment failed: %w", err)
 			}
@@ -417,9 +418,6 @@ Examples:
 				}
 				return fmt.Errorf("deployment failed")
 			}
-
-			// Print final summary
-			progress.PrintFinalSummary()
 
 			return nil
 		},
@@ -902,39 +900,12 @@ func parseVarFile(data []byte, vars map[string]string) error {
 	return nil
 }
 
-// addComponentToProgressTable adds a component's resources to the progress table.
-// This is shared between the deploy and up commands for both primary and dependency components.
-func addComponentToProgressTable(progress *ProgressTable, compName string, comp component.Component) {
-	var dbDeps []string
-	for _, db := range comp.Databases() {
-		id := fmt.Sprintf("%s/database/%s", compName, db.Name())
-		progress.AddResource(id, db.Name(), "database", compName, nil)
-		dbDeps = append(dbDeps, id)
-	}
-
-	for _, bucket := range comp.Buckets() {
-		id := fmt.Sprintf("%s/bucket/%s", compName, bucket.Name())
-		progress.AddResource(id, bucket.Name(), "bucket", compName, nil)
-	}
-
-	for _, fn := range comp.Functions() {
-		id := fmt.Sprintf("%s/function/%s", compName, fn.Name())
-		progress.AddResource(id, fn.Name(), "function", compName, dbDeps)
-	}
-
-	for _, depl := range comp.Deployments() {
-		id := fmt.Sprintf("%s/deployment/%s", compName, depl.Name())
-		progress.AddResource(id, depl.Name(), "deployment", compName, dbDeps)
-	}
-
-	for _, svc := range comp.Services() {
-		id := fmt.Sprintf("%s/service/%s", compName, svc.Name())
-		progress.AddResource(id, svc.Name(), "service", compName, nil)
-	}
-
-	for _, route := range comp.Routes() {
-		id := fmt.Sprintf("%s/route/%s", compName, route.Name())
-		progress.AddResource(id, route.Name(), "route", compName, nil)
+// populateProgressFromPlan populates a progress table from the real execution plan,
+// using the actual dependency graph instead of a simplified approximation.
+func populateProgressFromPlan(progress *ProgressTable, plan *planner.Plan) {
+	for _, change := range plan.Changes {
+		node := change.Node
+		progress.AddResource(node.ID, node.Name, string(node.Type), node.Component, node.DependsOn)
 	}
 }
 

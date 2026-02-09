@@ -34,6 +34,7 @@ func (e *environmentWrapper) Components() map[string]ComponentConfig {
 	return result
 }
 
+func (e *environmentWrapper) Name() string                              { return e.env.Name }
 func (e *environmentWrapper) SchemaVersion() string                     { return e.env.SourceVersion }
 func (e *environmentWrapper) SourcePath() string                        { return e.env.SourcePath }
 func (e *environmentWrapper) Internal() *internal.InternalEnvironment { return e.env }
@@ -43,8 +44,10 @@ type componentConfigWrapper struct {
 	c *internal.InternalComponentConfig
 }
 
-func (c *componentConfigWrapper) Source() string                          { return c.c.Source }
+func (c *componentConfigWrapper) Path() string                            { return c.c.Path }
+func (c *componentConfigWrapper) Image() string                           { return c.c.Image }
 func (c *componentConfigWrapper) Variables() map[string]interface{}       { return c.c.Variables }
+func (c *componentConfigWrapper) Ports() map[string]int                   { return c.c.Ports }
 func (c *componentConfigWrapper) Environment() map[string]map[string]string { return c.c.Environment }
 
 func (c *componentConfigWrapper) Scaling() map[string]ScalingConfig {

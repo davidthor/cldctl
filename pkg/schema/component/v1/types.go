@@ -13,6 +13,7 @@ type SchemaV1 struct {
 	Buckets        map[string]BucketV1        `yaml:"buckets,omitempty" json:"buckets,omitempty"`
 	EncryptionKeys map[string]EncryptionKeyV1 `yaml:"encryptionKeys,omitempty" json:"encryptionKeys,omitempty"`
 	SMTP           map[string]SMTPV1          `yaml:"smtp,omitempty" json:"smtp,omitempty"`
+	Ports          map[string]PortV1          `yaml:"ports,omitempty" json:"ports,omitempty"`
 	Deployments    map[string]DeploymentV1    `yaml:"deployments,omitempty" json:"deployments,omitempty"`
 	Functions      map[string]FunctionV1      `yaml:"functions,omitempty" json:"functions,omitempty"`
 	Services       map[string]ServiceV1       `yaml:"services,omitempty" json:"services,omitempty"`
@@ -65,11 +66,14 @@ type DatabaseV1 struct {
 }
 
 // MigrationsV1 represents migrations in the v1 schema.
+// Image and runtime are mutually exclusive. When neither is set, the datacenter
+// decides how to execute (e.g., as a local process for development).
 type MigrationsV1 struct {
-	Build       *BuildV1          `yaml:"build,omitempty" json:"build,omitempty"`
-	Image       string            `yaml:"image,omitempty" json:"image,omitempty"`
-	Command     []string          `yaml:"command,omitempty" json:"command,omitempty"`
-	Environment map[string]string `yaml:"environment,omitempty" json:"environment,omitempty"`
+	Image            string            `yaml:"image,omitempty" json:"image,omitempty"`
+	Runtime          *RuntimeV1        `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	Command          []string          `yaml:"command,omitempty" json:"command,omitempty"`
+	Environment      map[string]string `yaml:"environment,omitempty" json:"environment,omitempty"`
+	WorkingDirectory string            `yaml:"workingDirectory,omitempty" json:"workingDirectory,omitempty"`
 }
 
 // BuildV1 represents a build configuration in the v1 schema.
@@ -102,8 +106,38 @@ type SMTPV1 struct {
 	Description string `yaml:"description,omitempty" json:"description,omitempty"` // Optional description
 }
 
+// PortV1 represents a dynamic port allocation in the v1 schema.
+// Ports are allocated by the engine (or a datacenter hook) and can be referenced
+// in environment variables and service ports via ${{ ports.<name>.port }}.
+// Supports boolean shorthand (true) for minimal declarations.
+type PortV1 struct {
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+}
+
+// UnmarshalYAML supports both boolean shorthand (true) and full object form.
+func (p *PortV1) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	// Try boolean shorthand first
+	var b bool
+	if err := unmarshal(&b); err == nil {
+		if !b {
+			return fmt.Errorf("port must be true or an object (false is not valid)")
+		}
+		// true creates an empty PortV1
+		return nil
+	}
+
+	// Fall back to full object form
+	type rawPort PortV1
+	var raw rawPort
+	if err := unmarshal(&raw); err != nil {
+		return fmt.Errorf("port must be true or an object with optional description: %w", err)
+	}
+	*p = PortV1(raw)
+	return nil
+}
+
 // DeploymentV1 represents a deployment in the v1 schema.
-// Both image and build are optional. When neither is set, the datacenter decides
+// Image and runtime are optional. When neither is set, the datacenter decides
 // how to execute the workload (e.g., as a host process for local development).
 type DeploymentV1 struct {
 	Image            string            `yaml:"image,omitempty" json:"image,omitempty"`
@@ -191,11 +225,50 @@ type FunctionContainerV1 struct {
 // ServiceV1 represents a service in the v1 schema.
 // Services expose deployments for internal communication.
 // Note: Functions don't need services - routes can point directly to functions.
+// Port supports both integer literals (8080) and expression strings (${{ ports.api.port }}).
 type ServiceV1 struct {
-	Deployment string `yaml:"deployment" json:"deployment"`
-	URL        string `yaml:"url,omitempty" json:"url,omitempty"`
-	Port       int    `yaml:"port,omitempty" json:"port,omitempty"`
-	Protocol   string `yaml:"protocol,omitempty" json:"protocol,omitempty"`
+	Deployment string      `yaml:"deployment" json:"deployment"`
+	URL        string      `yaml:"url,omitempty" json:"url,omitempty"`
+	Port       interface{} `yaml:"-" json:"-"` // int or string; handled by custom UnmarshalYAML
+	PortRaw    interface{} `yaml:"port,omitempty" json:"port,omitempty"` // raw YAML value
+	Protocol   string      `yaml:"protocol,omitempty" json:"protocol,omitempty"`
+}
+
+// UnmarshalYAML handles port being either an int or a string expression.
+func (s *ServiceV1) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	type rawService struct {
+		Deployment string      `yaml:"deployment"`
+		URL        string      `yaml:"url,omitempty"`
+		Port       interface{} `yaml:"port,omitempty"`
+		Protocol   string      `yaml:"protocol,omitempty"`
+	}
+	var raw rawService
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+	s.Deployment = raw.Deployment
+	s.URL = raw.URL
+	s.Protocol = raw.Protocol
+	s.PortRaw = raw.Port
+	s.Port = raw.Port
+	return nil
+}
+
+// PortAsString returns the port value as a string (for expression handling).
+func (s *ServiceV1) PortAsString() string {
+	if s.Port == nil {
+		return ""
+	}
+	switch v := s.Port.(type) {
+	case int:
+		return fmt.Sprintf("%d", v)
+	case float64:
+		return fmt.Sprintf("%d", int(v))
+	case string:
+		return v
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 // RouteV1 represents a route in the v1 schema.
@@ -207,7 +280,6 @@ type RouteV1 struct {
 	// Simplified form
 	Service  string `yaml:"service,omitempty" json:"service,omitempty"`
 	Function string `yaml:"function,omitempty" json:"function,omitempty"`
-	Port     int    `yaml:"port,omitempty" json:"port,omitempty"`
 }
 
 // RouteRuleV1 represents a route rule in the v1 schema.
@@ -260,7 +332,6 @@ type GRPCMethodMatchV1 struct {
 type BackendRefV1 struct {
 	Service  string `yaml:"service,omitempty" json:"service,omitempty"`
 	Function string `yaml:"function,omitempty" json:"function,omitempty"`
-	Port     int    `yaml:"port,omitempty" json:"port,omitempty"`
 	Weight   int    `yaml:"weight,omitempty" json:"weight,omitempty"`
 }
 
@@ -311,7 +382,6 @@ type PathModifierV1 struct {
 // MirrorV1 represents request mirroring in the v1 schema.
 type MirrorV1 struct {
 	Service string `yaml:"service" json:"service"`
-	Port    int    `yaml:"port,omitempty" json:"port,omitempty"`
 }
 
 // TimeoutsV1 represents timeout configuration in the v1 schema.

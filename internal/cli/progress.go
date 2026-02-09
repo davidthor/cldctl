@@ -264,12 +264,12 @@ func (p *ProgressTable) getDependencyNames(depIDs []string) []string {
 	names := make([]string, 0, len(depIDs))
 	for _, depID := range depIDs {
 		if res, ok := p.resources[depID]; ok {
-			names = append(names, res.Name)
+			names = append(names, res.Type+"/"+res.Name)
 		} else {
-			// Extract name from ID (format: component/type/name)
+			// Extract type/name from ID (format: component/type/name)
 			parts := strings.Split(depID, "/")
 			if len(parts) >= 3 {
-				names = append(names, parts[len(parts)-1])
+				names = append(names, parts[len(parts)-2]+"/"+parts[len(parts)-1])
 			} else {
 				names = append(names, depID)
 			}
@@ -301,15 +301,32 @@ func (p *ProgressTable) PrintFinalSummary() {
 	fmt.Fprintln(p.writer, strings.Repeat("─", 80))
 
 	if failed > 0 {
-		fmt.Fprintf(p.writer, "Deployment completed with errors in %s\n", elapsed)
-		fmt.Fprintf(p.writer, "  ● %d succeeded, ✗ %d failed, ◌ %d skipped\n", completed, failed, skipped)
+		fmt.Fprintf(p.writer, "Deployment FAILED (%s)\n", elapsed)
+		fmt.Fprintf(p.writer, "  ● %d succeeded  ✗ %d failed  ◌ %d skipped\n", completed, failed, skipped)
 
-		// List failed resources with detailed information
-		fmt.Fprintln(p.writer, "\nFailed resources:")
+		// Separate root-cause failures from cascaded/stopped failures
+		var rootFailures, cascadedFailures []*ResourceInfo
 		for _, id := range p.order {
 			res := p.resources[id]
-			if res.Status == StatusFailed {
-				fmt.Fprintf(p.writer, "\n  ✗ %s %q", res.Type, res.Name)
+			if res.Status != StatusFailed {
+				continue
+			}
+			errMsg := ""
+			if res.Error != nil {
+				errMsg = res.Error.Error()
+			}
+			if strings.HasPrefix(errMsg, "dependency ") || strings.HasPrefix(errMsg, "deployment stopped:") || errMsg == "cancelled" {
+				cascadedFailures = append(cascadedFailures, res)
+			} else {
+				rootFailures = append(rootFailures, res)
+			}
+		}
+
+		// Show root-cause failures first with full detail
+		if len(rootFailures) > 0 {
+			fmt.Fprintln(p.writer, "\nErrors:")
+			for _, res := range rootFailures {
+				fmt.Fprintf(p.writer, "  ✗ %s/%s", res.Type, res.Name)
 				if res.Error != nil {
 					fmt.Fprintf(p.writer, ": %v", res.Error)
 				}
@@ -317,8 +334,7 @@ func (p *ProgressTable) PrintFinalSummary() {
 
 				// Show inferred configuration if available
 				if len(res.InferredConfig) > 0 {
-					fmt.Fprintln(p.writer, "\n    Inferred configuration:")
-					// Sort keys for consistent output
+					fmt.Fprintln(p.writer, "    Inferred configuration:")
 					keys := make([]string, 0, len(res.InferredConfig))
 					for k := range res.InferredConfig {
 						keys = append(keys, k)
@@ -334,9 +350,8 @@ func (p *ProgressTable) PrintFinalSummary() {
 
 				// Show logs if available
 				if res.Logs != "" {
-					fmt.Fprintln(p.writer, "\n    Output:")
+					fmt.Fprintln(p.writer, "    Output:")
 					lines := strings.Split(strings.TrimSpace(res.Logs), "\n")
-					// Limit to last 30 lines to avoid overwhelming output
 					startIdx := 0
 					if len(lines) > 30 {
 						startIdx = len(lines) - 30
@@ -348,6 +363,13 @@ func (p *ProgressTable) PrintFinalSummary() {
 				}
 			}
 		}
+
+		// Show cascaded failures as a compact list
+		if len(cascadedFailures) > 0 {
+			fmt.Fprintf(p.writer, "\nSkipped due to above errors: %d resources\n", len(cascadedFailures))
+		}
+
+		fmt.Fprintln(p.writer)
 	} else {
 		fmt.Fprintf(p.writer, "Deployment completed successfully in %s\n", elapsed)
 		fmt.Fprintf(p.writer, "  ● %d resources deployed\n", completed)

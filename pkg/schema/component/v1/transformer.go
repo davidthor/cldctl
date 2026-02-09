@@ -54,6 +54,12 @@ func (t *Transformer) Transform(v1 *SchemaV1) (*internal.InternalComponent, erro
 		ic.SMTP = append(ic.SMTP, is)
 	}
 
+	// Transform ports
+	for name, p := range v1.Ports {
+		ip := t.transformPort(name, p)
+		ic.Ports = append(ic.Ports, ip)
+	}
+
 	// Transform deployments
 	for name, dep := range v1.Deployments {
 		idep, err := t.transformDeployment(name, dep)
@@ -133,13 +139,14 @@ func (t *Transformer) transformDatabase(name string, db DatabaseV1) (internal.In
 
 	if db.Migrations != nil {
 		idb.Migrations = &internal.InternalMigrations{
-			Image:       db.Migrations.Image,
-			Command:     db.Migrations.Command,
-			Environment: db.Migrations.Environment,
+			Image:            db.Migrations.Image,
+			Command:          db.Migrations.Command,
+			Environment:      db.Migrations.Environment,
+			WorkingDirectory: db.Migrations.WorkingDirectory,
 		}
 
-		if db.Migrations.Build != nil {
-			idb.Migrations.Build = t.transformBuild(db.Migrations.Build)
+		if db.Migrations.Runtime != nil {
+			idb.Migrations.Runtime = t.transformRuntime(db.Migrations.Runtime)
 		}
 	}
 
@@ -187,6 +194,13 @@ func (t *Transformer) transformSMTP(name string, s SMTPV1) internal.InternalSMTP
 	return internal.InternalSMTP{
 		Name:        name,
 		Description: s.Description,
+	}
+}
+
+func (t *Transformer) transformPort(name string, p PortV1) internal.InternalPort {
+	return internal.InternalPort{
+		Name:        name,
+		Description: p.Description,
 	}
 }
 
@@ -283,7 +297,7 @@ func (t *Transformer) transformService(name string, svc ServiceV1) internal.Inte
 		Name:       name,
 		Deployment: svc.Deployment,
 		URL:        svc.URL,
-		Port:       svc.Port,
+		Port:       internal.NewExpression(svc.PortAsString()),
 		Protocol:   defaultString(svc.Protocol, "http"),
 	}
 }
@@ -295,7 +309,6 @@ func (t *Transformer) transformRoute(name string, rt RouteV1) (internal.Internal
 		Internal: rt.Internal,
 		Service:  rt.Service,
 		Function: rt.Function,
-		Port:     rt.Port,
 	}
 
 	// Transform rules
@@ -359,7 +372,6 @@ func (t *Transformer) transformRouteRule(rule RouteRuleV1) (internal.InternalRou
 		irule.BackendRefs = append(irule.BackendRefs, internal.InternalBackendRef{
 			Service:  ref.Service,
 			Function: ref.Function,
-			Port:     ref.Port,
 			Weight:   defaultInt(ref.Weight, 1),
 		})
 	}
@@ -399,7 +411,6 @@ func (t *Transformer) transformRouteRule(rule RouteRuleV1) (internal.InternalRou
 		if filter.RequestMirror != nil {
 			ifilter.RequestMirror = &internal.InternalMirror{
 				Service: filter.RequestMirror.Service,
-				Port:    filter.RequestMirror.Port,
 			}
 		}
 

@@ -34,7 +34,7 @@ environment {
     }
 
     outputs {
-      url = "postgres://localhost:5432/db"
+      url = "postgresql://localhost:5432/db"
     }
   }
 

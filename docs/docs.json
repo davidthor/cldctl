@@ -29,6 +29,7 @@
               "components/buckets",
               "components/deployments",
               "components/functions",
+              "components/ports",
               "components/services",
               "components/routes",
               "components/cronjobs",
@@ -55,7 +56,8 @@
                   "datacenters/bucket-hook",
                   "datacenters/docker-build-hook",
                   "datacenters/cronjob-hook",
-                  "datacenters/observability-hook"
+                  "datacenters/observability-hook",
+                  "datacenters/port-hook"
                 ]
               },
               "datacenters/error-handling",

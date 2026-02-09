@@ -20,7 +20,7 @@ locals:
 
 components:
   my-app:
-    component: ./                    # Local source
+    path: ./                    # Local source
     variables:
       log_level: ${{ locals.log_level }}
     scaling:
@@ -51,7 +51,7 @@ locals:
 
 components:
   my-app:
-    component: ghcr.io/myorg/my-app:pr-123
+    image: ghcr.io/myorg/my-app:pr-123
     variables:
       log_level: ${{ locals.log_level }}
     scaling:
@@ -105,7 +105,7 @@ locals:
 
 components:
   auth-service:
-    component: ghcr.io/myorg/auth:v2.1.0
+    image: ghcr.io/myorg/auth:v2.1.0
     variables:
       jwt_secret: ${{ locals.jwt_secret }}
       log_level: ${{ locals.log_level }}
@@ -122,7 +122,7 @@ components:
           enabled: true
 
   web-app:
-    component: ghcr.io/myorg/web-app:v1.5.0
+    image: ghcr.io/myorg/web-app:v1.5.0
     variables:
       stripe_key: ${{ locals.stripe_key }}
       log_level: ${{ locals.log_level }}
@@ -144,7 +144,7 @@ components:
           enabled: true
 
   worker:
-    component: ghcr.io/myorg/worker:v1.2.0
+    image: ghcr.io/myorg/worker:v1.2.0
     variables:
       log_level: "info"
     scaling:
@@ -175,7 +175,7 @@ locals:
 
 components:
   auth-service:
-    component: ghcr.io/myorg/auth:v2.1.0
+    image: ghcr.io/myorg/auth:v2.1.0
     variables:
       jwt_secret: ${{ locals.jwt_secret }}
       log_level: ${{ locals.log_level }}
@@ -194,7 +194,7 @@ components:
           secretName: production-auth-tls
 
   web-app:
-    component: ghcr.io/myorg/web-app:v1.5.0
+    image: ghcr.io/myorg/web-app:v1.5.0
     variables:
       stripe_key: ${{ locals.stripe_key }}
       log_level: ${{ locals.log_level }}
@@ -219,7 +219,7 @@ components:
           secretName: production-app-tls
 
   worker:
-    component: ghcr.io/myorg/worker:v1.2.0
+    image: ghcr.io/myorg/worker:v1.2.0
     variables:
       log_level: "warn"
       sentry_dsn: ${{ locals.sentry_dsn }}
@@ -254,7 +254,7 @@ locals:
 
 components:
   web-app:
-    component: ghcr.io/myorg/web-app:v1.5.0
+    image: ghcr.io/myorg/web-app:v1.5.0
     variables:
       tenant_id: ${{ locals.tenant_id }}
     scaling:
@@ -279,14 +279,14 @@ datacenter: aws-production
 components:
   # Stable version (90% traffic)
   web-app-stable:
-    component: ghcr.io/myorg/web-app:v1.5.0
+    image: ghcr.io/myorg/web-app:v1.5.0
     scaling:
       api:
         replicas: 9
 
   # Canary version (10% traffic)  
   web-app-canary:
-    component: ghcr.io/myorg/web-app:v1.6.0-rc1
+    image: ghcr.io/myorg/web-app:v1.6.0-rc1
     scaling:
       api:
         replicas: 1
@@ -334,8 +334,8 @@ locals:
   base_domain: staging.example.com
 
 components:
-  ghcr.io/myorg/web-app:
-    source: v1.5.0
+  web-app:
+    image: ghcr.io/myorg/web-app:v1.5.0
     variables:
       stripe_key: ${{ variables.stripe_key }}
       sentry_dsn: ${{ variables.sentry_dsn }}

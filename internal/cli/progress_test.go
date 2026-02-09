@@ -161,13 +161,17 @@ func TestProgressTable_PrintInitialPlan(t *testing.T) {
 	pt := NewProgressTable(buf)
 
 	pt.AddResource("comp/database/main", "main", "database", "comp", nil)
-	pt.AddResource("comp/deployment/api", "api", "deployment", "comp", []string{"comp/database/main"})
+	pt.AddResource("comp/bucket/uploads", "uploads", "bucket", "comp", nil)
+	pt.AddResource("comp/task/migration", "migration", "task", "comp", []string{"comp/database/main"})
+	pt.AddResource("comp/deployment/api", "api", "deployment", "comp", []string{"comp/database/main", "comp/bucket/uploads", "comp/task/migration"})
 	pt.PrintInitial()
 
 	output := buf.String()
 	assert.Contains(t, output, "Deployment Plan")
 	assert.Contains(t, output, "main")
 	assert.Contains(t, output, "api")
+	// Verify full type/name dependency format
+	assert.Contains(t, output, "depends on: database/main, bucket/uploads, task/migration")
 }
 
 func TestProgressTable_PrintFinalSummary_Success(t *testing.T) {
@@ -194,10 +198,11 @@ func TestProgressTable_PrintFinalSummary_WithFailures(t *testing.T) {
 	pt.PrintFinalSummary()
 
 	output := buf.String()
-	assert.Contains(t, output, "errors")
+	assert.Contains(t, output, "FAILED")
 	assert.Contains(t, output, "1 succeeded")
 	assert.Contains(t, output, "1 failed")
-	assert.Contains(t, output, "Failed resources")
+	assert.Contains(t, output, "Errors:")
+	assert.Contains(t, output, "deployment/api")
 }
 
 func TestProgressTable_PrintFinalSummary_WithInferredConfig(t *testing.T) {

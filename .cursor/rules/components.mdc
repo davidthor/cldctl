@@ -21,9 +21,10 @@ builds: map<string, Build>         # Docker image build configs
 # Resources
 databases: map<string, Database>
 buckets: map<string, Bucket>
+ports: map<string, true | Port>      # Dynamic port allocations (opt-in)
 deployments: map<string, Deployment>
 functions: map<string, Function>
-services: map<string, Service>
+services: map<string, Service>       # Service port supports int or ${{ ports.<name>.port }}
 routes: map<string, Route>
 cronjobs: map<string, Cronjob>
 
@@ -53,6 +54,7 @@ environment:
 | `databases.<name>.host` | Database host |
 | `databases.<name>.port` | Database port |
 | `buckets.<name>.endpoint` | Bucket endpoint |
+| `ports.<name>.port` | Allocated port number |
 | `services.<name>.url` | Service URL |
 | `observability.endpoint` | OTel collector endpoint (from datacenter) |
 | `observability.protocol` | OTLP protocol (from datacenter) |
@@ -106,21 +108,35 @@ functions:
 
 ## Common Patterns
 
-### Database with Migrations
+### Database with Migrations (Docker Image)
+
+```yaml
+builds:
+  migrations:
+    context: ./migrations
+
+databases:
+  main:
+    type: postgres:^15
+    migrations:
+      image: ${{ builds.migrations.image }}
+      command: ["npm", "run", "migrate"]
+```
+
+### Database with Migrations (Process-based)
 
 ```yaml
 databases:
   main:
     type: postgres:^15
     migrations:
-      build:
-        context: ./migrations
-      command: ["npm", "run", "migrate"]
+      runtime: node:20
+      command: ["npx", "prisma", "migrate", "deploy"]
 ```
 
 ### Top-level Builds
 
-Docker builds are defined at the top level. Deployments reference them via expressions:
+Docker builds are defined at the top level. Deployments and migrations reference them via expressions:
 
 ```yaml
 builds:
@@ -208,6 +224,29 @@ deployments:
     command: ["npm", "start"]
 ```
 
+### Dynamic Port Allocation
+
+Use `ports` for applications that should listen on a platform-assigned port:
+
+```yaml
+ports:
+  api:
+    description: "API server port"
+
+deployments:
+  api:
+    command: ["node", "server.js"]
+    environment:
+      PORT: ${{ ports.api.port }}
+
+services:
+  api:
+    deployment: api
+    port: ${{ ports.api.port }}
+```
+
+Fixed-port applications (like Inngest on 8288) don't need `ports` — set the port directly on the service.
+
 ### Service with Route
 
 ```yaml
@@ -226,7 +265,6 @@ routes:
               value: /api
         backendRefs:
           - service: api
-            port: 8080
 ```
 
 ### Route Pointing to Function

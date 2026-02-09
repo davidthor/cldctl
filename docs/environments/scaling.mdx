@@ -12,7 +12,7 @@ Override deployment resource allocations and replica counts at the environment l
 ```yaml
 components:
   my-app:
-    component: ghcr.io/org/my-app:v1.0.0
+    image: ghcr.io/org/my-app:v1.0.0
     scaling:
       api:                      # Deployment name from component
         replicas: 3
@@ -60,7 +60,7 @@ Configure different deployments independently:
 ```yaml
 components:
   my-app:
-    component: ghcr.io/org/my-app:v1.0.0
+    image: ghcr.io/org/my-app:v1.0.0
     scaling:
       api:
         replicas: 3
@@ -89,7 +89,7 @@ locals:
 
 components:
   my-app:
-    component: ghcr.io/org/my-app:v1.0.0
+    image: ghcr.io/org/my-app:v1.0.0
     scaling:
       api:
         replicas: ${{ locals.api_replicas }}
@@ -106,7 +106,7 @@ locals:
 
 components:
   my-app:
-    component: ghcr.io/org/my-app:v1.0.0
+    image: ghcr.io/org/my-app:v1.0.0
     scaling:
       api:
         replicas: ${{ locals.api_replicas }}
@@ -121,7 +121,7 @@ For serverless functions, use the `functions` block instead:
 ```yaml
 components:
   my-app:
-    component: ghcr.io/org/my-app:v1.0.0
+    image: ghcr.io/org/my-app:v1.0.0
     functions:
       web:                        # Function name from component
         regions: ["us-east-1", "us-west-2"]
@@ -144,7 +144,7 @@ components:
 ```yaml
 components:
   my-app:
-    component: ./
+    path: ./
     scaling:
       api:
         replicas: 1
@@ -157,7 +157,7 @@ components:
 ```yaml
 components:
   my-app:
-    component: ghcr.io/org/my-app:v1.0.0
+    image: ghcr.io/org/my-app:v1.0.0
     scaling:
       api:
         replicas: 2
@@ -172,7 +172,7 @@ components:
 ```yaml
 components:
   my-app:
-    component: ghcr.io/org/my-app:v1.0.0
+    image: ghcr.io/org/my-app:v1.0.0
     scaling:
       api:
         replicas: 10
@@ -203,7 +203,7 @@ locals:
 
 components:
   web-app:
-    component: ghcr.io/myorg/web-app:v1.5.0
+    image: ghcr.io/myorg/web-app:v1.5.0
     scaling:
       api:
         replicas: ${{ locals.api_replicas }}
@@ -216,7 +216,7 @@ components:
         timeout: 30
 
   worker:
-    component: ghcr.io/myorg/worker:v1.2.0
+    image: ghcr.io/myorg/worker:v1.2.0
     scaling:
       processor:
         replicas: ${{ locals.worker_replicas }}

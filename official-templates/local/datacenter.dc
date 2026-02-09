@@ -103,8 +103,10 @@ environment {
     }
   }
   
-  # Task hook - run one-time containers (e.g., database migrations)
+  # Task hook - run one-time containers (e.g., database migrations with Docker image)
   task {
+    when = node.inputs.image != null
+    
     module "task" {
       plugin = "native"
       build  = "./modules/docker-exec"
@@ -119,7 +121,31 @@ environment {
     
     outputs = {
       id     = module.task.container_id
-      status = module.task.exit_code == 0 ? "success" : "failed"
+      status = "success"
+    }
+  }
+
+  # Task hook - run one-time tasks as local processes (e.g., migrations with runtime)
+  # Handles tasks with runtime (VM workloads run as processes locally)
+  # and tasks with neither image nor runtime (bare process execution)
+  task {
+    when = node.inputs.image == null
+    
+    module "process_task" {
+      plugin = "native"
+      build  = "./modules/process-task"
+      inputs = {
+        name        = "${environment.name}-${node.component}-${node.name}"
+        context     = node.inputs.workingDirectory
+        command     = node.inputs.command
+        environment = node.inputs.environment
+        runtime     = node.inputs.runtime
+      }
+    }
+    
+    outputs = {
+      id     = module.process_task.id
+      status = "success"
     }
   }
   
@@ -206,43 +232,10 @@ environment {
     }
   }
   
-  # Deployment hook - run Docker containers from built images
-  # For components that have a build section (build.context/build.dockerfile)
-  # The image comes from the completed dockerBuild dependency
-  deployment {
-    when = node.inputs.build != null
-    
-    module "container" {
-      plugin = "native"
-      build  = "./modules/docker-deployment"
-      inputs = {
-        name           = "${environment.name}-${node.component}-${node.name}"
-        # Image is resolved by executor from build dependency outputs
-        image          = node.inputs.image
-        command        = node.inputs.command
-        entrypoint     = node.inputs.entrypoint
-        environment    = node.inputs.environment
-        cpu            = node.inputs.cpu
-        memory         = node.inputs.memory
-        network        = variable.network_name
-        liveness_probe = node.inputs.liveness_probe
-        # Forward container stdout to OTel collector via fluentd driver
-        log_driver = "fluentd"
-        log_driver_options = {
-          fluentd-address  = module.otel.fluentd_endpoint
-          fluentd-async    = "true"
-          tag              = "${environment.name}.${node.component}.${node.type}.${node.name}"
-        }
-      }
-    }
-    
-    outputs = {
-      id = module.container.container_id
-    }
-  }
-  
-  # Deployment hook - run pre-built Docker images
-  # For components using existing images directly (no build section)
+  # Deployment hook - run Docker containers
+  # Covers both built images (${{ builds.*.image }}) and pre-built images (image: nginx).
+  # The executor resolves ${{ builds.*.image }} expressions before hook matching,
+  # so node.inputs.image is populated in either case.
   deployment {
     when = node.inputs.image != null
     
@@ -250,14 +243,14 @@ environment {
       plugin = "native"
       build  = "./modules/docker-deployment"
       inputs = {
-        name          = "${environment.name}-${node.component}-${node.name}"
-        image         = node.inputs.image
-        command       = node.inputs.command
-        entrypoint    = node.inputs.entrypoint
-        environment   = node.inputs.environment
-        cpu           = node.inputs.cpu
-        memory        = node.inputs.memory
-        network       = variable.network_name
+        name           = "${environment.name}-${node.component}-${node.name}"
+        image          = node.inputs.image
+        command        = node.inputs.command
+        entrypoint     = node.inputs.entrypoint
+        environment    = node.inputs.environment
+        cpu            = node.inputs.cpu
+        memory         = node.inputs.memory
+        network        = variable.network_name
         liveness_probe = node.inputs.liveness_probe
         # Forward container stdout to OTel collector via fluentd driver
         log_driver = "fluentd"
@@ -289,6 +282,7 @@ environment {
         command          = node.inputs.command
         environment      = node.inputs.environment
         workingDirectory = node.inputs.workingDirectory
+        runtime          = node.inputs.runtime
         cpu              = node.inputs.cpu
         memory           = node.inputs.memory
         liveness_probe   = node.inputs.liveness_probe

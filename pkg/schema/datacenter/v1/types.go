@@ -73,6 +73,7 @@ type EnvironmentBlockV1 struct {
 	SecretHooks            []HookBlockV1   `hcl:"secret,block"`
 	DockerBuildHooks       []HookBlockV1   `hcl:"dockerBuild,block"`
 	ObservabilityHooks     []HookBlockV1   `hcl:"observability,block"`
+	PortHooks              []HookBlockV1   `hcl:"port,block"`
 	Remain                 hcl.Body        `hcl:",remain"`
 }
 

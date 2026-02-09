@@ -161,12 +161,12 @@ func TestExtractEnvVars(t *testing.T) {
 			name: "map[string]interface{} env vars",
 			inputs: map[string]interface{}{
 				"environment": map[string]interface{}{
-					"DATABASE_URL": "postgres://localhost/db",
+					"DATABASE_URL": "postgresql://localhost/db",
 					"PORT":         "8080",
 				},
 			},
 			want: map[string]string{
-				"DATABASE_URL": "postgres://localhost/db",
+				"DATABASE_URL": "postgresql://localhost/db",
 				"PORT":         "8080",
 			},
 		},
@@ -319,6 +319,95 @@ func TestExtractComponentName(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := extractComponentName(tt.ref, tt.resolved)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestResolveInspectPath(t *testing.T) {
+	// Simulate components with slashes in their names
+	components := map[string]*types.ComponentState{
+		"questra/app":     {Name: "questra/app"},
+		"questra/inngest": {Name: "questra/inngest"},
+	}
+
+	tests := []struct {
+		name              string
+		remaining         []string
+		components        map[string]*types.ComponentState
+		wantComp          string
+		wantResourceParts []string
+		wantErr           bool
+		errContains       string
+	}{
+		{
+			name:              "exact match - full component name",
+			remaining:         []string{"questra", "app"},
+			components:        components,
+			wantComp:          "questra/app",
+			wantResourceParts: []string{},
+		},
+		{
+			name:              "exact match - full name with resource",
+			remaining:         []string{"questra", "app", "api"},
+			components:        components,
+			wantComp:          "questra/app",
+			wantResourceParts: []string{"api"},
+		},
+		{
+			name:              "exact match - full name with type/resource",
+			remaining:         []string{"questra", "app", "deployment", "api"},
+			components:        components,
+			wantComp:          "questra/app",
+			wantResourceParts: []string{"deployment", "api"},
+		},
+		{
+			name:              "simple component name - no slashes",
+			remaining:         []string{"my-app"},
+			components:        map[string]*types.ComponentState{"my-app": {Name: "my-app"}},
+			wantComp:          "my-app",
+			wantResourceParts: []string{},
+		},
+		{
+			name:              "simple component name with resource",
+			remaining:         []string{"my-app", "api"},
+			components:        map[string]*types.ComponentState{"my-app": {Name: "my-app"}},
+			wantComp:          "my-app",
+			wantResourceParts: []string{"api"},
+		},
+		{
+			name:        "short name does not suffix match",
+			remaining:   []string{"app"},
+			components:  components,
+			wantErr:     true,
+			errContains: "not found",
+		},
+		{
+			name:        "component not found",
+			remaining:   []string{"nonexistent"},
+			components:  components,
+			wantErr:     true,
+			errContains: "not found",
+		},
+		{
+			name:        "no components deployed",
+			remaining:   []string{"app"},
+			components:  map[string]*types.ComponentState{},
+			wantErr:     true,
+			errContains: "no components deployed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			compName, resourceParts, err := resolveInspectPath(tt.remaining, tt.components, "test-env")
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantComp, compName)
+				assert.Equal(t, tt.wantResourceParts, resourceParts)
+			}
 		})
 	}
 }

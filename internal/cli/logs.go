@@ -62,19 +62,6 @@ Filtering:
 				return err
 			}
 
-			// Parse the optional component[/type[/name]] argument
-			var component, resourceType, workload string
-			if len(args) > 0 {
-				parts := strings.SplitN(args[0], "/", 3)
-				component = parts[0]
-				if len(parts) >= 2 {
-					resourceType = parts[1]
-				}
-				if len(parts) == 3 {
-					workload = parts[2]
-				}
-			}
-
 			// Create state manager
 			mgr, err := createStateManagerWithConfig(backendType, backendConfig)
 			if err != nil {
@@ -85,6 +72,25 @@ Filtering:
 			envState, err := mgr.GetEnvironment(ctx, dc, environment)
 			if err != nil {
 				return fmt.Errorf("failed to get environment %q: %w", environment, err)
+			}
+
+			// Parse the optional component[/type[/name]] argument.
+			// Component names may contain slashes (e.g., "questra/app"), so we
+			// resolve against the environment's known component names.
+			var component, resourceType, workload string
+			if len(args) > 0 {
+				parts := strings.Split(args[0], "/")
+				compName, remaining, resolveErr := resolveInspectPath(parts, envState.Components, environment)
+				if resolveErr != nil {
+					return resolveErr
+				}
+				component = compName
+				if len(remaining) >= 1 {
+					resourceType = remaining[0]
+				}
+				if len(remaining) >= 2 {
+					workload = remaining[1]
+				}
 			}
 
 			// Find the observability resource

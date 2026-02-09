@@ -1734,16 +1734,9 @@ func (b *ComponentBuilder) Build(ctx context.Context, opts BuildOptions) (*Build
         }
     }
 
-    // Build migrations
-    for _, db := range comp.Databases() {
-        if db.Migrations() != nil && db.Migrations().Build() != nil {
-            childTag := b.childArtifactTag(opts.Tag, "migration", db.Name(), opts.ArtifactTags)
-            if err := b.buildContainer(ctx, db.Migrations().Build(), childTag, opts); err != nil {
-                return nil, fmt.Errorf("failed to build migration %s: %w", db.Name(), err)
-            }
-            result.ChildArtifacts["migration/"+db.Name()] = childTag
-        }
-    }
+    // Note: Migrations no longer have inline builds. Migration images are built
+    // via top-level `builds` entries and referenced with image: ${{ builds.<key>.image }}.
+    // Runtime-based migrations run as local processes without Docker.
 
     // Build cronjobs
     for _, cj := range comp.Cronjobs() {

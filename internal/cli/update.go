@@ -181,7 +181,8 @@ func applyEnvironmentConfig(ctx context.Context, mgr state.Manager, dc string, e
 	for name, newComp := range newComponents {
 		if existing, exists := existingComponents[name]; exists {
 			// Check if source changed
-			if existing.Source != newComp.Source() {
+			newSource := componentConfigSource(newComp)
+			if existing.Source != newSource {
 				toUpdate = append(toUpdate, name)
 			}
 		}
@@ -203,7 +204,7 @@ func applyEnvironmentConfig(ctx context.Context, mgr state.Manager, dc string, e
 		fmt.Println("  Components to deploy:")
 		for _, name := range toAdd {
 			comp := newComponents[name]
-			fmt.Printf("    + %s (%s)\n", name, comp.Source())
+			fmt.Printf("    + %s (%s)\n", name, componentConfigSource(comp))
 		}
 		fmt.Println()
 	}
@@ -213,7 +214,7 @@ func applyEnvironmentConfig(ctx context.Context, mgr state.Manager, dc string, e
 		for _, name := range toUpdate {
 			oldComp := existingComponents[name]
 			newComp := newComponents[name]
-			fmt.Printf("    ~ %s: %s -> %s\n", name, oldComp.Source, newComp.Source())
+			fmt.Printf("    ~ %s: %s -> %s\n", name, oldComp.Source, componentConfigSource(newComp))
 		}
 		fmt.Println()
 	}
@@ -323,7 +324,7 @@ func applyEnvironmentConfig(ctx context.Context, mgr state.Manager, dc string, e
 		result, err := eng.Deploy(ctx, engine.DeployOptions{
 			Environment: env.Name,
 			Datacenter:  dc,
-			Components:  map[string]string{name: comp.Source()},
+			Components:  map[string]string{name: componentConfigSource(comp)},
 			Variables:   map[string]map[string]interface{}{name: vars},
 			Output:      os.Stdout,
 			DryRun:      false,
@@ -351,4 +352,13 @@ func applyEnvironmentConfig(ctx context.Context, mgr state.Manager, dc string, e
 	fmt.Printf("\n[success] Environment updated successfully\n")
 
 	return nil
+}
+
+// componentConfigSource returns the display/reference string for a component config.
+// Returns the path if set, otherwise the image reference.
+func componentConfigSource(comp environment.ComponentConfig) string {
+	if comp.Path() != "" {
+		return comp.Path()
+	}
+	return comp.Image()
 }

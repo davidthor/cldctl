@@ -101,7 +101,7 @@ Inputs:
   memory:                    1024Mi
 
 Environment Variables:
-  DATABASE_URL               = postgres://user:pass@host:5432/db
+  DATABASE_URL               = postgresql://user:pass@host:5432/db
   NODE_ENV                   = production
   PORT                       = 8080
   OTEL_EXPORTER_OTLP_ENDPOINT = http://otel-collector:4318
@@ -109,6 +109,26 @@ Environment Variables:
 Outputs:
   id:                        arn:aws:ecs:us-east-1:123456:service/my-app-api
 ```
+
+### Component Names with Slashes
+
+Component names often contain a namespace prefix (e.g., `myorg/app`). Use the
+full component name in the path:
+
+```bash
+# Component "myorg/app" in environment "staging"
+cldctl inspect staging/myorg/app
+
+# Resource "api" in component "myorg/app"
+cldctl inspect staging/myorg/app/api
+
+# Resource qualified by type
+cldctl inspect staging/myorg/app/deployment/api
+```
+
+The inspect command resolves the path by trying progressively longer component
+name matches. For example, `staging/myorg/app/api` first checks if `myorg/app/api`
+is a component, then `myorg/app` (match), leaving `api` as the resource name.
 
 ### Disambiguating Resources
 
@@ -159,6 +179,9 @@ cldctl inspect production
 
 # Inspect component in a specific datacenter
 cldctl inspect staging/my-app -d my-dc
+
+# Inspect a component with a namespaced name (myorg/app)
+cldctl inspect staging/myorg/app
 
 # Inspect a function's configuration
 cldctl inspect production/frontend/web

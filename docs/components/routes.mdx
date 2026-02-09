@@ -16,7 +16,6 @@ routes:
   web:
     type: http
     service: frontend
-    port: 3000
 ```
 
 ### Route to Function
@@ -36,7 +35,6 @@ routes:
 | `internal` | boolean | VPC-only if true (default: false) |
 | `service` | string | Shorthand: target service name |
 | `function` | string | Shorthand: target function name |
-| `port` | number | Shorthand: target port |
 | `rules` | array | Advanced routing rules |
 
 ## Full Route Syntax
@@ -61,7 +59,6 @@ routes:
             method: GET
         backendRefs:
           - service: api
-            port: 8080
             weight: 90
           - service: api-canary
             weight: 10
@@ -287,7 +284,6 @@ routes:
               value: /api
         backendRefs:
           - service: api
-            port: 8080
         filters:
           - type: RequestHeaderModifier
             requestHeaderModifier:

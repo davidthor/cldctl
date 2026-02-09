@@ -69,7 +69,7 @@ The container writes a JSON response to `/workspace/output.json`:
   "outputs": {
     "host": { "value": "db.example.com" },
     "port": { "value": 5432 },
-    "url": { "value": "postgres://..." }
+    "url": { "value": "postgresql://..." }
   }
 }
 ```

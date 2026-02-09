@@ -110,7 +110,7 @@ func TestEvaluator_AddModuleOutputs(t *testing.T) {
 	outputs := map[string]interface{}{
 		"host": "localhost",
 		"port": 5432,
-		"url":  "postgres://localhost:5432/db",
+		"url":  "postgresql://localhost:5432/db",
 	}
 
 	eval.AddModuleOutputs("postgres", outputs)

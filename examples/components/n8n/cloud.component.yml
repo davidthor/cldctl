@@ -175,7 +175,6 @@ routes:
               value: /healthz
         backendRefs:
           - service: app
-            port: 5678
 
       # Webhook endpoints
       - name: webhooks
@@ -185,7 +184,6 @@ routes:
               value: /webhook
         backendRefs:
           - service: app
-            port: 5678
         timeouts:
           request: 120s
           backendRequest: 115s
@@ -198,7 +196,6 @@ routes:
               value: /webhook-test
         backendRefs:
           - service: app
-            port: 5678
         timeouts:
           request: 120s
 
@@ -210,7 +207,6 @@ routes:
               value: /api
         backendRefs:
           - service: app
-            port: 5678
         timeouts:
           request: 60s
           backendRequest: 55s
@@ -223,4 +219,3 @@ routes:
               value: /
         backendRefs:
           - service: app
-            port: 5678

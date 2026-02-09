@@ -71,10 +71,10 @@ func TestNode_SetInput(t *testing.T) {
 func TestNode_SetOutput(t *testing.T) {
 	node := NewNode(NodeTypeDatabase, "app", "main")
 
-	node.SetOutput("url", "postgres://localhost:5432/db")
+	node.SetOutput("url", "postgresql://localhost:5432/db")
 	node.SetOutput("host", "localhost")
 
-	if node.Outputs["url"] != "postgres://localhost:5432/db" {
+	if node.Outputs["url"] != "postgresql://localhost:5432/db" {
 		t.Error("expected url output to be set")
 	}
 

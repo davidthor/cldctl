@@ -67,7 +67,6 @@ routes:
               value: /
         backendRefs:
           - service: api
-            port: 3000
         timeouts:
           request: 30s
           backendRequest: 25s

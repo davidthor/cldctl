@@ -90,9 +90,10 @@ type Component interface {
 
 - `Database` - Database resources
 - `Bucket` - Storage bucket resources
+- `Port` - Dynamic port allocations (opt-in, referenced via `${{ ports.<name>.port }}`)
 - `Deployment` - Container deployments
 - `Function` - Serverless functions
-- `Service` - Internal service endpoints
+- `Service` - Internal service endpoints (port supports int or expression string)
 - `Route` - HTTP routing rules
 - `Cronjob` - Scheduled jobs
 - `Variable` - Input variables
@@ -221,7 +222,7 @@ environment {
       database = node.name
       username = module.rds.outputs.username
       password = module.rds.outputs.password
-      url      = "postgres://${module.rds.outputs.username}:${module.rds.outputs.password}@${module.rds.outputs.endpoint}:5432/${node.name}"
+      url      = "postgresql://${module.rds.outputs.username}:${module.rds.outputs.password}@${module.rds.outputs.endpoint}:5432/${node.name}"
     }
   }
 }
