@@ -1,0 +1,160 @@
+---
+title: Instances
+description: Weighted component instances for progressive delivery
+---
+
+# Instances
+
+Instances enable progressive delivery patterns like canary releases, blue-green deployments, and A/B testing. A component in an environment can have 1-N named instances, each with its own source, traffic weight, and optional variable overrides.
+
+## Core Concepts
+
+- **Single instance** (default): One instance at weight 100, fully backwards compatible
+- **Multiple instances**: e.g., `stable` at 90% + `canary` at 10%, each deploys its own per-instance resources
+- **Components are unaware**: `cloud.component.yml` never mentions instances or weights
+- **Environments control instances**: The environment file or CLI declares instances
+- **Datacenters define correlation**: Hooks determine how instances are provisioned and traffic is split
+
+## Resource Categories
+
+When a component has multiple instances, resources are categorized:
+
+| Per-instance (duplicated) | Shared (one copy) |
+|---|---|
+| deployment, function, service, cronjob, dockerBuild, port | database, bucket, encryptionKey, smtp, secret, observability, route, task |
+
+The `distinct` list overrides defaults, promoting specific shared resources to per-instance.
+
+## Environment File Configuration
+
+```yaml
+components:
+  my-app:
+    instances:
+      - name: canary        # First = newest (shared resources use its definition)
+        source: my-app:v2
+        weight: 10
+      - name: stable
+        source: my-app:v1
+        weight: 90
+    distinct:
+      - encryptionKey.signing  # Override shared default to per-instance
+```
+
+### Instance Ordering Rule
+
+The **first instance** in the list is always treated as the newest version. Shared resources (tasks, databases, etc.) derive their inputs from the first instance. This follows the expand-and-contract pattern: new migrations must be backwards-compatible with old code.
+
+### Fields
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | Yes | Instance identifier (e.g., "canary", "stable") |
+| `source` | string | Yes | Component image or path for this instance |
+| `weight` | integer | Yes | Traffic weight (0-100) |
+| `variables` | map | No | Variable overrides for this instance |
+
+### Validation Rules
+
+- Instance names must be unique within a component
+- Weights must be between 0 and 100
+- Total weights must not exceed 100 (warning if less than 100)
+- Each instance must have a source
+
+## CLI Usage
+
+### Deploy with Instance
+
+```bash
+# Deploy a new version as a canary at 10% traffic
+cldctl deploy component my-app:v2 -e production --instance canary --weight 10
+```
+
+When `--instance` is specified:
+- If the component is in single-instance mode, a "default" instance is created for the existing deployment
+- The new instance gets the specified weight
+- Other instances are auto-adjusted to sum to 100
+
+### Rollout Commands
+
+```bash
+# Check status
+cldctl rollout status my-app -e production
+
+# Increase canary traffic
+cldctl rollout set-weight my-app -e production --instance canary --weight 25
+
+# Promote canary (cleanup old infrastructure)
+cldctl rollout promote my-app -e production --instance canary
+
+# Or rollback (destroy canary)
+cldctl rollout rollback my-app -e production --instance canary
+```
+
+## Datacenter Hook Context
+
+All hooks receive instance context automatically:
+
+### Per-instance hooks
+
+Per-instance nodes receive `node.instance` with `.name` and `.weight`:
+
+```hcl
+deployment {
+  module "container" {
+    plugin = "native"
+    build  = "./modules/container"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.instance.name}-${node.name}"
+      # ...
+    }
+  }
+}
+```
+
+### Shared hooks
+
+Shared nodes receive `node.instances` with all instances and their weights:
+
+```hcl
+route {
+  module "route" {
+    plugin = "native"
+    build  = "./modules/route"
+    inputs = {
+      instances = node.instances  # [{name: "canary", weight: 10}, {name: "stable", weight: 90}]
+      # ...
+    }
+  }
+}
+```
+
+## Patterns
+
+### Canary Release
+
+```bash
+# Step 1: Deploy at 10%
+cldctl deploy component my-app:v2 -e prod --instance canary --weight 10
+
+# Step 2: Gradually increase
+cldctl rollout set-weight my-app -e prod --instance canary --weight 25
+cldctl rollout set-weight my-app -e prod --instance canary --weight 50
+cldctl rollout set-weight my-app -e prod --instance canary --weight 100
+
+# Step 3: Promote (destroy old infrastructure)
+cldctl rollout promote my-app -e prod --instance canary
+```
+
+### Blue-Green
+
+```bash
+# Deploy new version at 0% (infrastructure ready but no traffic)
+cldctl deploy component my-app:v2 -e prod --instance green --weight 0
+
+# Instant switch
+cldctl rollout set-weight my-app -e prod --instance green --weight 100
+
+# Promote
+cldctl rollout promote my-app -e prod --instance green
+```

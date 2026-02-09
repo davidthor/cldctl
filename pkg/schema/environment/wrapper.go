@@ -77,6 +77,20 @@ func (c *componentConfigWrapper) Routes() map[string]RouteConfig {
 	return result
 }
 
+func (c *componentConfigWrapper) Instances() []InstanceConfig {
+	if len(c.c.Instances) == 0 {
+		return nil
+	}
+	result := make([]InstanceConfig, len(c.c.Instances))
+	for i := range c.c.Instances {
+		inst := c.c.Instances[i]
+		result[i] = &instanceConfigWrapper{i: &inst}
+	}
+	return result
+}
+
+func (c *componentConfigWrapper) Distinct() []string { return c.c.Distinct }
+
 // scalingConfigWrapper wraps an InternalScalingConfig.
 type scalingConfigWrapper struct {
 	s *internal.InternalScalingConfig
@@ -145,3 +159,13 @@ func (v *environmentVariableWrapper) Default() interface{}    { return v.v.Defau
 func (v *environmentVariableWrapper) Required() bool          { return v.v.Required }
 func (v *environmentVariableWrapper) Sensitive() bool         { return v.v.Sensitive }
 func (v *environmentVariableWrapper) Env() string             { return v.v.Env }
+
+// instanceConfigWrapper wraps an InternalInstanceConfig.
+type instanceConfigWrapper struct {
+	i *internal.InternalInstanceConfig
+}
+
+func (i *instanceConfigWrapper) Name() string                      { return i.i.Name }
+func (i *instanceConfigWrapper) Source() string                    { return i.i.Source }
+func (i *instanceConfigWrapper) Weight() int                       { return i.i.Weight }
+func (i *instanceConfigWrapper) Variables() map[string]interface{} { return i.i.Variables }

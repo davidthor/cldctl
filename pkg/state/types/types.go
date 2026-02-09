@@ -84,7 +84,33 @@ type ComponentState struct {
 	// Populated at deploy time from the component schema's dependency declarations.
 	Dependencies []string `json:"dependencies,omitempty"`
 
-	// Resource states
+	// Resource states (shared resources in multi-instance mode)
+	Resources map[string]*ResourceState `json:"resources,omitempty"`
+
+	// Instances maps instance names to their state for progressive delivery.
+	// When nil, the component is in single-instance mode.
+	// Per-instance resources live under InstanceState.Resources.
+	Instances map[string]*InstanceState `json:"instances,omitempty"`
+}
+
+// InstanceState represents the state of a single weighted component instance.
+type InstanceState struct {
+	// Name is the instance identifier (e.g., "canary", "stable").
+	Name string `json:"name"`
+
+	// Source is the component image/path for this instance.
+	Source string `json:"source"`
+
+	// Weight is the traffic weight (0-100).
+	Weight int `json:"weight"`
+
+	// Variables are the variable overrides for this instance.
+	Variables map[string]string `json:"variables,omitempty"`
+
+	// DeployedAt records when this instance was created.
+	DeployedAt time.Time `json:"deployed_at"`
+
+	// Resources contains per-instance resource states.
 	Resources map[string]*ResourceState `json:"resources,omitempty"`
 }
 

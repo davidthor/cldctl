@@ -87,6 +87,13 @@ cldctl audit datacenter ./my-dc                      # Show hooks, modules, vari
 cldctl audit datacenter ghcr.io/myorg/dc:v1 --modules  # Show IaC resource addresses for import
 cldctl audit component ./my-app                      # Show resource keys and dependencies
 
+# Progressive delivery (rollout commands)
+cldctl deploy component my-app:v2 -e prod --instance canary --weight 10  # Deploy as canary
+cldctl rollout status my-app -e production          # Show instance weights and health
+cldctl rollout set-weight my-app -e production --instance canary --weight 25
+cldctl rollout promote my-app -e production --instance canary  # Collapse to single-instance
+cldctl rollout rollback my-app -e production --instance canary  # Remove canary instance
+
 # Local development (up command)
 cldctl up                                         # Auto-detect cloud.component.yml or cloud.environment.yml in CWD
 cldctl up -c ./my-app -d local                    # Component mode: deploy single component
@@ -569,6 +576,29 @@ By default, `clerk_secret_key` looks up env var `CLERK_SECRET_KEY` (uppercased).
 ### Expression Resolution
 
 Environment files support `${{ variables.* }}` and `${{ locals.* }}` expressions in component variable values. These are resolved before passing to the engine.
+
+### Weighted Instances (Progressive Delivery)
+
+Components can declare weighted instances for canary/blue-green deployments:
+
+```yaml
+components:
+  my-app:
+    instances:
+      - name: canary        # First = newest (shared resources use its definition)
+        source: my-app:v2
+        weight: 10
+      - name: stable
+        source: my-app:v1
+        weight: 90
+    distinct:
+      - encryptionKey.signing  # Override shared default to per-instance
+```
+
+Per-instance resource types (duplicated per instance): `deployment`, `function`, `service`, `cronjob`, `dockerBuild`, `port`
+Shared resource types (one copy): `database`, `bucket`, `encryptionKey`, `smtp`, `secret`, `observability`, `route`, `task`
+
+The `distinct` list promotes specific shared resources to per-instance. The first instance in the list is the newest; shared resources derive inputs from it.
 
 ## Go Code Conventions
 

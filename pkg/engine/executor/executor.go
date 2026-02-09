@@ -171,6 +171,39 @@ func resourceKey(node *graph.Node) string {
 	return string(node.Type) + "." + node.Name
 }
 
+// getResourceMap returns the correct resource map for a node: either the shared
+// component resources or the per-instance resources. If the node has an Instance,
+// the resource is stored under ComponentState.Instances[instanceName].Resources.
+// Otherwise, it's stored under ComponentState.Resources.
+func (e *Executor) getResourceMap(compState *types.ComponentState, node *graph.Node) map[string]*types.ResourceState {
+	if node.Instance == nil {
+		// Shared resource
+		if compState.Resources == nil {
+			compState.Resources = make(map[string]*types.ResourceState)
+		}
+		return compState.Resources
+	}
+
+	// Per-instance resource
+	if compState.Instances == nil {
+		compState.Instances = make(map[string]*types.InstanceState)
+	}
+	inst, ok := compState.Instances[node.Instance.Name]
+	if !ok {
+		inst = &types.InstanceState{
+			Name:       node.Instance.Name,
+			Weight:     node.Instance.Weight,
+			Resources:  make(map[string]*types.ResourceState),
+			DeployedAt: time.Now(),
+		}
+		compState.Instances[node.Instance.Name] = inst
+	}
+	if inst.Resources == nil {
+		inst.Resources = make(map[string]*types.ResourceState)
+	}
+	return inst.Resources
+}
+
 // computeComponentStatuses derives each component's status from its child resources.
 // Call this before the final state save so that component-level status is accurate.
 func computeComponentStatuses(envState *types.EnvironmentState) {
@@ -508,15 +541,13 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 		envState.Components[change.Node.Component] = compState
 	}
 
-	// Ensure resources map is initialized
-	if compState.Resources == nil {
-		compState.Resources = make(map[string]*types.ResourceState)
-	}
+	// Determine where to store the resource: per-instance or shared
+	resMap := e.getResourceMap(compState, change.Node)
 
 	// Save a "provisioning" entry immediately so that `cldctl inspect` can see
 	// in-progress resources before plugin.Apply returns (which may block for a
 	// long time, e.g. readiness checks on dev-server processes).
-	compState.Resources[resourceKey(change.Node)] = &types.ResourceState{
+	resMap[resourceKey(change.Node)] = &types.ResourceState{
 		Component: change.Node.Component,
 		Name:      change.Node.Name,
 		Type:      string(change.Node.Type),
@@ -536,7 +567,8 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 
 		// Update resource state to failed (lock for state update)
 		e.stateMu.Lock()
-		compState.Resources[resourceKey(change.Node)] = &types.ResourceState{
+		resMap := e.getResourceMap(compState, change.Node)
+		resMap[resourceKey(change.Node)] = &types.ResourceState{
 			Component:    change.Node.Component,
 			Name:         change.Node.Name,
 			Type:         string(change.Node.Type),
@@ -574,7 +606,8 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 	} else if len(hookResult.ModuleStates) > 1 {
 		resourceState.ModuleStates = hookResult.ModuleStates
 	}
-	compState.Resources[resourceKey(change.Node)] = resourceState
+	resMapFinal := e.getResourceMap(compState, change.Node)
+	resMapFinal[resourceKey(change.Node)] = resourceState
 	e.saveStateLocked(envState)
 	e.stateMu.Unlock()
 
@@ -1033,7 +1066,7 @@ func (e *Executor) evaluateWhenHCL(when string, inputs map[string]interface{}) (
 
 	eval := v1.NewEvaluator()
 
-	// Set node context with inputs
+	// Set node context with inputs (including instance context injected by buildModuleInputs)
 	eval.SetNodeContext("", "", "", inputs)
 
 	// Set datacenter variables if available
@@ -1043,6 +1076,7 @@ func (e *Executor) evaluateWhenHCL(when string, inputs map[string]interface{}) (
 
 	return eval.EvaluateWhen(expr)
 }
+
 
 // evaluateWhenStringFallback provides legacy string-based matching for when conditions
 // that cannot be parsed as HCL expressions.
@@ -1284,6 +1318,27 @@ func (e *Executor) buildModuleInputs(module datacenter.Module, node *graph.Node,
 		if value != nil && value != "" {
 			inputs[inputName] = value
 		}
+	}
+
+	// Inject instance context into inputs so datacenter modules can access it
+	if node.Instance != nil {
+		setIfMissing(inputs, "instance_name", node.Instance.Name)
+		setIfMissing(inputs, "instance_weight", node.Instance.Weight)
+	} else {
+		setIfMissing(inputs, "instance_name", "default")
+		setIfMissing(inputs, "instance_weight", 100)
+	}
+
+	// Inject instances list for shared nodes (e.g., route hooks for traffic splitting)
+	if len(node.Instances) > 0 {
+		instancesList := make([]map[string]interface{}, len(node.Instances))
+		for i, inst := range node.Instances {
+			instancesList[i] = map[string]interface{}{
+				"name":   inst.Name,
+				"weight": inst.Weight,
+			}
+		}
+		setIfMissing(inputs, "instances", instancesList)
 	}
 
 	// Build inputs based on module type with standard mappings
@@ -2102,6 +2157,15 @@ func (e *Executor) evaluateInputExpression(expr string, node *graph.Node, envNam
 		result = strings.ReplaceAll(result, "${node.component}", sanitizeResourceName(node.Component))
 		// Replace ${node.type}
 		result = strings.ReplaceAll(result, "${node.type}", string(node.Type))
+		// Replace ${node.instance.name} and ${node.instance.weight}
+		if node.Instance != nil {
+			result = strings.ReplaceAll(result, "${node.instance.name}", node.Instance.Name)
+			result = strings.ReplaceAll(result, "${node.instance.weight}", fmt.Sprintf("%d", node.Instance.Weight))
+		} else {
+			// Single-instance mode defaults
+			result = strings.ReplaceAll(result, "${node.instance.name}", "default")
+			result = strings.ReplaceAll(result, "${node.instance.weight}", "100")
+		}
 		// Replace ${node.inputs.*}
 		for k, v := range node.Inputs {
 			if s, ok := v.(string); ok {
@@ -2126,6 +2190,18 @@ func (e *Executor) evaluateInputExpression(expr string, node *graph.Node, envNam
 	}
 	if hasPrefix(expr, "node.type") {
 		return string(node.Type)
+	}
+	if hasPrefix(expr, "node.instance.name") {
+		if node.Instance != nil {
+			return node.Instance.Name
+		}
+		return "default"
+	}
+	if hasPrefix(expr, "node.instance.weight") {
+		if node.Instance != nil {
+			return node.Instance.Weight
+		}
+		return 100
 	}
 	if hasPrefix(expr, "node.inputs.") {
 		inputName := expr[12:] // len("node.inputs.")

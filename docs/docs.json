@@ -70,6 +70,7 @@
               "environments/overview",
               "environments/variables",
               "environments/components",
+              "environments/instances",
               "environments/locals",
               "environments/scaling",
               "environments/routes",
@@ -105,6 +106,12 @@
               "guides/components/dynamic-cors",
               "guides/components/microservices",
               "guides/components/shared-database"
+            ]
+          },
+          {
+            "group": "Progressive Delivery",
+            "pages": [
+              "guides/progressive-delivery"
             ]
           },
           {
@@ -205,6 +212,15 @@
             "pages": [
               "cli/deploy/component",
               "cli/deploy/datacenter"
+            ]
+          },
+          {
+            "group": "rollout",
+            "pages": [
+              "cli/rollout/status",
+              "cli/rollout/set-weight",
+              "cli/rollout/promote",
+              "cli/rollout/rollback"
             ]
           },
           {

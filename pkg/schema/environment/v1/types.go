@@ -41,7 +41,7 @@ type EnvironmentVariableV1 struct {
 }
 
 // ComponentConfigV1 represents a component configuration in v1 schema.
-// Exactly one of Path or Image must be set.
+// Exactly one of Path or Image must be set (at top level or within each instance).
 type ComponentConfigV1 struct {
 	// Path is a local file path to the component directory or file (e.g., "./path/to/component").
 	// Mutually exclusive with Image.
@@ -68,6 +68,29 @@ type ComponentConfigV1 struct {
 
 	// Route configuration per route
 	Routes map[string]RouteConfigV1 `yaml:"routes,omitempty" json:"routes,omitempty"`
+
+	// Instances defines weighted component instances for progressive delivery.
+	// First element = newest instance (shared resources derive inputs from it).
+	Instances []InstanceConfigV1 `yaml:"instances,omitempty" json:"instances,omitempty"`
+
+	// Distinct lists resource patterns that should be per-instance instead of shared.
+	// Format: "resourceType.resourceName" (e.g., "encryptionKey.signing").
+	Distinct []string `yaml:"distinct,omitempty" json:"distinct,omitempty"`
+}
+
+// InstanceConfigV1 represents a weighted component instance in v1 schema.
+type InstanceConfigV1 struct {
+	// Name is the instance identifier (e.g., "canary", "stable").
+	Name string `yaml:"name" json:"name"`
+
+	// Source is the component image/path for this instance.
+	Source string `yaml:"source" json:"source"`
+
+	// Weight is the traffic weight (0-100) for this instance.
+	Weight int `yaml:"weight" json:"weight"`
+
+	// Variables are optional variable overrides for this instance.
+	Variables map[string]interface{} `yaml:"variables,omitempty" json:"variables,omitempty"`
 }
 
 // ScalingConfigV1 represents scaling configuration in v1 schema.

@@ -200,6 +200,13 @@ type DeployOptions struct {
 	// ForceUpdate converts Noop actions to Update, used when datacenter config
 	// changes and all resources need re-evaluation against new hooks.
 	ForceUpdate bool
+
+	// Instances maps component name to its weighted instances for progressive delivery.
+	// When set for a component, the graph builder uses multi-instance mode.
+	Instances map[string][]graph.InstanceInfo
+
+	// Distinct maps component name to resource patterns that should be per-instance.
+	Distinct map[string][]string
 }
 
 // DeployResult contains the results of a deployment.
@@ -243,6 +250,20 @@ func (e *Engine) Deploy(ctx context.Context, opts DeployOptions) (*DeployResult,
 		comp, err := e.compLoader.Load(compPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load component %s: %w", compName, err)
+		}
+
+		// Check if this component has instances configured
+		if opts.Instances != nil {
+			if instances, ok := opts.Instances[compName]; ok && len(instances) > 0 {
+				var distinct []string
+				if opts.Distinct != nil {
+					distinct = opts.Distinct[compName]
+				}
+				if err := builder.AddComponentWithInstances(compName, comp, instances, distinct); err != nil {
+					return nil, fmt.Errorf("failed to add component %s to graph with instances: %w", compName, err)
+				}
+				continue
+			}
 		}
 
 		// Add to graph - component name comes from the deployment mapping

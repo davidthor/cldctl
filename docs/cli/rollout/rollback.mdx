@@ -1,0 +1,42 @@
+---
+title: rollout rollback
+description: Remove a named instance (rollback)
+---
+
+# cldctl rollout rollback
+
+Remove a named instance, destroying its per-instance resources and redistributing its traffic weight to remaining instances. If only one instance remains after removal, the component collapses back to single-instance mode.
+
+## Usage
+
+```bash
+cldctl rollout rollback <component> -e <environment> --instance <name> [flags]
+```
+
+## Arguments
+
+| Argument | Description |
+|---|---|
+| `component` | Name of the component |
+
+## Flags
+
+| Flag | Short | Description |
+|---|---|---|
+| `--environment` | `-e` | Target environment (required) |
+| `--datacenter` | `-d` | Target datacenter |
+| `--instance` | | Instance to remove (required) |
+
+## Examples
+
+```bash
+# Roll back the canary instance
+cldctl rollout rollback my-app -e production --instance canary
+```
+
+## What Happens
+
+1. The specified instance is removed from state
+2. Its traffic weight is redistributed proportionally to remaining instances
+3. If only one instance remains, the component collapses to single-instance mode
+4. Per-instance resources for the removed instance are destroyed
