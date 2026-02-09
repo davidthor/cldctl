@@ -35,6 +35,20 @@ type DatabaseOutputs struct {
 	Username string
 	Password string
 	URL      string
+
+	// Optional read/write endpoint separation.
+	// When nil, read/write expressions fall back to top-level values.
+	Read  *DatabaseEndpoint
+	Write *DatabaseEndpoint
+}
+
+// DatabaseEndpoint contains connection information for a specific endpoint direction (read or write).
+type DatabaseEndpoint struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+	URL      string
 }
 
 // BucketOutputs contains outputs from a provisioned bucket.
@@ -289,6 +303,15 @@ func (e *Evaluator) resolveDatabase(path []string, databases map[string]Database
 		return nil, fmt.Errorf("database %q not found", name)
 	}
 
+	// Handle read/write sub-objects: databases.<name>.read.<prop> / databases.<name>.write.<prop>
+	if prop == "read" || prop == "write" {
+		if len(path) < 3 {
+			return nil, fmt.Errorf("invalid database %s reference: need property (e.g., %s.url)", prop, prop)
+		}
+		subProp := path[2]
+		return e.resolveDatabaseEndpoint(db, prop, subProp)
+	}
+
 	switch prop {
 	case "host":
 		return db.Host, nil
@@ -304,6 +327,50 @@ func (e *Evaluator) resolveDatabase(path []string, databases map[string]Database
 		return db.URL, nil
 	default:
 		return nil, fmt.Errorf("unknown database property: %s", prop)
+	}
+}
+
+// resolveDatabaseEndpoint resolves a read or write endpoint property, falling back
+// to the top-level database values when the endpoint is nil.
+func (e *Evaluator) resolveDatabaseEndpoint(db DatabaseOutputs, direction, prop string) (interface{}, error) {
+	var endpoint *DatabaseEndpoint
+	if direction == "read" {
+		endpoint = db.Read
+	} else {
+		endpoint = db.Write
+	}
+
+	// Fall back to top-level values when the endpoint is not explicitly set
+	if endpoint == nil {
+		switch prop {
+		case "host":
+			return db.Host, nil
+		case "port":
+			return db.Port, nil
+		case "username":
+			return db.Username, nil
+		case "password":
+			return db.Password, nil
+		case "url":
+			return db.URL, nil
+		default:
+			return nil, fmt.Errorf("unknown database %s property: %s", direction, prop)
+		}
+	}
+
+	switch prop {
+	case "host":
+		return endpoint.Host, nil
+	case "port":
+		return endpoint.Port, nil
+	case "username":
+		return endpoint.Username, nil
+	case "password":
+		return endpoint.Password, nil
+	case "url":
+		return endpoint.URL, nil
+	default:
+		return nil, fmt.Errorf("unknown database %s property: %s", direction, prop)
 	}
 }
 

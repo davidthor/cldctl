@@ -79,14 +79,15 @@ type EnvironmentBlockV1 struct {
 
 // HookBlockV1 represents a resource hook block.
 type HookBlockV1 struct {
-	When         string          `hcl:"when,optional"`
-	WhenExpr     hcl.Expression  `hcl:"-"` // Raw when expression for runtime evaluation
-	Modules      []ModuleBlockV1 `hcl:"module,block"`
-	OutputsExpr  hcl.Expression  `hcl:"-"` // Raw outputs expression for runtime evaluation (attribute syntax)
-	OutputsAttrs hcl.Attributes  `hcl:"-"` // Raw outputs attributes for runtime evaluation (block syntax)
-	Error        string          `hcl:"error,optional"` // Human-readable error message (mutually exclusive with modules/outputs)
-	ErrorExpr    hcl.Expression  `hcl:"-"`              // Raw error expression for runtime interpolation
-	Remain       hcl.Body        `hcl:",remain"`
+	When              string          `hcl:"when,optional"`
+	WhenExpr          hcl.Expression  `hcl:"-"` // Raw when expression for runtime evaluation
+	Modules           []ModuleBlockV1 `hcl:"module,block"`
+	OutputsExpr       hcl.Expression  `hcl:"-"` // Raw outputs expression for runtime evaluation (attribute syntax)
+	OutputsAttrs      hcl.Attributes  `hcl:"-"` // Raw outputs attributes for runtime evaluation (block syntax)
+	NestedOutputExprs map[string]hcl.Expression  `hcl:"-"` // Nested output objects (e.g., read = {...}, write = {...})
+	Error             string          `hcl:"error,optional"` // Human-readable error message (mutually exclusive with modules/outputs)
+	ErrorExpr         hcl.Expression  `hcl:"-"`              // Raw error expression for runtime interpolation
+	Remain            hcl.Body        `hcl:",remain"`
 }
 
 // OutputsBlockV1 represents the outputs block in a hook.
