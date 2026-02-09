@@ -45,12 +45,29 @@ type EnvironmentMapping struct {
 	Components map[string]EnvironmentComponentMapping `yaml:"components"`
 }
 
-// DatacenterMapping describes import mappings for datacenter root-level modules.
+// DatacenterMapping describes import mappings for a datacenter deploy.
+// It supports both root-level modules and per-environment modules.
 // Used by `deploy datacenter --import-file` to import existing infrastructure
 // atomically during the first deploy.
 type DatacenterMapping struct {
-	// Modules maps module names to their IaC resource mappings
+	// Modules maps root-level module names to their IaC resource mappings
+	Modules map[string][]ResourceMapping `yaml:"modules,omitempty"`
+
+	// Environments maps environment names to their module import mappings.
+	// Each listed environment is created if it doesn't exist, and its
+	// environment-scoped modules are imported.
+	Environments map[string]EnvironmentModuleMapping `yaml:"environments,omitempty"`
+}
+
+// EnvironmentModuleMapping describes import mappings for environment-scoped modules.
+type EnvironmentModuleMapping struct {
+	// Modules maps environment-scoped module names to their IaC resource mappings
 	Modules map[string][]ResourceMapping `yaml:"modules"`
+}
+
+// HasContent returns true if the mapping has any root modules or environments.
+func (m *DatacenterMapping) HasContent() bool {
+	return len(m.Modules) > 0 || len(m.Environments) > 0
 }
 
 // ParseDatacenterMapping reads and parses a datacenter-level import mapping file.
@@ -65,10 +82,11 @@ func ParseDatacenterMapping(path string) (*DatacenterMapping, error) {
 		return nil, fmt.Errorf("failed to parse mapping file: %w", err)
 	}
 
-	if len(mapping.Modules) == 0 {
-		return nil, fmt.Errorf("mapping file contains no module mappings")
+	if !mapping.HasContent() {
+		return nil, fmt.Errorf("mapping file contains no module or environment mappings")
 	}
 
+	// Validate root modules
 	for modName, mappings := range mapping.Modules {
 		for i, m := range mappings {
 			if m.Address == "" {
@@ -76,6 +94,23 @@ func ParseDatacenterMapping(path string) (*DatacenterMapping, error) {
 			}
 			if m.ID == "" {
 				return nil, fmt.Errorf("module %s mapping[%d]: id is required", modName, i)
+			}
+		}
+	}
+
+	// Validate environment modules
+	for envName, envMapping := range mapping.Environments {
+		if len(envMapping.Modules) == 0 {
+			return nil, fmt.Errorf("environment %s: no modules specified", envName)
+		}
+		for modName, mappings := range envMapping.Modules {
+			for i, m := range mappings {
+				if m.Address == "" {
+					return nil, fmt.Errorf("environment %s module %s mapping[%d]: address is required", envName, modName, i)
+				}
+				if m.ID == "" {
+					return nil, fmt.Errorf("environment %s module %s mapping[%d]: id is required", envName, modName, i)
+				}
 			}
 		}
 	}

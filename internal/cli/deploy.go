@@ -737,29 +737,83 @@ Examples:
 					return fmt.Errorf("failed to parse import file: %w", parseErr)
 				}
 
-				fmt.Printf("[import] Importing existing resources for %d module(s)...\n", len(dcImportMap.Modules))
+				// Phase 1: Import root-level modules
+				if len(dcImportMap.Modules) > 0 {
+					fmt.Printf("[import] Importing %d root module(s)...\n", len(dcImportMap.Modules))
 
-				for modName, mappings := range dcImportMap.Modules {
-					iacMappings := make([]iac.ImportMapping, 0, len(mappings))
-					for _, m := range mappings {
-						iacMappings = append(iacMappings, iac.ImportMapping{
-							Address: m.Address,
-							ID:      m.ID,
+					for modName, mappings := range dcImportMap.Modules {
+						iacMappings := make([]iac.ImportMapping, 0, len(mappings))
+						for _, m := range mappings {
+							iacMappings = append(iacMappings, iac.ImportMapping{
+								Address: m.Address,
+								ID:      m.ID,
+							})
+						}
+
+						importResult, importErr := eng.ImportDatacenterModule(ctx, engine.ImportDatacenterModuleOptions{
+							Datacenter: dcName,
+							Module:     modName,
+							Mappings:   iacMappings,
+							Output:     os.Stdout,
+							Force:      true,
 						})
+						if importErr != nil {
+							return fmt.Errorf("failed to import module %q: %w", modName, importErr)
+						}
+						if !importResult.Success {
+							return fmt.Errorf("import of module %q failed", modName)
+						}
 					}
+				}
 
-					result, importErr := eng.ImportDatacenterModule(ctx, engine.ImportDatacenterModuleOptions{
-						Datacenter: dcName,
-						Module:     modName,
-						Mappings:   iacMappings,
-						Output:     os.Stdout,
-						Force:      true,
-					})
-					if importErr != nil {
-						return fmt.Errorf("failed to import module %q: %w", modName, importErr)
-					}
-					if !result.Success {
-						return fmt.Errorf("import of module %q failed", modName)
+				// Phase 2: Import environment-scoped modules.
+				// For each environment listed, create the environment if needed
+				// and import its modules.
+				if len(dcImportMap.Environments) > 0 {
+					fmt.Printf("[import] Importing environment modules for %d environment(s)...\n", len(dcImportMap.Environments))
+
+					for envName, envMapping := range dcImportMap.Environments {
+						// Ensure environment exists (create if it doesn't)
+						if _, envErr := mgr.GetEnvironment(ctx, dcName, envName); envErr != nil {
+							envState := &types.EnvironmentState{
+								Name:       envName,
+								Datacenter: dcName,
+								Components: make(map[string]*types.ComponentState),
+								Modules:    make(map[string]*types.ModuleState),
+								Status:     types.EnvironmentStatusReady,
+								CreatedAt:  time.Now(),
+								UpdatedAt:  time.Now(),
+							}
+							if saveErr := mgr.SaveEnvironment(ctx, dcName, envState); saveErr != nil {
+								return fmt.Errorf("failed to create environment %q: %w", envName, saveErr)
+							}
+							fmt.Printf("  [create] Environment %q created\n", envName)
+						}
+
+						for modName, mappings := range envMapping.Modules {
+							iacMappings := make([]iac.ImportMapping, 0, len(mappings))
+							for _, m := range mappings {
+								iacMappings = append(iacMappings, iac.ImportMapping{
+									Address: m.Address,
+									ID:      m.ID,
+								})
+							}
+
+							importResult, importErr := eng.ImportEnvironmentModule(ctx, engine.ImportEnvironmentModuleOptions{
+								Datacenter:  dcName,
+								Environment: envName,
+								Module:      modName,
+								Mappings:    iacMappings,
+								Output:      os.Stdout,
+								Force:       true,
+							})
+							if importErr != nil {
+								return fmt.Errorf("failed to import environment module %q for %q: %w", modName, envName, importErr)
+							}
+							if !importResult.Success {
+								return fmt.Errorf("import of environment module %q for %q failed", modName, envName)
+							}
+						}
 					}
 				}
 

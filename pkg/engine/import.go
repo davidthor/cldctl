@@ -139,6 +139,35 @@ type ImportDatacenterModuleResult struct {
 	Outputs           map[string]interface{}
 }
 
+// ImportEnvironmentModuleOptions configures an environment-scoped module import.
+type ImportEnvironmentModuleOptions struct {
+	// Datacenter name
+	Datacenter string
+
+	// Environment name
+	Environment string
+
+	// Module name (must match a module in the datacenter's environment block)
+	Module string
+
+	// Mappings are the IaC address to cloud ID mappings
+	Mappings []iac.ImportMapping
+
+	// Output writer for progress
+	Output io.Writer
+
+	// Force overwrites existing module state
+	Force bool
+}
+
+// ImportEnvironmentModuleResult contains the results of an environment module import.
+type ImportEnvironmentModuleResult struct {
+	Success           bool
+	Module            string
+	ImportedResources []string
+	Outputs           map[string]interface{}
+}
+
 // ImportResource imports a single existing cloud resource into cldctl state.
 func (e *Engine) ImportResource(ctx context.Context, opts ImportResourceOptions) (*ImportResourceResult, error) {
 	result := &ImportResourceResult{
@@ -602,6 +631,167 @@ func (e *Engine) ImportDatacenterModule(ctx context.Context, opts ImportDatacent
 
 	if opts.Output != nil {
 		fmt.Fprintf(opts.Output, "  [success] Module %q imported (%d resource(s))\n", opts.Module, len(importResult.ImportedResources))
+	}
+
+	return result, nil
+}
+
+// ImportEnvironmentModule imports existing infrastructure into an environment-scoped module's state.
+// Environment-scoped modules are defined inside the `environment {}` block of a datacenter
+// configuration (outside hooks). They are per-environment shared resources like VPCs or namespaces.
+func (e *Engine) ImportEnvironmentModule(ctx context.Context, opts ImportEnvironmentModuleOptions) (*ImportEnvironmentModuleResult, error) {
+	result := &ImportEnvironmentModuleResult{
+		Module: opts.Module,
+	}
+
+	// Load datacenter state
+	dcState, err := e.stateManager.GetDatacenter(ctx, opts.Datacenter)
+	if err != nil {
+		return nil, fmt.Errorf("datacenter %q not found: %w", opts.Datacenter, err)
+	}
+
+	// Load datacenter configuration
+	dc, err := e.loadDatacenterConfig(dcState.Version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load datacenter configuration: %w", err)
+	}
+
+	// Find the module in the environment block
+	envBlock := dc.Environment()
+	if envBlock == nil {
+		return nil, fmt.Errorf("datacenter has no environment block")
+	}
+
+	var targetModule datacenter.Module
+	for _, mod := range envBlock.Modules() {
+		if mod.Name() == opts.Module {
+			targetModule = mod
+			break
+		}
+	}
+	if targetModule == nil {
+		return nil, fmt.Errorf("environment module %q not found in datacenter configuration", opts.Module)
+	}
+
+	// Get or create environment state
+	envState, err := e.stateManager.GetEnvironment(ctx, opts.Datacenter, opts.Environment)
+	if err != nil {
+		// Create the environment if it doesn't exist
+		envState = &types.EnvironmentState{
+			Name:       opts.Environment,
+			Datacenter: opts.Datacenter,
+			Components: make(map[string]*types.ComponentState),
+			Modules:    make(map[string]*types.ModuleState),
+			Status:     types.EnvironmentStatusReady,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+		}
+	}
+
+	// Check for existing module state
+	if !opts.Force && envState.Modules != nil {
+		if existing, ok := envState.Modules[opts.Module]; ok {
+			if existing.Status == types.ModuleStatusReady {
+				return nil, fmt.Errorf("environment module %q already has state in %q (use --force to overwrite)", opts.Module, opts.Environment)
+			}
+		}
+	}
+
+	// Resolve module path
+	dcDir := filepath.Dir(dc.SourcePath())
+	modulePath := targetModule.Build()
+	if modulePath == "" {
+		modulePath = targetModule.Source()
+	}
+	if modulePath != "" && !filepath.IsAbs(modulePath) {
+		modulePath = filepath.Join(dcDir, modulePath)
+	}
+
+	// Get IaC plugin
+	pluginName := targetModule.Plugin()
+	if pluginName == "" {
+		pluginName = "native"
+	}
+	plugin, err := e.iacRegistry.Get(pluginName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get IaC plugin %q: %w", pluginName, err)
+	}
+
+	// Build module inputs
+	dcVars := make(map[string]interface{})
+	for k, v := range dcState.Variables {
+		dcVars[k] = v
+	}
+
+	// Collect root module outputs for cross-module references
+	rootOutputs := make(map[string]map[string]interface{})
+	if dcState.Modules != nil {
+		for name, mod := range dcState.Modules {
+			if mod.Outputs != nil {
+				rootOutputs[name] = mod.Outputs
+			}
+		}
+	}
+
+	inputs := make(map[string]interface{})
+	for inputName, exprStr := range targetModule.Inputs() {
+		inputs[inputName] = evaluateModuleExpression(exprStr, dcVars, rootOutputs, map[string]string{
+			"environment.name": opts.Environment,
+		})
+	}
+
+	if opts.Output != nil {
+		fmt.Fprintf(opts.Output, "  Importing %d resource(s) into environment module %q for %q...\n",
+			len(opts.Mappings), opts.Module, opts.Environment)
+	}
+
+	// Run import
+	importOpts := iac.ImportOptions{
+		ModuleSource: modulePath,
+		Inputs:       inputs,
+		Mappings:     opts.Mappings,
+		Environment:  map[string]string{},
+	}
+
+	importResult, err := plugin.Import(ctx, importOpts)
+	if err != nil {
+		return nil, fmt.Errorf("import failed for environment module %q: %w", opts.Module, err)
+	}
+
+	// Extract outputs
+	outputs := make(map[string]interface{})
+	for name, out := range importResult.Outputs {
+		outputs[name] = out.Value
+	}
+	result.Outputs = outputs
+	result.ImportedResources = importResult.ImportedResources
+
+	// Save module state to environment
+	if envState.Modules == nil {
+		envState.Modules = make(map[string]*types.ModuleState)
+	}
+
+	envState.Modules[opts.Module] = &types.ModuleState{
+		Name:      opts.Module,
+		Plugin:    pluginName,
+		Source:    modulePath,
+		Inputs:    inputs,
+		Outputs:   outputs,
+		IaCState:  importResult.State,
+		Status:    types.ModuleStatusReady,
+		UpdatedAt: time.Now(),
+	}
+	envState.UpdatedAt = time.Now()
+
+	if err := e.stateManager.SaveEnvironment(ctx, opts.Datacenter, envState); err != nil {
+		return nil, fmt.Errorf("failed to save environment state: %w", err)
+	}
+
+	result.Success = true
+
+	if opts.Output != nil {
+		fmt.Fprintf(opts.Output, "  [success] Environment module %q imported for %q (%d resource(s))\n",
+			opts.Module, opts.Environment, len(importResult.ImportedResources))
 	}
 
 	return result, nil
