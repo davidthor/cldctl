@@ -1,0 +1,58 @@
+---
+title: rollout status
+description: Show rollout status for a component
+---
+
+# cldctl rollout status
+
+Show the current rollout status of a component, including all instances, their weights, sources, and resource counts.
+
+## Usage
+
+```bash
+cldctl rollout status <component> -e <environment> [flags]
+```
+
+## Arguments
+
+| Argument | Description |
+|---|---|
+| `component` | Name of the component to inspect |
+
+## Flags
+
+| Flag | Short | Description |
+|---|---|---|
+| `--environment` | `-e` | Target environment (required) |
+| `--datacenter` | `-d` | Target datacenter |
+| `--output` | `-o` | Output format (`json` for JSON) |
+
+## Examples
+
+```bash
+# Show rollout status
+cldctl rollout status my-app -e production
+
+# JSON output
+cldctl rollout status my-app -e production -o json
+```
+
+## Output
+
+For a component in multi-instance mode:
+
+```
+Component:   my-app
+Environment: production
+Datacenter:  my-dc
+Status:      ready
+
+Mode: multi-instance (progressive delivery)
+
+INSTANCE        WEIGHT   SOURCE                                   RESOURCES    DEPLOYED
+--------------- -------- ---------------------------------------- ------------ --------------------
+canary          10%      my-app:v2                                4            2026-02-09T10:00:00Z
+stable          90%      my-app:v1                                4            2026-02-08T15:30:00Z
+
+Shared resources: 3
+```

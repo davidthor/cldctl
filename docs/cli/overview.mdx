@@ -59,6 +59,15 @@ cldctl <action> <resource> [arguments] [flags]
 | [`cldctl deploy component`](/cli/deploy/component) | Deploy a component to an environment (auto-deploys missing dependencies) |
 | [`cldctl deploy datacenter`](/cli/deploy/datacenter) | Deploy/update a datacenter |
 
+### Rollout Commands (Progressive Delivery)
+
+| Command | Description |
+|---------|-------------|
+| [`cldctl rollout status`](/cli/rollout/status) | Show rollout status for a component |
+| [`cldctl rollout set-weight`](/cli/rollout/set-weight) | Update traffic weight of an instance |
+| [`cldctl rollout promote`](/cli/rollout/promote) | Promote an instance to sole version |
+| [`cldctl rollout rollback`](/cli/rollout/rollback) | Remove a named instance |
+
 ### Destroy Commands
 
 | Command | Description |

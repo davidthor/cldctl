@@ -1,0 +1,197 @@
+---
+title: Progressive Delivery Guide
+description: Complete guide to canary, blue-green, and A/B deployments with cldctl
+---
+
+# Progressive Delivery Guide
+
+This guide walks through a complete canary rollout lifecycle from start to finish.
+
+## Overview
+
+cldctl supports progressive delivery through **weighted component instances**. Instead of a special rollout mode, it models traffic splitting as 1-N named instances of a component, each with its own source and traffic weight.
+
+This unifies:
+- **Canary releases** (graduated weight increase)
+- **Blue-green deployments** (instant 0/100 switch)
+- **A/B testing** (multiple versions at stable weights)
+
+## Prerequisites
+
+- A deployed datacenter with component hooks
+- An existing environment
+- A component deployed in single-instance mode
+
+## Step 1: Deploy a Fresh Component
+
+```bash
+cldctl deploy component my-app:v1 -e production
+```
+
+This creates a standard single-instance deployment at weight 100. The component state has no `Instances` map -- it's fully backwards compatible.
+
+## Step 2: Deploy an Updated Version at 10%
+
+```bash
+cldctl deploy component my-app:v2 -e production --instance canary --weight 10
+```
+
+What happens:
+- A "default" instance is created for the existing v1 deployment (auto-adjusted to 90%)
+- A "canary" instance is created with the v2 source at 10%
+- Per-instance resources (deployments, services, ports) are duplicated for each instance
+- Shared resources (databases, tasks) are reused
+- Shared tasks (migrations) run using canary's definition (first = newest, expand-and-contract pattern)
+- Routes are updated to split traffic between both instances
+
+## Step 3: Check Status
+
+```bash
+cldctl rollout status my-app -e production
+```
+
+Output:
+```
+Component:   my-app
+Environment: production
+Datacenter:  my-dc
+Status:      ready
+
+Mode: multi-instance (progressive delivery)
+
+INSTANCE        WEIGHT   SOURCE                                   RESOURCES    DEPLOYED
+--------------- -------- ---------------------------------------- ------------ --------------------
+canary          10%      my-app:v2                                4            2026-02-09T10:00:00Z
+default         90%      my-app:v1                                4            2026-02-08T15:30:00Z
+
+Shared resources: 3
+```
+
+## Step 4: Increase to 25%
+
+```bash
+cldctl rollout set-weight my-app -e production --instance canary --weight 25
+```
+
+This is a lightweight traffic shift only -- no new deployments are created or destroyed. The "default" instance auto-adjusts to 75%.
+
+## Step 5: Increase to 50%
+
+```bash
+cldctl rollout set-weight my-app -e production --instance canary --weight 50
+```
+
+Default auto-adjusts to 50%. Verify error rates, latency, and logs.
+
+## Step 6: Fully Migrate Traffic
+
+```bash
+cldctl rollout set-weight my-app -e production --instance canary --weight 100
+```
+
+Default auto-adjusts to 0%. All traffic goes to canary, but **old infrastructure still exists** as a safety net. If something is wrong, instant rollback is available:
+
+```bash
+cldctl rollout set-weight my-app -e production --instance canary --weight 0
+```
+
+## Step 7: Clean Up Old Infrastructure
+
+```bash
+cldctl rollout promote my-app -e production --instance canary
+```
+
+This destroys default's per-instance resources, collapses back to single-instance mode, and state is clean.
+
+## Key Concepts
+
+### set-weight vs promote
+
+- **`set-weight`** is cheap and safe: it only changes routing, old infrastructure stays as a safety net
+- **`promote`** is the cleanup step: it destroys old infrastructure, commits to the new version
+
+### Rollback
+
+At any point before promote:
+- **`set-weight --weight 0`**: Redirect all traffic away but keep infrastructure (instant, safe)
+- **`rollout rollback`**: Destroy the instance entirely (removes infrastructure)
+
+### Blue-Green Pattern
+
+Same workflow but with `[0, 100]` weights:
+
+```bash
+# Deploy new version with no traffic
+cldctl deploy component my-app:v2 -e prod --instance green --weight 0
+
+# Instant switch
+cldctl rollout set-weight my-app -e prod --instance green --weight 100
+
+# Clean up old version
+cldctl rollout promote my-app -e prod --instance green
+```
+
+### Environment File Approach
+
+Declarative alternative using `instances` in `environment.yml`:
+
+```yaml
+components:
+  my-app:
+    instances:
+      - name: canary
+        source: my-app:v2
+        weight: 10
+      - name: stable
+        source: my-app:v1
+        weight: 90
+```
+
+Then deploy with:
+```bash
+cldctl up -e environment.yml
+```
+
+## Datacenter Hook Examples
+
+### Deployment Hook (Instance-Aware)
+
+```hcl
+deployment {
+  module "container" {
+    plugin = "native"
+    build  = "./modules/container"
+    inputs = {
+      name    = "${environment.name}-${node.component}-${node.instance.name}-${node.name}"
+      image   = node.inputs.image
+      network = variable.network_name
+    }
+  }
+  outputs = {
+    id = module.container.id
+  }
+}
+```
+
+### Route Hook (Traffic Splitting)
+
+```hcl
+route {
+  module "route" {
+    plugin = "native"
+    build  = "./modules/route"
+    inputs = {
+      name      = "${environment.name}-${node.component}-${node.name}"
+      instances = node.instances
+      host      = variable.host
+    }
+  }
+  outputs = {
+    url  = module.route.url
+    host = module.route.host
+    port = module.route.port
+  }
+}
+```
+
+The route module receives `node.instances` containing all instances with their names and weights, enabling traffic splitting configuration in the underlying infrastructure (Nginx, Istio, ALB, etc.).

@@ -1,0 +1,44 @@
+---
+title: rollout set-weight
+description: Update traffic weight of a component instance
+---
+
+# cldctl rollout set-weight
+
+Change the traffic weight of a named instance. This is a lightweight operation that only updates routing configuration -- no new infrastructure is created or destroyed.
+
+Other instances' weights are automatically adjusted proportionally to sum to 100.
+
+## Usage
+
+```bash
+cldctl rollout set-weight <component> -e <environment> --instance <name> --weight <0-100> [flags]
+```
+
+## Arguments
+
+| Argument | Description |
+|---|---|
+| `component` | Name of the component |
+
+## Flags
+
+| Flag | Short | Description |
+|---|---|---|
+| `--environment` | `-e` | Target environment (required) |
+| `--datacenter` | `-d` | Target datacenter |
+| `--instance` | | Instance name (required) |
+| `--weight` | | New traffic weight 0-100 (required) |
+
+## Examples
+
+```bash
+# Increase canary to 25%
+cldctl rollout set-weight my-app -e production --instance canary --weight 25
+
+# Send all traffic to canary (old infra still exists as safety net)
+cldctl rollout set-weight my-app -e production --instance canary --weight 100
+
+# Instant rollback: send all traffic back to stable
+cldctl rollout set-weight my-app -e production --instance canary --weight 0
+```

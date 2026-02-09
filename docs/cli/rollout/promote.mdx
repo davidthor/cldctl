@@ -1,0 +1,45 @@
+---
+title: rollout promote
+description: Promote an instance to be the sole version
+---
+
+# cldctl rollout promote
+
+Promote a named instance, destroying all other instances and collapsing the component back to single-instance mode. This is the final cleanup step after a successful progressive rollout.
+
+The promoted instance's source becomes the component's canonical source, its per-instance resources are moved to shared resources, and the Instances map is removed from state.
+
+## Usage
+
+```bash
+cldctl rollout promote <component> -e <environment> --instance <name> [flags]
+```
+
+## Arguments
+
+| Argument | Description |
+|---|---|
+| `component` | Name of the component |
+
+## Flags
+
+| Flag | Short | Description |
+|---|---|---|
+| `--environment` | `-e` | Target environment (required) |
+| `--datacenter` | `-d` | Target datacenter |
+| `--instance` | | Instance to promote (required) |
+
+## Examples
+
+```bash
+# Promote canary to be the sole version
+cldctl rollout promote my-app -e production --instance canary
+```
+
+## What Happens
+
+1. The promoted instance's per-instance resources are moved to component-level shared resources
+2. The component's source is updated to the promoted instance's source
+3. All other instances and their per-instance resources are marked for cleanup
+4. The `Instances` map is removed from component state
+5. The component returns to single-instance mode

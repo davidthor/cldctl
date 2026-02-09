@@ -34,6 +34,8 @@ cldctl deploy component <image> -e <environment> [options]
 | `--auto-approve` | Skip confirmation prompt |
 | `--import-file <path>` | Import existing cloud resources from a mapping file during deploy |
 | `--target <resource>` | Target specific resource (repeatable) |
+| `--instance <name>` | Deploy as a named instance for progressive delivery (canary/blue-green) |
+| `--weight <0-100>` | Traffic weight for the instance (default: 10, used with `--instance`) |
 | `--backend <type>` | State backend type |
 | `--backend-config <key=value>` | Backend configuration |
 
@@ -185,8 +187,35 @@ Error: missing required variables: api_key, database_url
 Use --var or --var-file to provide values, or run interactively
 ```
 
+## Progressive Delivery
+
+Use `--instance` and `--weight` to deploy as a weighted instance alongside the existing version:
+
+```bash
+# Deploy v2 as a canary at 10% traffic
+cldctl deploy component my-app:v2 -e production --instance canary --weight 10
+
+# Then manage the rollout
+cldctl rollout status my-app -e production
+cldctl rollout set-weight my-app -e production --instance canary --weight 50
+cldctl rollout promote my-app -e production --instance canary
+```
+
+When `--instance` is specified:
+- If the component is in single-instance mode, a "default" instance is automatically created for the existing deployment
+- The new instance gets the specified weight; other instances auto-adjust to sum to 100
+- Per-instance resources (deployments, services, ports) are duplicated; shared resources (databases, routes) are reused
+
+<Card title="Progressive Delivery Guide" icon="chart-line" href="/guides/progressive-delivery">
+  Complete guide to canary, blue-green, and A/B deployments
+</Card>
+
 ## See Also
 
 - [`cldctl destroy component`](/cli/destroy/component) - Destroy a deployed component
 - [`cldctl list component`](/cli/list/component) - List deployed components
 - [`cldctl get component`](/cli/get/component) - Get component details
+- [`cldctl rollout status`](/cli/rollout/status) - Show rollout status
+- [`cldctl rollout set-weight`](/cli/rollout/set-weight) - Update instance weight
+- [`cldctl rollout promote`](/cli/rollout/promote) - Promote an instance
+- [`cldctl rollout rollback`](/cli/rollout/rollback) - Rollback an instance
