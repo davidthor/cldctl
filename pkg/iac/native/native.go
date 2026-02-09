@@ -86,7 +86,7 @@ func (p *Plugin) Apply(ctx context.Context, opts iac.RunOptions) (*iac.ApplyResu
 			return nil, ctx.Err()
 		}
 
-		resourceState, err := p.applyResource(ctx, name, resource, evalCtx, existingState)
+		resourceState, err := p.applyResource(ctx, name, resource, evalCtx, existingState, opts.Stdout, opts.Stderr)
 		if err != nil {
 			// Rollback on failure
 			p.rollback(ctx, state)
@@ -286,7 +286,7 @@ func (p *Plugin) resolveInputs(defs map[string]InputDef, provided map[string]int
 	return resolved, nil
 }
 
-func (p *Plugin) applyResource(ctx context.Context, name string, resource Resource, evalCtx *EvalContext, existing *State) (*ResourceState, error) {
+func (p *Plugin) applyResource(ctx context.Context, name string, resource Resource, evalCtx *EvalContext, existing *State, stdout, stderr io.Writer) (*ResourceState, error) {
 	// Resolve properties with expressions
 	props, err := resolveProperties(resource.Properties, evalCtx)
 	if err != nil {
@@ -301,9 +301,9 @@ func (p *Plugin) applyResource(ctx context.Context, name string, resource Resour
 	case "docker:volume":
 		return p.applyDockerVolume(ctx, name, props, existing)
 	case "docker:build":
-		return p.applyDockerBuild(ctx, name, props, existing)
+		return p.applyDockerBuild(ctx, name, props, existing, stdout, stderr)
 	case "process":
-		return p.applyProcess(ctx, name, props, existing)
+		return p.applyProcess(ctx, name, props, existing, stdout, stderr)
 	case "exec":
 		return p.applyExec(ctx, name, props)
 	default:
@@ -497,7 +497,7 @@ func (p *Plugin) applyDockerVolume(ctx context.Context, name string, props map[s
 	}, nil
 }
 
-func (p *Plugin) applyDockerBuild(ctx context.Context, name string, props map[string]interface{}, existing *State) (*ResourceState, error) {
+func (p *Plugin) applyDockerBuild(ctx context.Context, name string, props map[string]interface{}, existing *State, stdout, stderr io.Writer) (*ResourceState, error) {
 	buildContext := getString(props, "context")
 	dockerfile := getString(props, "dockerfile")
 	target := getString(props, "target")
@@ -555,6 +555,10 @@ func (p *Plugin) applyDockerBuild(ctx context.Context, name string, props map[st
 		BuildArgs:  buildArgs,
 		NoCache:    noCache,
 	}
+
+	// Pass through output writers for log capture
+	opts.Stdout = stdout
+	opts.Stderr = stderr
 
 	// Stream build output in debug mode
 	if os.Getenv("CLDCTL_DEBUG") != "" {
@@ -644,7 +648,7 @@ func (p *Plugin) applyExec(ctx context.Context, name string, props map[string]in
 	}, nil
 }
 
-func (p *Plugin) applyProcess(ctx context.Context, name string, props map[string]interface{}, existing *State) (*ResourceState, error) {
+func (p *Plugin) applyProcess(ctx context.Context, name string, props map[string]interface{}, existing *State, stdout, stderr io.Writer) (*ResourceState, error) {
 	// Check if process already exists and is running
 	processName := getString(props, "name")
 	if existing != nil {
@@ -698,6 +702,8 @@ func (p *Plugin) applyProcess(ctx context.Context, name string, props map[string
 		Command:     getStringSlice(props, "command"),
 		Environment: env,
 		Readiness:   readiness,
+		Stdout:      stdout,
+		Stderr:      stderr,
 	}
 
 	info, err := p.process.StartProcess(ctx, opts)

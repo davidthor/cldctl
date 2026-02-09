@@ -3,10 +3,13 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/term"
 )
 
 // ResourceStatus represents the current status of a resource.
@@ -19,6 +22,16 @@ const (
 	StatusCompleted  ResourceStatus = "completed"
 	StatusFailed     ResourceStatus = "failed"
 	StatusSkipped    ResourceStatus = "skipped"
+)
+
+// ANSI color codes for dynamic table rendering.
+const (
+	colorReset  = "\033[0m"
+	colorRed    = "\033[31m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorDim    = "\033[90m"
+	ansiErase   = "\033[2K" // erase entire line
 )
 
 // ResourceInfo holds information about a resource for progress tracking.
@@ -39,22 +52,40 @@ type ResourceInfo struct {
 }
 
 // ProgressTable displays deployment progress.
-// It shows an initial plan table, then tracks status silently for the final summary.
+//
+// When the output writer is a terminal, the table renders dynamically —
+// resource status lines are redrawn in place using ANSI escape codes so the
+// user sees a live-updating table. When the writer is not a terminal (e.g.,
+// piped to a file or CI logs), each status change is printed as a single
+// append-only line for readability.
 type ProgressTable struct {
 	mu        sync.Mutex
 	resources map[string]*ResourceInfo
 	order     []string // Maintains insertion order for display
 	writer    io.Writer
 	startTime time.Time
+
+	// dynamic is true when the writer is a terminal that supports ANSI codes.
+	dynamic bool
+	// tableLines tracks how many lines the dynamic table occupies so that
+	// subsequent redraws can move the cursor back to overwrite them.
+	tableLines int
 }
 
 // NewProgressTable creates a new progress table.
+// If the writer is a terminal, the table will render dynamically.
 func NewProgressTable(w io.Writer) *ProgressTable {
+	dynamic := false
+	if f, ok := w.(*os.File); ok {
+		dynamic = term.IsTerminal(int(f.Fd()))
+	}
+
 	return &ProgressTable{
 		resources: make(map[string]*ResourceInfo),
 		order:     []string{},
 		writer:    w,
 		startTime: time.Now(),
+		dynamic:   dynamic,
 	}
 }
 
@@ -81,7 +112,7 @@ func (p *ProgressTable) AddResource(id, name, resourceType, component string, de
 	}
 }
 
-// UpdateStatus updates the status of a resource (tracked silently for final summary).
+// UpdateStatus updates the status of a resource.
 func (p *ProgressTable) UpdateStatus(id string, status ResourceStatus, message string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -147,12 +178,23 @@ func (p *ProgressTable) AppendLogs(id string, logs string) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
 
-// PrintInitial prints the deployment plan showing what resources will be created.
+// PrintInitial prints the initial deployment state.
 func (p *ProgressTable) PrintInitial() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	if p.dynamic {
+		// Dynamic mode: compact header + live table
+		fmt.Fprintf(p.writer, "\nDeploying %d resources...\n\n", len(p.order))
+		p.renderTableLocked()
+		return
+	}
+
+	// Non-dynamic mode: verbose plan listing (backward-compatible)
 	fmt.Fprintln(p.writer)
 	fmt.Fprintln(p.writer, "Deployment Plan:")
 	fmt.Fprintln(p.writer, strings.Repeat("─", 60))
@@ -207,11 +249,17 @@ func (p *ProgressTable) PrintInitial() {
 	fmt.Fprintln(p.writer)
 }
 
-// PrintUpdate prints a status update for a resource as a single line.
+// PrintUpdate displays progress for the given resource.
 func (p *ProgressTable) PrintUpdate(id string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	if p.dynamic {
+		p.renderTableLocked()
+		return
+	}
+
+	// Non-dynamic: single-line append-only updates
 	res, ok := p.resources[id]
 	if !ok {
 		return
@@ -241,43 +289,6 @@ func (p *ProgressTable) PrintUpdate(id string) {
 	fmt.Fprintln(p.writer, statusStr)
 }
 
-func (p *ProgressTable) statusIcon(status ResourceStatus) string {
-	switch status {
-	case StatusPending:
-		return "○"
-	case StatusWaiting:
-		return "◔"
-	case StatusInProgress:
-		return "◐"
-	case StatusCompleted:
-		return "●"
-	case StatusFailed:
-		return "✗"
-	case StatusSkipped:
-		return "◌"
-	default:
-		return "?"
-	}
-}
-
-func (p *ProgressTable) getDependencyNames(depIDs []string) []string {
-	names := make([]string, 0, len(depIDs))
-	for _, depID := range depIDs {
-		if res, ok := p.resources[depID]; ok {
-			names = append(names, res.Type+"/"+res.Name)
-		} else {
-			// Extract type/name from ID (format: component/type/name)
-			parts := strings.Split(depID, "/")
-			if len(parts) >= 3 {
-				names = append(names, parts[len(parts)-2]+"/"+parts[len(parts)-1])
-			} else {
-				names = append(names, depID)
-			}
-		}
-	}
-	return names
-}
-
 // PrintFinalSummary prints the final deployment summary.
 func (p *ProgressTable) PrintFinalSummary() {
 	p.mu.Lock()
@@ -297,6 +308,19 @@ func (p *ProgressTable) PrintFinalSummary() {
 
 	elapsed := time.Since(p.startTime).Round(time.Millisecond)
 
+	if p.dynamic {
+		// Render one final table update so the summary line shows the final counts.
+		p.renderTableLocked()
+
+		// On success the dynamic table's summary line is sufficient — no extra
+		// output needed.
+		if failed == 0 {
+			fmt.Fprintln(p.writer)
+			return
+		}
+	}
+
+	// Print separator
 	fmt.Fprintln(p.writer)
 	fmt.Fprintln(p.writer, strings.Repeat("─", 80))
 
@@ -375,6 +399,205 @@ func (p *ProgressTable) PrintFinalSummary() {
 		fmt.Fprintf(p.writer, "  ● %d resources deployed\n", completed)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Dynamic table renderer (ANSI terminal)
+// ---------------------------------------------------------------------------
+
+// renderTableLocked draws (or redraws) the live progress table.
+// Caller MUST hold p.mu.
+func (p *ProgressTable) renderTableLocked() {
+	// Move cursor up to overwrite the previous render.
+	if p.tableLines > 0 {
+		fmt.Fprintf(p.writer, "\033[%dA", p.tableLines)
+	}
+
+	lines := 0
+
+	// ---- compute column widths ----
+	maxLabelLen := 0
+	components := make(map[string]bool)
+	for _, id := range p.order {
+		res := p.resources[id]
+		label := res.Type + "/" + res.Name
+		if len(label) > maxLabelLen {
+			maxLabelLen = len(label)
+		}
+		components[res.Component] = true
+	}
+	multiComp := len(components) > 1
+
+	maxCompLen := 0
+	if multiComp {
+		for comp := range components {
+			if len(comp) > maxCompLen {
+				maxCompLen = len(comp)
+			}
+		}
+	}
+
+	// ---- render each resource row ----
+	for _, id := range p.order {
+		res := p.resources[id]
+		icon := p.coloredIcon(res.Status)
+		label := res.Type + "/" + res.Name
+		desc := p.statusDescription(res)
+
+		if multiComp {
+			compName := colorDim + fmt.Sprintf("%-*s", maxCompLen, res.Component) + colorReset
+			fmt.Fprintf(p.writer, "%s  %s  %s  %-*s  %s\n",
+				ansiErase, icon, compName, maxLabelLen, label, desc)
+		} else {
+			fmt.Fprintf(p.writer, "%s  %s  %-*s  %s\n",
+				ansiErase, icon, maxLabelLen, label, desc)
+		}
+		lines++
+	}
+
+	// ---- summary / progress line ----
+	var completed, failed int
+	allDone := true
+	for _, id := range p.order {
+		res := p.resources[id]
+		switch res.Status {
+		case StatusCompleted:
+			completed++
+		case StatusFailed:
+			failed++
+		case StatusPending, StatusWaiting, StatusInProgress:
+			allDone = false
+		}
+	}
+	total := len(p.order)
+	elapsed := time.Since(p.startTime).Round(time.Second)
+
+	// blank separator line
+	fmt.Fprintf(p.writer, "%s\n", ansiErase)
+	lines++
+
+	if allDone {
+		if failed > 0 {
+			fmt.Fprintf(p.writer, "%s  %s✗ %d/%d completed, %d failed%s (%s)\n",
+				ansiErase, colorRed, completed, total, failed, colorReset, elapsed)
+		} else {
+			fmt.Fprintf(p.writer, "%s  %s● %d/%d deployed%s (%s)\n",
+				ansiErase, colorGreen, completed, total, colorReset, elapsed)
+		}
+	} else {
+		fmt.Fprintf(p.writer, "%s  %d/%d completed (%s)\n",
+			ansiErase, completed, total, elapsed)
+	}
+	lines++
+
+	p.tableLines = lines
+}
+
+// coloredIcon returns the status icon wrapped in an ANSI color code.
+func (p *ProgressTable) coloredIcon(status ResourceStatus) string {
+	switch status {
+	case StatusPending:
+		return colorDim + "○" + colorReset
+	case StatusWaiting:
+		return colorDim + "◔" + colorReset
+	case StatusInProgress:
+		return colorYellow + "◐" + colorReset
+	case StatusCompleted:
+		return colorGreen + "●" + colorReset
+	case StatusFailed:
+		return colorRed + "✗" + colorReset
+	case StatusSkipped:
+		return colorDim + "◌" + colorReset
+	default:
+		return "?"
+	}
+}
+
+// statusDescription returns a human-readable description for the resource's
+// current status, with ANSI color codes.
+func (p *ProgressTable) statusDescription(res *ResourceInfo) string {
+	switch res.Status {
+	case StatusPending:
+		return colorDim + "pending" + colorReset
+	case StatusWaiting:
+		depNames := p.getDependencyNames(res.Dependencies)
+		return colorDim + "waiting for " + strings.Join(depNames, ", ") + colorReset
+	case StatusInProgress:
+		verb := "deploying"
+		switch res.Type {
+		case "build":
+			verb = "building"
+		case "database", "bucket", "service", "route", "network", "volume":
+			verb = "creating"
+		}
+		return colorYellow + verb + "..." + colorReset
+	case StatusCompleted:
+		duration := ""
+		if !res.EndTime.IsZero() && !res.StartTime.IsZero() {
+			duration = fmt.Sprintf(" (%s)", res.EndTime.Sub(res.StartTime).Round(time.Millisecond))
+		}
+		return colorGreen + "done" + duration + colorReset
+	case StatusFailed:
+		msg := "FAILED"
+		if res.Error != nil {
+			errStr := res.Error.Error()
+			// Keep error messages short for the table row
+			if len(errStr) > 60 {
+				errStr = errStr[:57] + "..."
+			}
+			msg += ": " + errStr
+		}
+		return colorRed + msg + colorReset
+	case StatusSkipped:
+		return colorDim + "skipped" + colorReset
+	default:
+		return ""
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+func (p *ProgressTable) statusIcon(status ResourceStatus) string {
+	switch status {
+	case StatusPending:
+		return "○"
+	case StatusWaiting:
+		return "◔"
+	case StatusInProgress:
+		return "◐"
+	case StatusCompleted:
+		return "●"
+	case StatusFailed:
+		return "✗"
+	case StatusSkipped:
+		return "◌"
+	default:
+		return "?"
+	}
+}
+
+func (p *ProgressTable) getDependencyNames(depIDs []string) []string {
+	names := make([]string, 0, len(depIDs))
+	for _, depID := range depIDs {
+		if res, ok := p.resources[depID]; ok {
+			names = append(names, res.Type+"/"+res.Name)
+		} else {
+			// Extract type/name from ID (format: component/type/name)
+			parts := strings.Split(depID, "/")
+			if len(parts) >= 3 {
+				names = append(names, parts[len(parts)-2]+"/"+parts[len(parts)-1])
+			} else {
+				names = append(names, depID)
+			}
+		}
+	}
+	return names
+}
+
+// ---------------------------------------------------------------------------
+// Query helpers (unchanged)
+// ---------------------------------------------------------------------------
 
 // GetCompletedCount returns the number of completed resources.
 func (p *ProgressTable) GetCompletedCount() int {

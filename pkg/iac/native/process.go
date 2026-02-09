@@ -26,6 +26,10 @@ type ProcessOptions struct {
 	Readiness *ReadinessCheck
 	// Graceful stop configuration
 	GracefulStop *GracefulStop
+	// Stdout receives process stdout. If nil, output is discarded.
+	Stdout io.Writer
+	// Stderr receives process stderr. If nil, output is discarded.
+	Stderr io.Writer
 }
 
 // ReadinessCheck defines a process readiness check.
@@ -102,11 +106,11 @@ func (pm *ProcessManager) StartProcess(ctx context.Context, opts ProcessOptions)
 	cmd.Env = env
 
 	// Set up output capture
-	stdout, err := cmd.StdoutPipe()
+	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
-	stderr, err := cmd.StderrPipe()
+	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
@@ -116,9 +120,17 @@ func (pm *ProcessManager) StartProcess(ctx context.Context, opts ProcessOptions)
 		return nil, fmt.Errorf("failed to start process: %w", err)
 	}
 
-	// Stream output
-	go streamOutput(stdout, fmt.Sprintf("[%s] ", opts.Name))
-	go streamOutput(stderr, fmt.Sprintf("[%s] [ERROR] ", opts.Name))
+	// Stream output to configured writers (or discard if nil)
+	stdoutWriter := opts.Stdout
+	if stdoutWriter == nil {
+		stdoutWriter = io.Discard
+	}
+	stderrWriter := opts.Stderr
+	if stderrWriter == nil {
+		stderrWriter = io.Discard
+	}
+	go streamOutput(stdoutPipe, fmt.Sprintf("[%s] ", opts.Name), stdoutWriter)
+	go streamOutput(stderrPipe, fmt.Sprintf("[%s] [ERROR] ", opts.Name), stderrWriter)
 
 	// Track completion
 	done := make(chan error, 1)
@@ -323,11 +335,11 @@ func (pm *ProcessManager) waitForReadyTCP(ctx context.Context, readiness *Readin
 	return fmt.Errorf("process did not become ready within %v", readiness.Timeout)
 }
 
-// streamOutput streams process output to stdout with a prefix.
-func streamOutput(r io.Reader, prefix string) {
+// streamOutput streams process output to the given writer with a prefix.
+func streamOutput(r io.Reader, prefix string, w io.Writer) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		fmt.Printf("%s%s\n", prefix, scanner.Text())
+		fmt.Fprintf(w, "%s%s\n", prefix, scanner.Text())
 	}
 }
 

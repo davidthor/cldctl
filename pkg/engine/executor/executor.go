@@ -56,6 +56,9 @@ type ProgressEvent struct {
 	Status   string // "pending", "running", "completed", "failed", "skipped"
 	Message  string
 	Error    error
+	// Logs contains captured stdout/stderr output from the resource execution.
+	// Populated on failure for error diagnostics.
+	Logs string
 }
 
 // ProgressCallback is called when resource status changes.
@@ -452,6 +455,11 @@ func (e *Executor) executeChange(ctx context.Context, change *planner.ResourceCh
 		result.NodeID = change.Node.ID
 	}
 
+	// Create a per-node log buffer to capture plugin output (build logs, process
+	// output, etc.). On failure the captured output is included in the progress
+	// event so the caller can display it for error diagnostics.
+	var logBuf bytes.Buffer
+
 	// Notify progress: starting
 	if e.options.OnProgress != nil && change.Node != nil {
 		e.options.OnProgress(ProgressEvent{
@@ -472,7 +480,7 @@ func (e *Executor) executeChange(ctx context.Context, change *planner.ResourceCh
 
 	switch change.Action {
 	case planner.ActionCreate, planner.ActionUpdate, planner.ActionReplace:
-		result = e.executeApply(ctx, change, envState)
+		result = e.executeApply(ctx, change, envState, &logBuf)
 	case planner.ActionDelete:
 		result = e.executeDestroy(ctx, change, envState)
 	case planner.ActionNoop:
@@ -488,6 +496,7 @@ func (e *Executor) executeChange(ctx context.Context, change *planner.ResourceCh
 		status := "completed"
 		msg := ""
 		progressErr := result.Error
+		capturedLogs := ""
 		if !result.Success {
 			status = "failed"
 			if ctx.Err() != nil {
@@ -496,6 +505,8 @@ func (e *Executor) executeChange(ctx context.Context, change *planner.ResourceCh
 			} else if result.Error != nil {
 				msg = result.Error.Error()
 			}
+			// Include captured logs on failure for error diagnostics
+			capturedLogs = logBuf.String()
 		}
 		e.options.OnProgress(ProgressEvent{
 			NodeID:   change.Node.ID,
@@ -504,13 +515,14 @@ func (e *Executor) executeChange(ctx context.Context, change *planner.ResourceCh
 			Status:   status,
 			Message:  msg,
 			Error:    progressErr,
+			Logs:     capturedLogs,
 		})
 	}
 
 	return result
 }
 
-func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceChange, envState *types.EnvironmentState) *NodeResult {
+func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceChange, envState *types.EnvironmentState, logBuf *bytes.Buffer) *NodeResult {
 	result := &NodeResult{
 		NodeID: change.Node.ID,
 		Action: change.Action,
@@ -560,7 +572,7 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 	e.stateMu.Unlock()
 
 	// Find the matching hook from datacenter and execute all its modules
-	hookResult, err := e.executeHookModules(ctx, change.Node, envState.Name, compState)
+	hookResult, err := e.executeHookModules(ctx, change.Node, envState.Name, compState, logBuf)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to execute hook: %w", err)
 		result.Success = false
@@ -623,7 +635,7 @@ type hookExecutionResult struct {
 // executeHookModules finds the matching hook, executes ALL its modules (not just the first),
 // allows cross-module references in inputs, evaluates hook outputs including nested objects,
 // and auto-populates read/write fallback outputs for database hooks.
-func (e *Executor) executeHookModules(ctx context.Context, node *graph.Node, envName string, compState *types.ComponentState) (*hookExecutionResult, error) {
+func (e *Executor) executeHookModules(ctx context.Context, node *graph.Node, envName string, compState *types.ComponentState, logBuf *bytes.Buffer) (*hookExecutionResult, error) {
 	dc := e.options.Datacenter
 	if dc == nil {
 		return nil, fmt.Errorf("no datacenter configuration provided")
@@ -714,11 +726,14 @@ func (e *Executor) executeHookModules(ctx context.Context, node *graph.Node, env
 			return nil, fmt.Errorf("failed to get IaC plugin %q: %w", pluginName, err)
 		}
 
-		// Execute
+		// Execute — pipe plugin output into the per-node log buffer so it can be
+		// included in error diagnostics instead of being printed to stdout.
 		runOpts := iac.RunOptions{
 			ModuleSource: modulePath,
 			Inputs:       inputs,
 			Environment:  map[string]string{},
+			Stdout:       logBuf,
+			Stderr:       logBuf,
 		}
 
 		applyResult, err := plugin.Apply(ctx, runOpts)

@@ -14,11 +14,15 @@ import (
 	"github.com/davidthor/cldctl/pkg/engine/executor"
 	"github.com/davidthor/cldctl/pkg/engine/planner"
 	"github.com/davidthor/cldctl/pkg/envfile"
+	"github.com/davidthor/cldctl/pkg/logs"
 	"github.com/davidthor/cldctl/pkg/schema/component"
 	"github.com/davidthor/cldctl/pkg/schema/environment"
 	"github.com/davidthor/cldctl/pkg/state"
 	"github.com/davidthor/cldctl/pkg/state/types"
 	"github.com/spf13/cobra"
+
+	// Register log query adapters for post-deployment log streaming
+	_ "github.com/davidthor/cldctl/pkg/logs/loki"
 )
 
 // resourceID generates a unique ID for a resource.
@@ -211,29 +215,35 @@ Examples:
 				progress.PrintInitial()
 			}
 
-			// Create progress callback for engine updates
-			onProgress := func(event executor.ProgressEvent) {
-				var status ResourceStatus
-				switch event.Status {
-				case "running":
-					status = StatusInProgress
-				case "completed":
-					status = StatusCompleted
-				case "failed":
-					status = StatusFailed
-				case "skipped":
-					status = StatusSkipped
-				default:
-					status = StatusPending
-				}
-
-				if event.Error != nil {
-					progress.SetError(event.NodeID, event.Error)
-				} else {
-					progress.UpdateStatus(event.NodeID, status, event.Message)
-				}
-				progress.PrintUpdate(event.NodeID)
+		// Create progress callback for engine updates
+		onProgress := func(event executor.ProgressEvent) {
+			var status ResourceStatus
+			switch event.Status {
+			case "running":
+				status = StatusInProgress
+			case "completed":
+				status = StatusCompleted
+			case "failed":
+				status = StatusFailed
+			case "skipped":
+				status = StatusSkipped
+			default:
+				status = StatusPending
 			}
+
+			if event.Error != nil {
+				progress.SetError(event.NodeID, event.Error)
+			} else {
+				progress.UpdateStatus(event.NodeID, status, event.Message)
+			}
+
+			// Capture logs from failed resources for error diagnostics
+			if event.Logs != "" {
+				progress.SetLogs(event.NodeID, event.Logs)
+			}
+
+			progress.PrintUpdate(event.NodeID)
+		}
 
 			// Execute deployment
 			result, err := eng.Deploy(ctx, engine.DeployOptions{
@@ -293,10 +303,51 @@ Examples:
 				fmt.Println("Running in background. To stop:")
 				fmt.Printf("  cldctl destroy environment %s\n", envName)
 			} else {
-				fmt.Println()
-				fmt.Println("Press Ctrl+C to stop...")
+				streaming := false
 
-				<-ctx.Done()
+				// Check if observability/log streaming is available
+				envState, envErr := mgr.GetEnvironment(ctx, dc, envName)
+				if envErr == nil {
+					queryType, queryEndpoint, obsErr := findObservabilityQueryConfig(envState)
+					if obsErr == nil && isInteractive() {
+						// Observability is available — ask user if they want to stream logs
+						fmt.Println()
+						fmt.Print("Stream logs for this environment? [Y/n]: ")
+						var response string
+						_, _ = fmt.Scanln(&response)
+						response = strings.ToLower(strings.TrimSpace(response))
+
+						if response == "" || response == "y" || response == "yes" {
+							querier, qErr := logs.NewQuerier(queryType, queryEndpoint)
+							if qErr == nil {
+								fmt.Fprintf(os.Stderr, "\nStreaming logs (Ctrl+C to stop)...\n\n")
+								stream, sErr := querier.Tail(ctx, logs.QueryOptions{
+									Environment: envName,
+								})
+								if sErr == nil {
+									streaming = true
+									muxOpts := logs.MultiplexOptions{
+										ShowTimestamps: false,
+										NoColor:        false,
+									}
+									// FormatStream blocks until context cancels (Ctrl+C)
+									_ = logs.FormatStream(os.Stdout, stream, muxOpts)
+									stream.Close()
+								}
+							}
+						} else {
+							fmt.Println()
+							fmt.Printf("You can stream logs at any time with: cldctl logs -e %s -f\n", envName)
+							fmt.Printf("Or open the observability dashboard with: cldctl obs dashboard -e %s\n", envName)
+						}
+					}
+				}
+
+				if !streaming {
+					fmt.Println()
+					fmt.Println("Press Ctrl+C to stop...")
+					<-ctx.Done()
+				}
 
 				cleanupEnvironment("interrupted")
 			}
