@@ -108,6 +108,26 @@ Hooks define how each resource type from components gets fulfilled. You can defi
   </Card>
 </CardGroup>
 
+## Extends (Inheritance)
+
+Datacenters can inherit from a parent datacenter using the `extends` attribute. This is especially useful for infrastructure migrations and creating datacenter variants:
+
+```hcl
+# Inherit from a published datacenter, override only what changes
+extends = {
+  image = "ghcr.io/myorg/my-dc:v1"
+}
+
+environment {
+  database {
+    when = element(split(":", node.inputs.type), 0) == "postgres"
+    # Override just the postgres hook...
+  }
+}
+```
+
+See [Extends](/datacenters/extends) for full details on merge semantics and modes.
+
 ## Error Handling
 
 Hooks can reject unsupported configurations with the `error` attribute. When matched, the deployment is blocked with a human-readable message:

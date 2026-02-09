@@ -348,7 +348,25 @@ func (e *Engine) Deploy(ctx context.Context, opts DeployOptions) (*DeployResult,
 
 // loadDatacenterConfig loads a datacenter configuration from a path or OCI reference.
 // Resolution order: local filesystem path → unified artifact registry → remote OCI pull.
+// If the loaded datacenter uses image-based extends, the parent is resolved recursively
+// and merged transparently.
 func (e *Engine) loadDatacenterConfig(ref string) (datacenter.Datacenter, error) {
+	return e.loadDatacenterConfigWithVisited(ref, nil)
+}
+
+// loadDatacenterConfigWithVisited is the internal implementation of loadDatacenterConfig
+// that tracks visited references to detect circular extends chains.
+func (e *Engine) loadDatacenterConfigWithVisited(ref string, visited map[string]bool) (datacenter.Datacenter, error) {
+	if visited == nil {
+		visited = make(map[string]bool)
+	}
+
+	// Circular extends detection
+	if visited[ref] {
+		return nil, fmt.Errorf("circular extends detected: datacenter %q extends itself (directly or indirectly)", ref)
+	}
+	visited[ref] = true
+
 	// Check if this is a local filesystem path
 	isLocalPath := strings.HasPrefix(ref, "./") || strings.HasPrefix(ref, "/") || strings.HasPrefix(ref, "../")
 	if !isLocalPath {
@@ -359,6 +377,9 @@ func (e *Engine) loadDatacenterConfig(ref string) (datacenter.Datacenter, error)
 			}
 		}
 	}
+
+	var dc datacenter.Datacenter
+	var err error
 
 	if isLocalPath {
 		// Resolve to absolute path
@@ -384,25 +405,48 @@ func (e *Engine) loadDatacenterConfig(ref string) (datacenter.Datacenter, error)
 			}
 		}
 
-		return e.dcLoader.Load(dcFile)
-	}
-
-	// Not a local path — check the unified artifact registry first (like docker run).
-	reg, err := registry.NewRegistry()
-	if err == nil {
-		entry, err := reg.Get(ref)
-		if err == nil && entry.CachePath != "" {
-			// Found in local registry — verify cache still exists on disk
-			dcFile := findDatacenterFile(entry.CachePath)
-			if dcFile != "" {
-				return e.dcLoader.Load(dcFile)
+		dc, err = e.dcLoader.Load(dcFile)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Not a local path — check the unified artifact registry first (like docker run).
+		reg, regErr := registry.NewRegistry()
+		if regErr == nil {
+			entry, entryErr := reg.Get(ref)
+			if entryErr == nil && entry.CachePath != "" {
+				// Found in local registry — verify cache still exists on disk
+				dcFile := findDatacenterFile(entry.CachePath)
+				if dcFile != "" {
+					dc, err = e.dcLoader.Load(dcFile)
+					if err != nil {
+						return nil, err
+					}
+				}
 			}
-			// Cache directory is gone; fall through to remote pull
+		}
+
+		if dc == nil {
+			// Not in local registry — pull from remote OCI registry
+			dc, err = e.loadDatacenterFromOCI(context.Background(), ref)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
-	// Not in local registry — pull from remote OCI registry
-	return e.loadDatacenterFromOCI(context.Background(), ref)
+	// Resolve image-based extends (deploy-time resolution)
+	if ext := dc.Extends(); ext != nil && ext.Image != "" {
+		parentDC, err := e.loadDatacenterConfigWithVisited(ext.Image, visited)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve parent datacenter %q: %w", ext.Image, err)
+		}
+
+		merged := datacenter.MergeDatacenters(dc.Internal(), parentDC.Internal())
+		dc = datacenter.NewFromInternal(merged)
+	}
+
+	return dc, nil
 }
 
 // loadDatacenterFromOCI pulls a datacenter artifact from a remote OCI registry,

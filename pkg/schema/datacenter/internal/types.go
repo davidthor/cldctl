@@ -3,6 +3,9 @@ package internal
 
 // InternalDatacenter is the canonical internal representation.
 type InternalDatacenter struct {
+	// Extends metadata (nil if not extending another datacenter)
+	Extends *InternalExtends
+
 	// Variables
 	Variables []InternalVariable
 
@@ -20,6 +23,12 @@ type InternalDatacenter struct {
 	// Source information
 	SourceVersion string
 	SourcePath    string
+}
+
+// InternalExtends represents datacenter inheritance metadata.
+type InternalExtends struct {
+	Image string // OCI reference (deploy-time resolution)
+	Path  string // Local path (build-time resolution -- only present before build collapses it)
 }
 
 // InternalDatacenterComponent represents a component declared at the datacenter level.

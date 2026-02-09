@@ -409,3 +409,160 @@ environment {
 		}
 	}
 }
+
+func TestParser_ExtendsImage(t *testing.T) {
+	parser := NewParser()
+
+	hcl := `
+extends = {
+  image = "ghcr.io/myorg/my-dc:v1"
+}
+
+environment {
+  database {
+    when = true
+    module "pg" {
+      plugin = "native"
+      build  = "./modules/pg"
+    }
+    outputs {
+      url = "test"
+    }
+  }
+}
+`
+
+	schema, diags, err := parser.ParseBytes([]byte(hcl), "test.hcl")
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+
+	for _, d := range diags {
+		if d.Severity == 0 {
+			t.Fatalf("unexpected error diagnostic: %s - %s", d.Summary, d.Detail)
+		}
+	}
+
+	if schema.Extends == nil {
+		t.Fatal("expected extends block")
+	}
+
+	if schema.Extends.Image != "ghcr.io/myorg/my-dc:v1" {
+		t.Errorf("expected image 'ghcr.io/myorg/my-dc:v1', got %q", schema.Extends.Image)
+	}
+
+	if schema.Extends.Path != "" {
+		t.Errorf("expected empty path, got %q", schema.Extends.Path)
+	}
+}
+
+func TestParser_ExtendsPath(t *testing.T) {
+	parser := NewParser()
+
+	hcl := `
+extends = {
+  path = "../base-datacenter"
+}
+
+environment {
+  database {
+    when = true
+    error = "not supported"
+  }
+}
+`
+
+	schema, diags, err := parser.ParseBytes([]byte(hcl), "test.hcl")
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+
+	for _, d := range diags {
+		if d.Severity == 0 {
+			t.Fatalf("unexpected error diagnostic: %s - %s", d.Summary, d.Detail)
+		}
+	}
+
+	if schema.Extends == nil {
+		t.Fatal("expected extends block")
+	}
+
+	if schema.Extends.Path != "../base-datacenter" {
+		t.Errorf("expected path '../base-datacenter', got %q", schema.Extends.Path)
+	}
+
+	if schema.Extends.Image != "" {
+		t.Errorf("expected empty image, got %q", schema.Extends.Image)
+	}
+}
+
+func TestParser_ExtendsMutualExclusivity(t *testing.T) {
+	parser := NewParser()
+
+	hcl := `
+extends = {
+  image = "ghcr.io/myorg/my-dc:v1"
+  path  = "../base-datacenter"
+}
+`
+
+	_, diags, _ := parser.ParseBytes([]byte(hcl), "test.hcl")
+
+	foundError := false
+	for _, d := range diags {
+		if d.Summary == "Invalid extends: 'image' and 'path' are mutually exclusive" {
+			foundError = true
+			break
+		}
+	}
+
+	if !foundError {
+		t.Error("expected diagnostic error for extends with both image and path")
+	}
+}
+
+func TestParser_ExtendsEmpty(t *testing.T) {
+	parser := NewParser()
+
+	hcl := `
+extends = {}
+`
+
+	_, diags, _ := parser.ParseBytes([]byte(hcl), "test.hcl")
+
+	foundError := false
+	for _, d := range diags {
+		if d.Summary == "Invalid extends: missing 'image' or 'path'" {
+			foundError = true
+			break
+		}
+	}
+
+	if !foundError {
+		t.Error("expected diagnostic error for empty extends")
+	}
+}
+
+func TestParser_NoExtends(t *testing.T) {
+	parser := NewParser()
+
+	hcl := `
+environment {
+  deployment {
+    module "deploy" {
+      plugin = "native"
+      build  = "./modules/deploy"
+    }
+  }
+}
+`
+
+	schema, _, err := parser.ParseBytes([]byte(hcl), "test.hcl")
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+
+	if schema.Extends != nil {
+		t.Error("expected no extends block")
+	}
+}

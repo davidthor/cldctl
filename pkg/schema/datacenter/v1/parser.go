@@ -69,6 +69,7 @@ func (p *Parser) ParseBytes(data []byte, filename string) (*SchemaV1, hcl.Diagno
 	bodySchema := &hcl.BodySchema{
 		Attributes: []hcl.AttributeSchema{
 			{Name: "version"},
+			{Name: "extends"},
 		},
 		Blocks: []hcl.BlockHeaderSchema{
 			{Type: "variable", LabelNames: []string{"name"}},
@@ -90,6 +91,15 @@ func (p *Parser) ParseBytes(data []byte, filename string) (*SchemaV1, hcl.Diagno
 		diags = append(diags, valDiags...)
 		if !valDiags.HasErrors() {
 			schema.Version = val.AsString()
+		}
+	}
+
+	// Parse extends attribute
+	if attr, ok := content.Attributes["extends"]; ok {
+		extendsBlock, extDiags := p.parseExtends(attr)
+		diags = append(diags, extDiags...)
+		if extendsBlock != nil {
+			schema.Extends = extendsBlock
 		}
 	}
 
@@ -129,6 +139,72 @@ func (p *Parser) ParseBytes(data []byte, filename string) (*SchemaV1, hcl.Diagno
 	}
 
 	return schema, diags, nil
+}
+
+func (p *Parser) parseExtends(attr *hcl.Attribute) (*ExtendsBlockV1, hcl.Diagnostics) {
+	var diags hcl.Diagnostics
+	hclCtx := p.getHCLContext()
+
+	val, valDiags := attr.Expr.Value(hclCtx)
+	diags = append(diags, valDiags...)
+	if valDiags.HasErrors() {
+		return nil, diags
+	}
+
+	// The extends attribute must be an object with either "image" or "path"
+	if !val.Type().IsObjectType() && !val.Type().IsMapType() {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid extends value",
+			Detail:   "The 'extends' attribute must be an object with either 'image' or 'path' set.",
+			Subject:  attr.Expr.Range().Ptr(),
+		})
+		return nil, diags
+	}
+
+	extends := &ExtendsBlockV1{}
+
+	if val.LengthInt() == 0 {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid extends: missing 'image' or 'path'",
+			Detail:   "The 'extends' attribute must have exactly one of 'image' or 'path' set.",
+			Subject:  attr.Expr.Range().Ptr(),
+		})
+		return nil, diags
+	}
+
+	valMap := val.AsValueMap()
+
+	if v, ok := valMap["image"]; ok && v.Type() == cty.String && v.AsString() != "" {
+		extends.Image = v.AsString()
+	}
+	if v, ok := valMap["path"]; ok && v.Type() == cty.String && v.AsString() != "" {
+		extends.Path = v.AsString()
+	}
+
+	// Validate mutual exclusivity
+	if extends.Image != "" && extends.Path != "" {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid extends: 'image' and 'path' are mutually exclusive",
+			Detail:   "The 'extends' attribute must have exactly one of 'image' or 'path' set, not both.",
+			Subject:  attr.Expr.Range().Ptr(),
+		})
+		return nil, diags
+	}
+
+	if extends.Image == "" && extends.Path == "" {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid extends: missing 'image' or 'path'",
+			Detail:   "The 'extends' attribute must have exactly one of 'image' or 'path' set.",
+			Subject:  attr.Expr.Range().Ptr(),
+		})
+		return nil, diags
+	}
+
+	return extends, diags
 }
 
 func (p *Parser) parseVariable(block *hcl.Block) (*VariableBlockV1, hcl.Diagnostics) {

@@ -118,11 +118,12 @@ type ComponentConfig struct {
 
 // DatacenterConfig represents the configuration stored in a datacenter artifact.
 type DatacenterConfig struct {
-	SchemaVersion string            `json:"schemaVersion"`
-	Name          string            `json:"name"`
+	SchemaVersion   string            `json:"schemaVersion"`
+	Name            string            `json:"name"`
 	ModuleArtifacts map[string]string `json:"moduleArtifacts,omitempty"` // Module name -> OCI reference
-	SourceHash    string            `json:"sourceHash,omitempty"`
-	BuildTime     string            `json:"buildTime,omitempty"`
+	ExtendsImage    string            `json:"extendsImage,omitempty"`    // Parent datacenter OCI reference (deploy-time resolution)
+	SourceHash      string            `json:"sourceHash,omitempty"`
+	BuildTime       string            `json:"buildTime,omitempty"`
 }
 
 // ModuleConfig represents the configuration stored in a module artifact.

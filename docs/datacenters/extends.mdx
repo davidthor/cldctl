@@ -1,0 +1,249 @@
+---
+title: "Extends"
+description: "Inherit from a parent datacenter for incremental overrides and migration workflows"
+---
+
+# Extends
+
+The `extends` attribute allows a child datacenter to inherit from a parent datacenter, producing a merged result. This is useful for:
+
+- **Infrastructure migrations**: Create minimal changesets that only override specific hooks
+- **Datacenter variants**: Share a base configuration across multiple datacenter flavors
+- **Incremental overrides**: Override only the hooks or modules that need to change
+
+## Syntax
+
+The `extends` attribute uses object syntax with exactly one of `image` or `path`:
+
+```hcl
+# Image-based: parent resolved at deploy time (reference stored in artifact)
+extends = {
+  image = "ghcr.io/myorg/my-dc:v1"
+}
+
+# Path-based: parent collapsed into child at build time (single artifact)
+extends = {
+  path = "./base-datacenter"
+}
+```
+
+<Warning>
+Exactly one of `image` or `path` must be set. Setting both or neither produces a validation error.
+</Warning>
+
+## Modes
+
+### Path-Based (`path`)
+
+The parent datacenter is loaded from a local directory at **build time** and collapsed into a single artifact. The resulting artifact is self-contained and has no runtime dependency on the parent.
+
+```hcl
+extends = {
+  path = "./base-datacenter"
+}
+```
+
+**When to use**: When you want a fully self-contained artifact, or the parent datacenter is in the same repository.
+
+### Image-Based (`image`)
+
+The parent datacenter is referenced by OCI image and resolved at **deploy time**. The child artifact stores the parent reference, and the engine fetches and merges the parent when the datacenter is deployed.
+
+```hcl
+extends = {
+  image = "ghcr.io/myorg/my-dc:v1"
+}
+```
+
+**When to use**: When the parent is published to a registry and you want to track a specific version, or when the parent may be updated independently.
+
+## Merge Semantics
+
+When merging a child datacenter with its parent, the following rules apply:
+
+| Element | Merge Rule |
+|---------|------------|
+| Variables | Union; child wins on name collision |
+| Root modules | Union; child wins on name collision |
+| Components | Union; child wins on name collision |
+| Environment modules | Union; child wins on name collision |
+| Hooks | **Prepend** child hooks before parent hooks (child hooks are higher priority in the waterfall) |
+
+### Variable Merging
+
+Variables from both parent and child are included. If a variable with the same name exists in both, the child's definition takes precedence:
+
+```hcl
+# Parent defines region with default us-east-1
+# Child overrides with us-west-2
+
+# Result: region variable with default us-west-2
+```
+
+### Module Merging
+
+Root-level and environment-level modules are merged by name. Child modules override parent modules with the same name:
+
+```hcl
+# Parent has module "vpc" pointing to ./modules/vpc-v1
+# Child has module "vpc" pointing to ./modules/vpc-v2
+
+# Result: module "vpc" uses ./modules/vpc-v2 (child wins)
+```
+
+### Hook Merging
+
+Hooks use **waterfall evaluation** (first match wins). Child hooks are prepended before parent hooks, giving them higher priority. This means the child can selectively override specific resource handling via `when` conditions while unmatched resources fall through to the parent's hooks.
+
+```
+Merged evaluation order:
+1. Child hooks (checked first - higher priority)
+2. Parent hooks (checked second - fallback)
+```
+
+#### Catch-All Handling
+
+If both child and parent have a catch-all hook (a hook without a `when` condition) for the same type, only the child's catch-all is kept. The parent's catch-all is dropped since the child's would shadow it.
+
+```hcl
+# Parent has:
+#   database when = postgres   (handled)
+#   database when = redis      (handled)
+#   database catch-all         (everything else)
+
+# Child adds:
+#   database when = postgres   (override)
+
+# Merged result:
+#   1. Child: database when = postgres    <- checked first
+#   2. Parent: database when = postgres   <- shadowed (never reached for postgres)
+#   3. Parent: database when = redis      <- still active
+#   4. Parent: database catch-all         <- still active
+```
+
+## Example: Migration Override
+
+Instead of copying an entire datacenter to change one hook, use `extends` to create a minimal changeset:
+
+```hcl
+# migration-step1.dc
+extends = {
+  image = "ghcr.io/myorg/my-dc:v1"
+}
+
+# Only override the postgres database hook
+environment {
+  database {
+    when = element(split(":", node.inputs.type), 0) == "postgres"
+
+    module "new_aurora" {
+      plugin = "opentofu"
+      build  = "./modules/aurora"
+      inputs = {
+        name = "${environment.name}-${node.component}-${node.name}"
+      }
+    }
+
+    outputs = {
+      host     = module.new_aurora.host
+      port     = module.new_aurora.port
+      url      = module.new_aurora.url
+      username = module.new_aurora.username
+      password = module.new_aurora.password
+    }
+  }
+}
+```
+
+All other hooks (deployment, service, route, etc.) are inherited from the parent without modification.
+
+## Example: Datacenter Variant
+
+Create environment-specific variants that share a common base:
+
+```hcl
+# production.dc - extends the base datacenter with production-specific settings
+extends = {
+  path = "./base"
+}
+
+variable "high_availability" {
+  type    = bool
+  default = true
+}
+
+environment {
+  database {
+    when = element(split(":", node.inputs.type), 0) == "postgres"
+
+    module "aurora" {
+      plugin = "opentofu"
+      build  = "./modules/aurora-ha"
+      inputs = {
+        name              = "${environment.name}-${node.component}-${node.name}"
+        multi_az          = variable.high_availability
+        instance_class    = "db.r6g.xlarge"
+      }
+    }
+
+    outputs = {
+      host     = module.aurora.host
+      port     = module.aurora.port
+      url      = module.aurora.url
+      username = module.aurora.username
+      password = module.aurora.password
+    }
+  }
+}
+```
+
+## Chaining
+
+Extends can be chained: a child can extend a parent that itself extends another parent. The merge is applied recursively. Circular extends chains are detected and produce an error.
+
+```hcl
+# base.dc
+variable "region" { ... }
+module "vpc" { ... }
+
+# mid-tier.dc
+extends = { path = "./base" }
+# Inherits vpc module, adds more hooks
+
+# production.dc
+extends = { path = "./mid-tier" }
+# Inherits everything from mid-tier (which includes base)
+```
+
+## Build & Deploy Commands
+
+### Path-based extends
+
+```bash
+# Build collapses parent into child (single artifact)
+cldctl build datacenter ./migration-step1 -t my-dc:v2-step1
+
+# Deploy as usual - no parent resolution needed
+cldctl deploy datacenter my-dc my-dc:v2-step1
+```
+
+### Image-based extends
+
+```bash
+# Build preserves parent reference in artifact
+cldctl build datacenter ./migration-step1 -t my-dc:v2-step1
+
+# Deploy resolves parent from registry at deploy time
+cldctl deploy datacenter my-dc my-dc:v2-step1
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Infrastructure Migration" icon="arrows-rotate" href="/guides/infrastructure-migration">
+    Step-by-step guide for zero-downtime migrations using extends
+  </Card>
+  <Card title="Datacenter Overview" icon="server" href="/datacenters/overview">
+    Full datacenter schema reference
+  </Card>
+</CardGroup>

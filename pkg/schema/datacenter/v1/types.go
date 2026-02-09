@@ -9,10 +9,18 @@ import (
 // SchemaV1 represents the v1 datacenter schema.
 type SchemaV1 struct {
 	Version     string              `hcl:"version,optional"`
+	Extends     *ExtendsBlockV1     `hcl:"-"` // Parsed manually from HCL (attribute syntax)
 	Variables   []VariableBlockV1   `hcl:"variable,block"`
 	Modules     []ModuleBlockV1     `hcl:"module,block"`
 	Components  []ComponentBlockV1  `hcl:"-"` // Parsed manually from HCL
 	Environment *EnvironmentBlockV1 `hcl:"environment,block"`
+}
+
+// ExtendsBlockV1 represents the extends attribute for datacenter inheritance.
+// Exactly one of Image or Path must be set.
+type ExtendsBlockV1 struct {
+	Image string // OCI reference for deploy-time resolution
+	Path  string // Local path for build-time resolution
 }
 
 // ComponentBlockV1 represents a datacenter-level component declaration.
