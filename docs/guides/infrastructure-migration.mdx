@@ -1,0 +1,561 @@
+---
+title: "Zero-Downtime Database Migration"
+description: "Migrate underlying database infrastructure with zero application downtime using sequential datacenter versions"
+---
+
+# Zero-Downtime Database Infrastructure Migration
+
+This guide walks datacenter operators through migrating underlying database infrastructure (e.g., RDS to Aurora, one Postgres cluster to another) with zero application downtime using sequential datacenter versions.
+
+## Why This Works
+
+cldctl's separation of concerns makes zero-downtime infrastructure migrations possible without any application code changes:
+
+- **Components** declare *what* they need -- a Postgres database with certain connection properties
+- **Datacenters** declare *how* that database is provisioned -- RDS, Aurora, self-hosted, etc.
+- **Operators** can change the *how* without touching the *what*
+
+The key enabler is the database hook's `read` and `write` endpoint separation. During normal operation, `read.url` and `write.url` both resolve to the same value as `url`. During a migration, operators can temporarily split them so reads go to one database and writes go to another -- all without changing a single line of component configuration.
+
+<Info>
+This guide assumes familiarity with [datacenter authoring](/guides/platform-engineer-workflow), [database hooks](/datacenters/database-hook), and [multi-module hooks](/datacenters/database-hook#multi-module-hooks).
+</Info>
+
+## Preparing the Application
+
+For migration readiness, components should reference separate read and write endpoints in their environment variables:
+
+```yaml
+# cloud.component.yml
+databases:
+  main:
+    type: postgres:^16
+
+deployments:
+  api:
+    image: ${{ builds.api.image }}
+    environment:
+      DATABASE_READ_URL: ${{ databases.main.read.url }}
+      DATABASE_WRITE_URL: ${{ databases.main.write.url }}
+```
+
+**No application changes are required to start using these expressions.** When no migration is in progress, `read.url` and `write.url` both fall back to the top-level `url` value automatically. The application sees identical connection strings for reads and writes until the operator intentionally splits them.
+
+<Tip>
+If your application currently uses a single `DATABASE_URL`, you can switch to `DATABASE_READ_URL` / `DATABASE_WRITE_URL` at any time. The values are identical until the operator explicitly separates them during a migration.
+</Tip>
+
+## Tagging Strategy
+
+Plan your migration as a sequence of datacenter versions. Each step is built and tagged as a separate OCI artifact so you can deploy, verify, and roll back independently.
+
+| Tag | Purpose |
+|-----|---------|
+| `my-dc:v1` | Current production datacenter |
+| `my-dc:v2-provision` | Step 1: Provision new DB alongside old |
+| `my-dc:v2-migrate` | Step 2: Copy data from old to new |
+| `my-dc:v2-proxy` | Step 3: Dual-write proxy active |
+| `my-dc:v2-catchup` | Step 4: Sync remaining data |
+| `my-dc:v2-shift-reads` | Step 5: Reads from new DB |
+| `my-dc:v2-direct` | Step 6: Remove proxy, point directly to new DB |
+| `my-dc:v2-cleanup` | Step 7: Remove old DB |
+| `my-dc:v2` | Final: clean datacenter with only new DB |
+
+<Tip>
+Keep all datacenter versions in source control (e.g., Git branches or directories) and build/tag each as an OCI artifact. This gives you a complete audit trail and the ability to roll back to any step.
+</Tip>
+
+## Step-by-Step Walkthrough
+
+The following examples show a migration from RDS Postgres to Aurora Postgres. The same pattern applies to any database provider swap.
+
+### Step 1 -- Provision New Database (`v2-provision`)
+
+Add the new Aurora database module alongside the existing RDS module. All traffic still points to the old database.
+
+```hcl
+database {
+  when = element(split(":", node.inputs.type), 0) == "postgres"
+
+  module "old_db" {
+    plugin = "pulumi"
+    build  = "./modules/rds-postgres"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.name}"
+    }
+  }
+
+  module "new_db" {
+    plugin = "pulumi"
+    build  = "./modules/aurora-postgres"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.name}-v2"
+    }
+  }
+
+  outputs = {
+    host     = module.old_db.host
+    port     = module.old_db.port
+    url      = module.old_db.url
+    username = module.old_db.username
+    password = module.old_db.password
+    database = node.name
+  }
+  # read/write auto-populated from top-level outputs (still pointing to old DB)
+}
+```
+
+**What happens:** The new Aurora cluster is created but receives no traffic. All reads and writes continue to hit the old RDS instance. The `read` and `write` outputs are auto-populated from the top-level values.
+
+### Step 2 -- Initial Data Copy (`v2-migrate`)
+
+Add a data migration module that copies data from the old database to the new one. Traffic still goes to the old database.
+
+```hcl
+database {
+  when = element(split(":", node.inputs.type), 0) == "postgres"
+
+  module "old_db" {
+    plugin = "pulumi"
+    build  = "./modules/rds-postgres"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.name}"
+    }
+  }
+
+  module "new_db" {
+    plugin = "pulumi"
+    build  = "./modules/aurora-postgres"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.name}-v2"
+    }
+  }
+
+  module "data_copy" {
+    plugin = "pulumi"
+    build  = "./modules/db-data-copy"
+    inputs = {
+      source_url = module.old_db.url
+      target_url = module.new_db.url
+    }
+  }
+
+  outputs = {
+    host     = module.old_db.host
+    port     = module.old_db.port
+    url      = module.old_db.url
+    username = module.old_db.username
+    password = module.old_db.password
+    database = node.name
+  }
+}
+```
+
+**What happens:** The bulk of your data is copied to the new database. The application continues to read and write to the old database undisturbed.
+
+### Step 3 -- Activate Write Proxy (`v2-proxy`)
+
+Introduce a dual-write proxy that replicates writes to both databases. Reads still come from the old database.
+
+```hcl
+database {
+  when = element(split(":", node.inputs.type), 0) == "postgres"
+
+  module "old_db" {
+    plugin = "pulumi"
+    build  = "./modules/rds-postgres"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.name}"
+    }
+  }
+
+  module "new_db" {
+    plugin = "pulumi"
+    build  = "./modules/aurora-postgres"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.name}-v2"
+    }
+  }
+
+  module "write_proxy" {
+    plugin = "pulumi"
+    build  = "./modules/db-write-proxy"
+    inputs = {
+      primary_url   = module.old_db.url
+      secondary_url = module.new_db.url
+    }
+  }
+
+  outputs = {
+    host     = module.old_db.host
+    port     = module.old_db.port
+    url      = module.old_db.url
+    username = module.old_db.username
+    password = module.old_db.password
+    database = node.name
+
+    read = {
+      host     = module.old_db.host
+      port     = module.old_db.port
+      url      = module.old_db.url
+      username = module.old_db.username
+      password = module.old_db.password
+    }
+
+    write = {
+      host     = module.write_proxy.host
+      port     = module.write_proxy.port
+      url      = module.write_proxy.url
+      username = module.write_proxy.username
+      password = module.write_proxy.password
+    }
+  }
+}
+```
+
+**What happens:** This is the first step that splits `read` and `write` endpoints. Reads continue from the old database. Writes go through a proxy that writes to *both* databases simultaneously. New data starts appearing in the new database immediately.
+
+### Step 4 -- Catch Up Delta (`v2-catchup`)
+
+Sync any data that was written between the initial copy and the proxy activation.
+
+```hcl
+database {
+  when = element(split(":", node.inputs.type), 0) == "postgres"
+
+  module "old_db" {
+    plugin = "pulumi"
+    build  = "./modules/rds-postgres"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.name}"
+    }
+  }
+
+  module "new_db" {
+    plugin = "pulumi"
+    build  = "./modules/aurora-postgres"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.name}-v2"
+    }
+  }
+
+  module "write_proxy" {
+    plugin = "pulumi"
+    build  = "./modules/db-write-proxy"
+    inputs = {
+      primary_url   = module.old_db.url
+      secondary_url = module.new_db.url
+    }
+  }
+
+  module "delta_sync" {
+    plugin = "pulumi"
+    build  = "./modules/db-delta-sync"
+    inputs = {
+      source_url = module.old_db.url
+      target_url = module.new_db.url
+    }
+  }
+
+  outputs = {
+    host     = module.old_db.host
+    port     = module.old_db.port
+    url      = module.old_db.url
+    username = module.old_db.username
+    password = module.old_db.password
+    database = node.name
+
+    read = {
+      host     = module.old_db.host
+      port     = module.old_db.port
+      url      = module.old_db.url
+      username = module.old_db.username
+      password = module.old_db.password
+    }
+
+    write = {
+      host     = module.write_proxy.host
+      port     = module.write_proxy.port
+      url      = module.write_proxy.url
+      username = module.write_proxy.username
+      password = module.write_proxy.password
+    }
+  }
+}
+```
+
+**What happens:** A delta sync module catches up any rows written between the initial copy and proxy activation. After this step, both databases are fully consistent. The dual-write proxy ensures they stay in sync going forward.
+
+### Step 5 -- Shift Reads to New Database (`v2-shift-reads`)
+
+Now that both databases are consistent, move read traffic to the new Aurora database.
+
+```hcl
+database {
+  when = element(split(":", node.inputs.type), 0) == "postgres"
+
+  module "old_db" {
+    plugin = "pulumi"
+    build  = "./modules/rds-postgres"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.name}"
+    }
+  }
+
+  module "new_db" {
+    plugin = "pulumi"
+    build  = "./modules/aurora-postgres"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.name}-v2"
+    }
+  }
+
+  module "write_proxy" {
+    plugin = "pulumi"
+    build  = "./modules/db-write-proxy"
+    inputs = {
+      primary_url   = module.old_db.url
+      secondary_url = module.new_db.url
+    }
+  }
+
+  outputs = {
+    host     = module.new_db.host
+    port     = module.new_db.port
+    url      = module.new_db.url
+    username = module.new_db.username
+    password = module.new_db.password
+    database = node.name
+
+    read = {
+      host     = module.new_db.host
+      port     = module.new_db.port
+      url      = module.new_db.url
+      username = module.new_db.username
+      password = module.new_db.password
+    }
+
+    write = {
+      host     = module.write_proxy.host
+      port     = module.write_proxy.port
+      url      = module.write_proxy.url
+      username = module.write_proxy.username
+      password = module.write_proxy.password
+    }
+  }
+}
+```
+
+**What happens:** Read traffic moves to the new Aurora database. Write traffic still goes through the dual-write proxy (writing to both). The top-level `url` now points to the new database too. Monitor latency and error rates carefully at this step.
+
+### Step 6 -- Remove Proxy, Direct Writes (`v2-direct`)
+
+With reads confirmed healthy on the new database, remove the write proxy and point writes directly to Aurora.
+
+```hcl
+database {
+  when = element(split(":", node.inputs.type), 0) == "postgres"
+
+  module "old_db" {
+    plugin = "pulumi"
+    build  = "./modules/rds-postgres"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.name}"
+    }
+  }
+
+  module "new_db" {
+    plugin = "pulumi"
+    build  = "./modules/aurora-postgres"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.name}-v2"
+    }
+  }
+
+  outputs = {
+    host     = module.new_db.host
+    port     = module.new_db.port
+    url      = module.new_db.url
+    username = module.new_db.username
+    password = module.new_db.password
+    database = node.name
+  }
+  # read/write auto-populated from top-level (both point to new DB now)
+}
+```
+
+**What happens:** The write proxy is removed. All traffic (reads and writes) goes directly to the new Aurora database. The old RDS instance is still running but receives no traffic. This is your safety net -- if something goes wrong, the old database still has all your data up to the point the proxy was removed.
+
+### Step 7 -- Clean Up Old Database (`v2-cleanup`)
+
+Once you've confirmed the new database is stable, remove the old RDS module entirely.
+
+```hcl
+database {
+  when = element(split(":", node.inputs.type), 0) == "postgres"
+
+  module "new_db" {
+    plugin = "pulumi"
+    build  = "./modules/aurora-postgres"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.name}-v2"
+    }
+  }
+
+  outputs = {
+    host     = module.new_db.host
+    port     = module.new_db.port
+    url      = module.new_db.url
+    username = module.new_db.username
+    password = module.new_db.password
+    database = node.name
+  }
+}
+```
+
+**What happens:** The old RDS instance is deprovisioned. Only the new Aurora database remains. The migration is complete.
+
+<Warning>
+This step is irreversible. Make sure you have verified the new database thoroughly before removing the old one. Consider keeping the old database for an additional grace period.
+</Warning>
+
+## Operator Commands
+
+Build and deploy each step sequentially, verifying between each:
+
+```bash
+# Build each step as a tagged OCI artifact
+cldctl build datacenter ./dc-v2-provision   -t my-dc:v2-provision
+cldctl build datacenter ./dc-v2-migrate     -t my-dc:v2-migrate
+cldctl build datacenter ./dc-v2-proxy       -t my-dc:v2-proxy
+cldctl build datacenter ./dc-v2-catchup     -t my-dc:v2-catchup
+cldctl build datacenter ./dc-v2-shift-reads -t my-dc:v2-shift-reads
+cldctl build datacenter ./dc-v2-direct      -t my-dc:v2-direct
+cldctl build datacenter ./dc-v2-cleanup     -t my-dc:v2-cleanup
+```
+
+Deploy each step one at a time:
+
+```bash
+# Step 1: Provision new database
+cldctl deploy datacenter my-dc my-dc:v2-provision
+# Verify: check new DB is healthy, run connectivity tests
+
+# Step 2: Copy data
+cldctl deploy datacenter my-dc my-dc:v2-migrate
+# Verify: check data copy completed, row counts match
+
+# Step 3: Activate dual-write proxy
+cldctl deploy datacenter my-dc my-dc:v2-proxy
+# Verify: dual-writes active, check write proxy metrics
+
+# Step 4: Catch up delta data
+cldctl deploy datacenter my-dc my-dc:v2-catchup
+# Verify: delta sync complete, data consistent across both databases
+
+# Step 5: Shift reads to new database
+cldctl deploy datacenter my-dc my-dc:v2-shift-reads
+# Verify: read traffic hitting new DB, monitor latency and error rates
+
+# Step 6: Remove proxy, direct writes to new database
+cldctl deploy datacenter my-dc my-dc:v2-direct
+# Verify: proxy removed, all traffic going to new DB directly
+
+# Step 7: Remove old database
+cldctl deploy datacenter my-dc my-dc:v2-cleanup
+# Done: old DB deprovisioned, migration complete
+```
+
+<Note>
+Each `deploy datacenter` command shows an execution plan before applying changes. Review the plan carefully at each step to confirm only the expected resources are being created, updated, or destroyed.
+</Note>
+
+## Rollback Strategy
+
+Since each datacenter version is a complete, self-contained definition, rollback is as simple as deploying an earlier tag:
+
+```bash
+# Something went wrong at step 5? Roll back to step 3:
+cldctl deploy datacenter my-dc my-dc:v2-proxy
+
+# Need to abort entirely? Roll back to the original:
+cldctl deploy datacenter my-dc my-dc:v1
+```
+
+Because cldctl tracks each module's IaC state separately, rolling back to a previous step will:
+
+1. **Restore** any resources that were removed (e.g., the write proxy)
+2. **Remove** any resources added in later steps
+3. **Update** outputs to match the rolled-back configuration
+
+The application automatically picks up the reverted connection strings on the next deployment cycle.
+
+## Verification Checklist
+
+Use this checklist between each step to verify the migration is proceeding correctly:
+
+| Check | Command / Action |
+|-------|-----------------|
+| New DB is healthy | Connect directly and run a health query |
+| Row counts match | Compare `SELECT COUNT(*)` across key tables |
+| Application errors | `cldctl logs -e production --since 5m` |
+| Latency metrics | Check your observability dashboard |
+| Write proxy metrics | Monitor proxy throughput and error rates |
+| Data consistency | Run application-level integrity checks |
+
+```bash
+# Quick health check via logs
+cldctl logs -e production --since 5m
+
+# Open observability dashboard for detailed metrics
+cldctl observability dashboard -e production
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always verify between steps">
+    Never rush through steps. Run health checks, compare row counts, and monitor error rates after each deployment before proceeding to the next step.
+  </Accordion>
+
+  <Accordion title="Test in staging first">
+    Run the complete migration sequence in a staging environment before touching production. This validates your modules, timing, and rollback procedures.
+  </Accordion>
+
+  <Accordion title="Keep all versions in source control">
+    Each datacenter version should be committed to Git. This gives you a complete audit trail and makes it easy to reproduce any step.
+  </Accordion>
+
+  <Accordion title="Use expand-and-contract for schema migrations">
+    If you need to change the database schema as part of the migration, make sure the new schema is backwards-compatible with the old application code. Add new columns/tables first, migrate data, then remove old columns in a later release.
+  </Accordion>
+
+  <Accordion title="Schedule during low-traffic periods">
+    While the migration is designed to be zero-downtime, running during low-traffic periods reduces risk and makes it easier to spot anomalies in metrics.
+  </Accordion>
+
+  <Accordion title="Monitor application error rates at each step">
+    Set up alerts for elevated error rates. If errors spike after a step, roll back immediately and investigate before retrying.
+  </Accordion>
+
+  <Accordion title="Keep the old database as a safety net">
+    After step 6 (direct writes to new DB), consider waiting a grace period (hours or days) before step 7 (cleanup). The old database serves as a backup during this time.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Database Hook Reference" icon="database" href="/datacenters/database-hook">
+    Full database hook specification including read/write outputs
+  </Card>
+  <Card title="Database Expressions" icon="code" href="/components/databases">
+    Component-side database expressions and read/write endpoints
+  </Card>
+  <Card title="Platform Engineer Workflow" icon="gear" href="/guides/platform-engineer-workflow">
+    Complete guide to authoring and managing datacenters
+  </Card>
+  <Card title="Managing Environments" icon="layer-group" href="/guides/managing-environments">
+    Day-to-day environment operations
+  </Card>
+</CardGroup>

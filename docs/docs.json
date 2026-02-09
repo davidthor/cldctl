@@ -139,7 +139,8 @@
             "group": "Getting Started",
             "pages": [
               "guides/platform-engineer-workflow",
-              "guides/managing-environments"
+              "guides/managing-environments",
+              "guides/infrastructure-migration"
             ]
           },
           {
