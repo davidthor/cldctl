@@ -112,26 +112,28 @@ cldctl push component ghcr.io/acme/frontend:v1.0.0
 cldctl push component ghcr.io/acme/api:v1.0.0
 ```
 
-## Step 2: Deploy a Datacenter
+## Step 2: Register a Datacenter (Without Provisioning)
 
-cldctl needs a datacenter to know **how** resources are provisioned. Deploy the AWS ECS datacenter template (or your own):
+cldctl needs a datacenter to know **how** resources are provisioned. But since your infrastructure already exists, you don't want the deploy to create new root-level modules (VPC, networking, etc.). Use `--skip-modules` to register the datacenter without provisioning anything:
 
 ```bash
 # Pull the official AWS ECS datacenter template
 cldctl pull datacenter ghcr.io/cldctl/aws-ecs:latest
 
-# Deploy it with your AWS configuration
+# Register it — --skip-modules prevents root module provisioning
 cldctl deploy datacenter prod-dc ghcr.io/cldctl/aws-ecs:latest \
+  --skip-modules \
   --var aws_region=us-east-1 \
   --var vpc_id=vpc-0abc123def456 \
   --var ecs_cluster_arn=arn:aws:ecs:us-east-1:123456789:cluster/acme \
   --var domain=acme.com
 ```
 
-This registers the datacenter in cldctl's state. The root-level modules (VPC references, shared networking) are provisioned or imported here.
+This saves the datacenter state (variables, source reference, component declarations) but does **not** provision any root-level modules. The datacenter is now known to cldctl, so hook matching works for environment-level imports.
 
-<Tip>
-If the datacenter template also has root-level modules for shared infrastructure (like a VPC or ALB), you can import those too:
+### Import Root Modules
+
+If the datacenter template has root-level modules for shared infrastructure (VPC, ALB, networking), import them now so cldctl knows about the existing resources:
 
 ```bash
 cldctl import datacenter prod-dc \
@@ -139,8 +141,17 @@ cldctl import datacenter prod-dc \
   --map "aws_vpc.main=vpc-0abc123def456" \
   --map "aws_subnet.public[0]=subnet-aaa111" \
   --map "aws_subnet.public[1]=subnet-bbb222"
+
+cldctl import datacenter prod-dc \
+  --module alb \
+  --map "aws_lb.main=arn:aws:elasticloadbalancing:us-east-1:123456789:loadbalancer/app/acme-alb/abc123"
 ```
-</Tip>
+
+<Note>
+If the datacenter template has no root-level modules (some templates only define hooks and rely on pre-existing shared infrastructure), you can skip this step.
+</Note>
+
+Later, once all imports are complete, you can run `deploy datacenter` again **without** `--skip-modules` to reconcile. Since the modules already have imported state, cldctl will update them in place rather than creating duplicates.
 
 ## Step 3: Create the Environment
 
@@ -406,12 +417,13 @@ Resources not included in the mapping file are simply absent from state. A subse
 |------|---------|-------------|
 | 1 | Write `cloud.component.yml` | Describe what each app needs |
 | 2 | `cldctl build component` | Package the component definition |
-| 3 | `cldctl deploy datacenter` | Set up the infrastructure template |
-| 4 | `cldctl create environment` | Create an empty environment |
-| 5 | Write mapping YAML | Map cloud resource IDs to IaC addresses |
-| 6 | `cldctl import component` | Adopt existing resources into state |
-| 7 | `cldctl inspect` | Verify the import |
-| 8 | `cldctl deploy component` | Make future changes through cldctl |
+| 3 | `cldctl deploy datacenter --skip-modules` | Register the datacenter without provisioning |
+| 4 | `cldctl import datacenter --module` | Import existing root-level modules |
+| 5 | `cldctl create environment` | Create an empty environment |
+| 6 | Write mapping YAML | Map cloud resource IDs to IaC addresses |
+| 7 | `cldctl import component` | Adopt existing resources into state |
+| 8 | `cldctl inspect` | Verify the import |
+| 9 | `cldctl deploy component` | Make future changes through cldctl |
 
 ## Related Guides
 

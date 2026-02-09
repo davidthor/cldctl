@@ -502,6 +502,7 @@ func newDeployDatacenterCmd() *cobra.Command {
 		variables     []string
 		varFile       string
 		autoApprove   bool
+		skipModules   bool
 		backendType   string
 		backendConfig []string
 	)
@@ -517,6 +518,11 @@ The image must be a reference to a datacenter artifact in the local cache
 If the image is not cached locally, it will be pulled from the remote registry
 automatically.
 
+Use --skip-modules to register the datacenter without provisioning root-level
+modules. This is useful when adopting existing infrastructure: register the
+datacenter first, then use 'cldctl import datacenter' to import existing
+cloud resources into module state before the first full deploy.
+
 Arguments:
   name    Name for the deployed datacenter
   image   Datacenter image reference (e.g., my-dc:latest, davidthor/local-datacenter)
@@ -524,7 +530,10 @@ Arguments:
 Examples:
   cldctl deploy datacenter local davidthor/local-datacenter
   cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0
-  cldctl deploy datacenter my-dc my-dc:latest`,
+  cldctl deploy datacenter my-dc my-dc:latest
+
+  # Register without provisioning (for import workflows)
+  cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 --skip-modules`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
@@ -671,22 +680,49 @@ Examples:
 				fmt.Printf("[config] Default datacenter set to %q\n", dcName)
 			}
 
-			// Execute root-level modules and reconcile environments
-			dcResult, err := eng.DeployDatacenter(ctx, engine.DeployDatacenterOptions{
-				Datacenter:  dcName,
-				Output:      os.Stdout,
-				Parallelism: defaultParallelism,
-			})
-			if err != nil {
-				return fmt.Errorf("failed to provision datacenter infrastructure: %w", err)
-			}
-			if !dcResult.Success {
-				return fmt.Errorf("datacenter infrastructure provisioning failed")
-			}
+			if skipModules {
+				// Register datacenter-level component declarations without
+				// provisioning root modules. This lets operators import
+				// existing infrastructure before the first full deploy.
+				dcConfig, loadErr := eng.LoadDatacenterForRegistration(ctx, imageRef)
+				if loadErr == nil && dcConfig != nil {
+					for _, comp := range dcConfig.Components() {
+						compConfig := &types.DatacenterComponentConfig{
+							Name:      comp.Name(),
+							Source:    comp.Source(),
+							Variables: comp.Variables(),
+						}
+						_ = mgr.SaveDatacenterComponent(ctx, dcName, compConfig)
+					}
+				}
 
-			fmt.Printf("[success] Datacenter %q deployed from %s\n", dcName, imageRef)
-			fmt.Println()
-			fmt.Println("The datacenter is now available for use with environments.")
+				fmt.Printf("[success] Datacenter %q registered from %s (modules skipped)\n", dcName, imageRef)
+				fmt.Println()
+				fmt.Println("Root-level modules were NOT provisioned. To adopt existing")
+				fmt.Println("infrastructure, import each module now:")
+				fmt.Println()
+				fmt.Println("  cldctl import datacenter " + dcName + " --module <name> --map <address>=<id>")
+				fmt.Println()
+				fmt.Println("Then run 'cldctl deploy datacenter' again without --skip-modules")
+				fmt.Println("to reconcile and provision any remaining resources.")
+			} else {
+				// Execute root-level modules and reconcile environments
+				dcResult, err := eng.DeployDatacenter(ctx, engine.DeployDatacenterOptions{
+					Datacenter:  dcName,
+					Output:      os.Stdout,
+					Parallelism: defaultParallelism,
+				})
+				if err != nil {
+					return fmt.Errorf("failed to provision datacenter infrastructure: %w", err)
+				}
+				if !dcResult.Success {
+					return fmt.Errorf("datacenter infrastructure provisioning failed")
+				}
+
+				fmt.Printf("[success] Datacenter %q deployed from %s\n", dcName, imageRef)
+				fmt.Println()
+				fmt.Println("The datacenter is now available for use with environments.")
+			}
 
 			return nil
 		},
@@ -695,6 +731,7 @@ Examples:
 	cmd.Flags().StringArrayVar(&variables, "var", nil, "Set variable (key=value)")
 	cmd.Flags().StringVar(&varFile, "var-file", "", "Load variables from file")
 	cmd.Flags().BoolVar(&autoApprove, "auto-approve", false, "Skip confirmation prompt")
+	cmd.Flags().BoolVar(&skipModules, "skip-modules", false, "Register datacenter without provisioning root modules (for import workflows)")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
 

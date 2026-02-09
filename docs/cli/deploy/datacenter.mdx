@@ -31,6 +31,7 @@ cldctl deploy datacenter <name> <config> [options]
 | `--var <key=value>` | Set a datacenter variable (repeatable) |
 | `--var-file <path>` | Load variables from file |
 | `--auto-approve` | Skip confirmation prompt |
+| `--skip-modules` | Register the datacenter without provisioning root-level modules (for import workflows) |
 | `--backend <type>` | State backend type |
 | `--backend-config <key=value>` | Backend configuration |
 
@@ -54,6 +55,15 @@ cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 \
 # Deploy with auto-approval (CI/CD)
 cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 \
   --auto-approve
+
+# Register without provisioning (import existing infrastructure first)
+cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 \
+  --skip-modules \
+  --var region=us-east-1
+# Then import root modules:
+#   cldctl import datacenter prod-dc --module vpc --map "aws_vpc.main=vpc-0abc123"
+# Then deploy again to reconcile:
+#   cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0
 ```
 
 ## Execution Plan Output
@@ -109,8 +119,39 @@ No changes. Datacenter "prod-dc" is up to date.
 Proceed? [Y/n]:
 ```
 
+## Importing Existing Infrastructure
+
+When migrating existing cloud infrastructure to cldctl, use `--skip-modules` to
+register the datacenter without provisioning root-level modules. This gives you
+a window to import existing resources before cldctl tries to create them:
+
+```bash
+# 1. Register the datacenter (no provisioning)
+cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 \
+  --skip-modules --var region=us-east-1
+
+# 2. Import existing root modules
+cldctl import datacenter prod-dc \
+  --module vpc \
+  --map "aws_vpc.main=vpc-0abc123" \
+  --map "aws_subnet.public[0]=subnet-aaa111"
+
+# 3. Deploy again to reconcile (existing state is preserved)
+cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 \
+  --var region=us-east-1
+```
+
+On the second deploy, cldctl sees that the VPC module already has state (from the
+import) and updates it rather than creating a new one.
+
+<Tip>
+See the [Migrating an Existing App](/guides/migrating-existing-app) guide for a
+complete end-to-end walkthrough.
+</Tip>
+
 ## See Also
 
 - [`cldctl destroy datacenter`](/cli/destroy/datacenter) - Destroy a datacenter
 - [`cldctl list datacenter`](/cli/list/datacenter) - List deployed datacenters
 - [`cldctl get datacenter`](/cli/get/datacenter) - Get datacenter details
+- [`cldctl import datacenter`](/cli/import/datacenter) - Import existing infrastructure into a datacenter module

@@ -35,6 +35,7 @@ cldctl deploy component myorg/myapp:v1 -e production -d my-datacenter
 cldctl deploy component myorg/stripe:latest -d my-dc --var key=secret  # datacenter-level component (no -e)
 cldctl deploy datacenter local davidthor/local-datacenter
 cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0
+cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 --skip-modules  # register without provisioning (for import)
 
 # Environment management
 cldctl create environment staging -d my-datacenter
