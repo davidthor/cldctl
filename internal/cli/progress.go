@@ -294,18 +294,24 @@ func (p *ProgressTable) PrintFinalSummary() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	var completed, failed, skipped int
-	for _, res := range p.resources {
+	var completed, rootFailed, cascaded, skipped int
+	for _, id := range p.order {
+		res := p.resources[id]
 		switch res.Status {
 		case StatusCompleted:
 			completed++
 		case StatusFailed:
-			failed++
+			if p.isCascadedFailure(res) {
+				cascaded++
+			} else {
+				rootFailed++
+			}
 		case StatusSkipped:
 			skipped++
 		}
 	}
 
+	anyFailed := rootFailed > 0 || cascaded > 0
 	elapsed := time.Since(p.startTime).Round(time.Millisecond)
 
 	if p.dynamic {
@@ -314,7 +320,7 @@ func (p *ProgressTable) PrintFinalSummary() {
 
 		// On success the dynamic table's summary line is sufficient — no extra
 		// output needed.
-		if failed == 0 {
+		if !anyFailed {
 			fmt.Fprintln(p.writer)
 			return
 		}
@@ -324,9 +330,19 @@ func (p *ProgressTable) PrintFinalSummary() {
 	fmt.Fprintln(p.writer)
 	fmt.Fprintln(p.writer, strings.Repeat("─", 80))
 
-	if failed > 0 {
+	if anyFailed {
 		fmt.Fprintf(p.writer, "Deployment FAILED (%s)\n", elapsed)
-		fmt.Fprintf(p.writer, "  ● %d succeeded  ✗ %d failed  ◌ %d skipped\n", completed, failed, skipped)
+		parts := []string{fmt.Sprintf("● %d succeeded", completed)}
+		if rootFailed > 0 {
+			parts = append(parts, fmt.Sprintf("✗ %d failed", rootFailed))
+		}
+		if cascaded > 0 {
+			parts = append(parts, fmt.Sprintf("○ %d cancelled", cascaded))
+		}
+		if skipped > 0 {
+			parts = append(parts, fmt.Sprintf("◌ %d skipped", skipped))
+		}
+		fmt.Fprintf(p.writer, "  %s\n", strings.Join(parts, "  "))
 
 		// Separate root-cause failures from cascaded/stopped failures
 		var rootFailures, cascadedFailures []*ResourceInfo
@@ -335,11 +351,7 @@ func (p *ProgressTable) PrintFinalSummary() {
 			if res.Status != StatusFailed {
 				continue
 			}
-			errMsg := ""
-			if res.Error != nil {
-				errMsg = res.Error.Error()
-			}
-			if strings.HasPrefix(errMsg, "dependency ") || strings.HasPrefix(errMsg, "deployment stopped:") || errMsg == "cancelled" {
+			if p.isCascadedFailure(res) {
 				cascadedFailures = append(cascadedFailures, res)
 			} else {
 				rootFailures = append(rootFailures, res)
@@ -439,23 +451,24 @@ func (p *ProgressTable) renderTableLocked() {
 	// ---- render each resource row ----
 	for _, id := range p.order {
 		res := p.resources[id]
-		icon := p.coloredIcon(res.Status)
+		icon := p.coloredIconForResource(res)
 		label := res.Type + "/" + res.Name
 		desc := p.statusDescription(res)
+		deps := p.dependencyColumn(res)
 
 		if multiComp {
 			compName := colorDim + fmt.Sprintf("%-*s", maxCompLen, res.Component) + colorReset
-			fmt.Fprintf(p.writer, "%s  %s  %s  %-*s  %s\n",
-				ansiErase, icon, compName, maxLabelLen, label, desc)
+			fmt.Fprintf(p.writer, "%s  %s  %s  %-*s  %s%s\n",
+				ansiErase, icon, compName, maxLabelLen, label, desc, deps)
 		} else {
-			fmt.Fprintf(p.writer, "%s  %s  %-*s  %s\n",
-				ansiErase, icon, maxLabelLen, label, desc)
+			fmt.Fprintf(p.writer, "%s  %s  %-*s  %s%s\n",
+				ansiErase, icon, maxLabelLen, label, desc, deps)
 		}
 		lines++
 	}
 
 	// ---- summary / progress line ----
-	var completed, failed int
+	var completed, rootFailed, cascaded int
 	allDone := true
 	for _, id := range p.order {
 		res := p.resources[id]
@@ -463,7 +476,11 @@ func (p *ProgressTable) renderTableLocked() {
 		case StatusCompleted:
 			completed++
 		case StatusFailed:
-			failed++
+			if p.isCascadedFailure(res) {
+				cascaded++
+			} else {
+				rootFailed++
+			}
 		case StatusPending, StatusWaiting, StatusInProgress:
 			allDone = false
 		}
@@ -476,9 +493,13 @@ func (p *ProgressTable) renderTableLocked() {
 	lines++
 
 	if allDone {
-		if failed > 0 {
-			fmt.Fprintf(p.writer, "%s  %s✗ %d/%d completed, %d failed%s (%s)\n",
-				ansiErase, colorRed, completed, total, failed, colorReset, elapsed)
+		if rootFailed > 0 || cascaded > 0 {
+			extra := ""
+			if cascaded > 0 {
+				extra = fmt.Sprintf(", %d cancelled", cascaded)
+			}
+			fmt.Fprintf(p.writer, "%s  %s✗ %d/%d completed, %d failed%s%s (%s)\n",
+				ansiErase, colorRed, completed, total, rootFailed, extra, colorReset, elapsed)
 		} else {
 			fmt.Fprintf(p.writer, "%s  %s● %d/%d deployed%s (%s)\n",
 				ansiErase, colorGreen, completed, total, colorReset, elapsed)
@@ -492,7 +513,100 @@ func (p *ProgressTable) renderTableLocked() {
 	p.tableLines = lines
 }
 
+// dependencyColumn returns a formatted dependency hint for a resource row.
+// Once all dependencies are completed, it returns an empty string so the
+// column disappears. For long dependency lists it shows a count instead.
+//
+// For cascaded/cancelled failures, it shows the root-cause failure(s) that
+// triggered the cancellation instead of graph dependencies — even if the
+// resource has no direct dependency on the failed resource.
+func (p *ProgressTable) dependencyColumn(res *ResourceInfo) string {
+	// For cascaded failures, show what caused the cancellation.
+	if p.isCascadedFailure(res) {
+		return p.rootCauseColumn(res)
+	}
+
+	if len(res.Dependencies) == 0 {
+		return ""
+	}
+
+	// Collect only incomplete dependencies.
+	var pending []string
+	for _, depID := range res.Dependencies {
+		if dep, ok := p.resources[depID]; ok {
+			if dep.Status != StatusCompleted {
+				pending = append(pending, dep.Type+"/"+dep.Name)
+			}
+		}
+	}
+
+	if len(pending) == 0 {
+		// All dependencies satisfied — hide the column.
+		return ""
+	}
+
+	short := strings.Join(pending, ", ")
+	const maxLen = 30
+	if len(short) <= maxLen {
+		return "  " + colorDim + "← " + short + colorReset
+	}
+	// Too long — show count instead.
+	return fmt.Sprintf("  %s← %d deps%s", colorDim, len(pending), colorReset)
+}
+
+// rootCauseColumn returns a formatted hint showing which resource(s) caused a
+// cascaded failure. It only shows a cause when the error message names a
+// specific dependency (i.e., the resource has a real graph dependency on the
+// failed resource). Resources cancelled by StopOnError context cancellation
+// show no cause — attributing a specific failure to them would be misleading.
+func (p *ProgressTable) rootCauseColumn(res *ResourceInfo) string {
+	if res.Error == nil {
+		return ""
+	}
+	errMsg := res.Error.Error()
+
+	// "dependency <id> failed" — extract the specific dependency.
+	if strings.HasPrefix(errMsg, "dependency ") && strings.HasSuffix(errMsg, " failed") {
+		depID := strings.TrimPrefix(errMsg, "dependency ")
+		depID = strings.TrimSuffix(depID, " failed")
+		if dep, ok := p.resources[depID]; ok {
+			return "  " + colorDim + "← " + dep.Type + "/" + dep.Name + colorReset
+		}
+	}
+
+	// "dependencies failed: X, Y" — extract multiple.
+	if strings.HasPrefix(errMsg, "dependencies failed: ") {
+		depIDsStr := strings.TrimPrefix(errMsg, "dependencies failed: ")
+		depIDs := strings.Split(depIDsStr, ", ")
+		var names []string
+		for _, depID := range depIDs {
+			if dep, ok := p.resources[depID]; ok {
+				names = append(names, dep.Type+"/"+dep.Name)
+			}
+		}
+		if len(names) > 0 {
+			return p.formatCauseList(names)
+		}
+	}
+
+	// "deployment stopped" / "cancelled" — no specific cause to attribute.
+	return ""
+}
+
+// formatCauseList formats a list of root-cause resource names for the
+// dependency/cause column, truncating to a count when the text is too long.
+func (p *ProgressTable) formatCauseList(names []string) string {
+	short := strings.Join(names, ", ")
+	const maxLen = 30
+	if len(short) <= maxLen {
+		return "  " + colorDim + "← " + short + colorReset
+	}
+	return fmt.Sprintf("  %s← %d failures%s", colorDim, len(names), colorReset)
+}
+
 // coloredIcon returns the status icon wrapped in an ANSI color code.
+// Cascaded failures (dependency/cancelled) use a dim open circle instead of
+// the red ✗ so the user can focus on the real root-cause errors.
 func (p *ProgressTable) coloredIcon(status ResourceStatus) string {
 	switch status {
 	case StatusPending:
@@ -512,6 +626,15 @@ func (p *ProgressTable) coloredIcon(status ResourceStatus) string {
 	}
 }
 
+// coloredIconForResource is like coloredIcon but considers whether the failure
+// is a cascaded/cancelled one (shown dimmed) vs a real root-cause error.
+func (p *ProgressTable) coloredIconForResource(res *ResourceInfo) string {
+	if res.Status == StatusFailed && p.isCascadedFailure(res) {
+		return colorDim + "○" + colorReset
+	}
+	return p.coloredIcon(res.Status)
+}
+
 // statusDescription returns a human-readable description for the resource's
 // current status, with ANSI color codes.
 func (p *ProgressTable) statusDescription(res *ResourceInfo) string {
@@ -519,8 +642,7 @@ func (p *ProgressTable) statusDescription(res *ResourceInfo) string {
 	case StatusPending:
 		return colorDim + "pending" + colorReset
 	case StatusWaiting:
-		depNames := p.getDependencyNames(res.Dependencies)
-		return colorDim + "waiting for " + strings.Join(depNames, ", ") + colorReset
+		return colorDim + "waiting" + colorReset
 	case StatusInProgress:
 		verb := "deploying"
 		switch res.Type {
@@ -537,6 +659,9 @@ func (p *ProgressTable) statusDescription(res *ResourceInfo) string {
 		}
 		return colorGreen + "done" + duration + colorReset
 	case StatusFailed:
+		if p.isCascadedFailure(res) {
+			return colorDim + "cancelled" + colorReset
+		}
 		msg := "FAILED"
 		if res.Error != nil {
 			errStr := res.Error.Error()
@@ -552,6 +677,22 @@ func (p *ProgressTable) statusDescription(res *ResourceInfo) string {
 	default:
 		return ""
 	}
+}
+
+// isCascadedFailure returns true if the resource failed because of a dependency
+// failure, a deployment stop, or context cancellation — not because of an error
+// in the resource itself. These are visually distinguished from root-cause errors.
+func (p *ProgressTable) isCascadedFailure(res *ResourceInfo) bool {
+	if res.Status != StatusFailed {
+		return false
+	}
+	if res.Error == nil {
+		return false
+	}
+	errMsg := res.Error.Error()
+	return strings.HasPrefix(errMsg, "dependency ") ||
+		strings.HasPrefix(errMsg, "deployment stopped:") ||
+		errMsg == "cancelled"
 }
 
 // ---------------------------------------------------------------------------

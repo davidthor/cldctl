@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -616,6 +617,8 @@ func prepareEnvironmentMode(
 }
 
 // makeCleanupFunc creates the cleanup function used during shutdown.
+// The cleanup runs quietly — no plan or per-resource progress is printed.
+// Only errors (if any) and the final "Cleanup complete." line are shown.
 func makeCleanupFunc(provisioningStarted *bool, mgr state.Manager, envName, dc string) func(string) {
 	return func(reason string) {
 		if !*provisioningStarted {
@@ -631,11 +634,12 @@ func makeCleanupFunc(provisioningStarted *bool, mgr state.Manager, envName, dc s
 		_, err := cleanupEng.Destroy(cleanupCtx, engine.DestroyOptions{
 			Environment: envName,
 			Datacenter:  dc,
-			Output:      os.Stdout,
+			Output:      io.Discard,
 			DryRun:      false,
 			AutoApprove: true,
 		})
 		if err != nil {
+			fmt.Printf("Warning: cleanup encountered an error: %v\n", err)
 			_ = CleanupByEnvName(cleanupCtx, envName)
 		}
 
