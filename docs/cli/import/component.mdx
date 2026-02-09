@@ -1,0 +1,77 @@
+---
+title: "import component"
+description: "Import all resources for a component from existing cloud infrastructure"
+---
+
+## Usage
+
+```bash
+cldctl import component <component-name> [flags]
+```
+
+## Description
+
+Import all resources for a component using a mapping file that describes how each resource maps to existing cloud infrastructure. This creates both the `ComponentState` and all `ResourceState` entries in cldctl's state.
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `component-name` | Name for the imported component |
+
+## Flags
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--environment` | `-e` | Target environment (required) |
+| `--datacenter` | `-d` | Target datacenter (uses default if not set) |
+| `--source` | | Component artifact reference — OCI ref or local path (required) |
+| `--mapping` | | Path to mapping YAML file (required) |
+| `--var` | | Set variable (`key=value`, repeatable) |
+| `--auto-approve` | | Skip confirmation prompt |
+| `--force` | | Overwrite existing state |
+| `--backend` | | State backend type |
+| `--backend-config` | | Backend configuration (`key=value`) |
+
+## Mapping File Format
+
+```yaml
+# import-my-app.yml
+resources:
+  database.main:
+    - address: aws_db_instance.main
+      id: "mydb-instance-123"
+    - address: aws_security_group.db
+      id: "sg-abc456"
+  deployment.api:
+    - address: aws_ecs_service.main
+      id: "arn:aws:ecs:us-east-1:123:service/cluster/api"
+  service.api:
+    - address: aws_lb_target_group.main
+      id: "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/api/abc"
+```
+
+Each key under `resources` is a type-qualified resource key matching the component's `cloud.component.yml`. Each entry maps an IaC resource address to its cloud resource ID.
+
+## Examples
+
+```bash
+cldctl import component my-app \
+  -d prod-dc -e production \
+  --source ghcr.io/myorg/app:v1.0.0 \
+  --mapping import-my-app.yml
+```
+
+### With variables
+
+```bash
+cldctl import component my-app \
+  -d prod-dc -e production \
+  --source ghcr.io/myorg/app:v1.0.0 \
+  --mapping import-my-app.yml \
+  --var api_key=secret123
+```
+
+## Partial Import
+
+Not all resources in a component need to be mapped. Resources without mappings are left absent — they are not provisioned during import. A subsequent `cldctl deploy` can create them alongside the imported ones.

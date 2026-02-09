@@ -1,0 +1,65 @@
+---
+title: "import datacenter"
+description: "Import existing infrastructure into a datacenter-level module"
+---
+
+## Usage
+
+```bash
+cldctl import datacenter <datacenter-name> [flags]
+```
+
+## Description
+
+Import existing cloud infrastructure into a datacenter-level module's state. This is used for root-level `module` blocks defined in the datacenter configuration (e.g., a shared VPC, networking layer, or observability stack).
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `datacenter-name` | Name of the deployed datacenter |
+
+## Flags
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--module` | | Datacenter module name (required) |
+| `--map` | | Resource mapping in `address=cloud-id` format (repeatable, required) |
+| `--auto-approve` | | Skip confirmation prompt |
+| `--force` | | Overwrite existing module state |
+| `--backend` | | State backend type |
+| `--backend-config` | | Backend configuration (`key=value`) |
+
+## Examples
+
+### Import a VPC module
+
+```bash
+cldctl import datacenter prod-dc \
+  --module vpc \
+  --map "aws_vpc.main=vpc-0abc123" \
+  --map "aws_subnet.public[0]=subnet-xyz789"
+```
+
+### Import a networking module
+
+```bash
+cldctl import datacenter prod-dc \
+  --module networking \
+  --map "aws_route53_zone.main=Z1234567890" \
+  --map "aws_acm_certificate.main=arn:aws:acm:us-east-1:123:certificate/abc-def"
+```
+
+## How It Works
+
+1. The datacenter configuration is loaded to find the named module's plugin and input definitions.
+2. Module inputs are evaluated from datacenter variables.
+3. The IaC plugin's import method is called with the provided resource mappings.
+4. Module outputs are extracted from the resulting state.
+5. The module state is saved to the datacenter state file.
+
+## Prerequisites
+
+- The datacenter must be deployed (`cldctl deploy datacenter`)
+- The `--module` name must match a root-level `module` block in the datacenter configuration
+- The `--map` addresses must match IaC resource addresses defined in the module

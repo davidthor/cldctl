@@ -233,6 +233,15 @@
             ]
           },
           {
+            "group": "import",
+            "pages": [
+              "cli/import/resource",
+              "cli/import/component",
+              "cli/import/environment",
+              "cli/import/datacenter"
+            ]
+          },
+          {
             "group": "inspect",
             "pages": [
               "cli/inspect"
