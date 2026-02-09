@@ -108,13 +108,13 @@ func printRolloutStatus(componentName, envName, dcName string, compState *types.
 	fmt.Printf("Status:      %s\n", compState.Status)
 	fmt.Println()
 
-	if compState.Instances == nil || len(compState.Instances) == 0 {
-		// Single-instance mode
-		fmt.Println("Mode: single-instance")
-		fmt.Printf("Source: %s\n", compState.Source)
-		fmt.Printf("Resources: %d\n", len(compState.Resources))
-		return nil
-	}
+			if len(compState.Instances) == 0 {
+				// Single-instance mode
+				fmt.Println("Mode: single-instance")
+				fmt.Printf("Source: %s\n", compState.Source)
+				fmt.Printf("Resources: %d\n", len(compState.Resources))
+				return nil
+			}
 
 	fmt.Println("Mode: multi-instance (progressive delivery)")
 	fmt.Println()
@@ -215,7 +215,7 @@ Examples:
 				return fmt.Errorf("component %q not found in environment %q", componentName, environment)
 			}
 
-			if compState.Instances == nil || len(compState.Instances) == 0 {
+			if len(compState.Instances) == 0 {
 				return fmt.Errorf("component %q is in single-instance mode; deploy with --instance first", componentName)
 			}
 
@@ -332,7 +332,7 @@ Examples:
 				return fmt.Errorf("component %q not found in environment %q", componentName, environment)
 			}
 
-			if compState.Instances == nil || len(compState.Instances) == 0 {
+			if len(compState.Instances) == 0 {
 				return fmt.Errorf("component %q is already in single-instance mode", componentName)
 			}
 
@@ -432,7 +432,7 @@ Examples:
 				return fmt.Errorf("component %q not found in environment %q", componentName, environment)
 			}
 
-			if compState.Instances == nil || len(compState.Instances) == 0 {
+			if len(compState.Instances) == 0 {
 				return fmt.Errorf("component %q is in single-instance mode; nothing to rollback", componentName)
 			}
 

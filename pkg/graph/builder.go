@@ -476,7 +476,7 @@ func (b *Builder) AddComponentWithInstances(componentName string, comp component
 	// Convert instances to NodeInstance for shared node metadata
 	nodeInstances := make([]NodeInstance, len(instances))
 	for i, inst := range instances {
-		nodeInstances[i] = NodeInstance{Name: inst.Name, Weight: inst.Weight}
+		nodeInstances[i] = NodeInstance(inst)
 	}
 
 	// === SHARED RESOURCES ===

@@ -1077,11 +1077,6 @@ func (e *Executor) evaluateWhenHCL(when string, inputs map[string]interface{}) (
 	return eval.EvaluateWhen(expr)
 }
 
-// instanceResourceKey returns the type-qualified key for storing a per-instance resource
-// in InstanceState.Resources. Format: "type.name" (same as resourceKey for shared resources).
-func instanceResourceKey(node *graph.Node) string {
-	return string(node.Type) + "." + node.Name
-}
 
 // evaluateWhenStringFallback provides legacy string-based matching for when conditions
 // that cannot be parsed as HCL expressions.
