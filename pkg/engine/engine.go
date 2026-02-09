@@ -79,6 +79,58 @@ type DeployDatacenterResult struct {
 	ModuleOutputs map[string]map[string]interface{}
 }
 
+// DatacenterPlan describes planned changes for a datacenter deployment.
+type DatacenterPlan struct {
+	Datacenter string
+	Image      string
+
+	// ModuleChanges lists planned changes to root-level modules.
+	ModuleChanges []DatacenterModuleChange
+
+	// ComponentChanges lists planned changes to datacenter-level component registrations.
+	ComponentChanges []DatacenterComponentChange
+
+	// EnvironmentReconciliations lists environments that will be reconciled.
+	EnvironmentReconciliations []EnvironmentReconciliation
+}
+
+// DatacenterModuleChange describes a planned change to a root-level module.
+type DatacenterModuleChange struct {
+	Name   string
+	Plugin string
+	Action string // "create", "update", "noop"
+	// InputChanges lists property-level changes (for updates).
+	InputChanges []planner.PropertyChange
+}
+
+// DatacenterComponentChange describes a planned change to a datacenter-level component registration.
+type DatacenterComponentChange struct {
+	Name   string
+	Source string
+	Action string // "register", "update", "noop"
+}
+
+// EnvironmentReconciliation describes an environment that will be reconciled.
+type EnvironmentReconciliation struct {
+	Name           string
+	ComponentCount int
+}
+
+// HasChanges returns true if the plan includes any actionable changes.
+func (p *DatacenterPlan) HasChanges() bool {
+	for _, m := range p.ModuleChanges {
+		if m.Action != "noop" {
+			return true
+		}
+	}
+	for _, c := range p.ComponentChanges {
+		if c.Action != "noop" {
+			return true
+		}
+	}
+	return len(p.EnvironmentReconciliations) > 0
+}
+
 // DeployEnvironmentOptions configures an environment module deployment.
 type DeployEnvironmentOptions struct {
 	// Datacenter name
@@ -749,6 +801,195 @@ func (e *Engine) printDestroyPlanSummary(w io.Writer, plan *planner.Plan) {
 	}
 
 	fmt.Fprintf(w, "\nTotal: %d resources to destroy\n", plan.ToDelete)
+}
+
+// PlanDatacenter generates a plan showing what changes a datacenter deployment will make.
+// It compares the incoming datacenter configuration against the current state to determine
+// which modules will be created, updated, or remain unchanged.
+func (e *Engine) PlanDatacenter(ctx context.Context, datacenter, imageRef string) (*DatacenterPlan, error) {
+	plan := &DatacenterPlan{
+		Datacenter: datacenter,
+		Image:      imageRef,
+	}
+
+	// Load existing datacenter state (may not exist for first deployment)
+	dcState, _ := e.stateManager.GetDatacenter(ctx, datacenter)
+
+	// Load the datacenter configuration from the image/path
+	dc, err := e.loadDatacenterConfig(imageRef)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load datacenter configuration: %w", err)
+	}
+
+	// Build datacenter variables map (used to evaluate module inputs)
+	dcVars := make(map[string]interface{})
+	if dcState != nil {
+		for k, v := range dcState.Variables {
+			dcVars[k] = v
+		}
+	}
+	for _, v := range dc.Variables() {
+		if _, ok := dcVars[v.Name()]; !ok && v.Default() != nil {
+			dcVars[v.Name()] = v.Default()
+		}
+	}
+
+	// Plan root-level modules
+	rootModules := dc.Modules()
+	for _, mod := range rootModules {
+		if mod.When() != "" {
+			continue // Skip conditional modules (would need runtime evaluation)
+		}
+
+		modName := mod.Name()
+		pluginName := mod.Plugin()
+		if pluginName == "" {
+			pluginName = "native"
+		}
+
+		// Build desired inputs
+		desiredInputs := make(map[string]interface{})
+		for inputName, exprStr := range mod.Inputs() {
+			desiredInputs[inputName] = evaluateModuleExpression(exprStr, dcVars, nil, nil)
+		}
+
+		change := DatacenterModuleChange{
+			Name:   modName,
+			Plugin: pluginName,
+		}
+
+		if dcState == nil || dcState.Modules == nil || dcState.Modules[modName] == nil {
+			// Module doesn't exist yet → create
+			change.Action = "create"
+		} else {
+			// Module exists → compare inputs to detect changes
+			existing := dcState.Modules[modName]
+			p := planner.NewPlanner()
+			inputChanges := p.CompareInputs(desiredInputs, existing.Inputs)
+			if len(inputChanges) > 0 {
+				change.Action = "update"
+				change.InputChanges = inputChanges
+			} else {
+				change.Action = "update" // Always re-apply for idempotency
+			}
+		}
+
+		plan.ModuleChanges = append(plan.ModuleChanges, change)
+	}
+
+	// Plan datacenter-level component registrations
+	dcComponents := dc.Components()
+	for _, comp := range dcComponents {
+		compChange := DatacenterComponentChange{
+			Name:   comp.Name(),
+			Source: comp.Source(),
+			Action: "register",
+		}
+		plan.ComponentChanges = append(plan.ComponentChanges, compChange)
+	}
+
+	// Plan environment reconciliation
+	envs, err := e.stateManager.ListEnvironments(ctx, datacenter)
+	if err == nil && len(envs) > 0 {
+		for _, envRef := range envs {
+			envState, err := e.stateManager.GetEnvironment(ctx, datacenter, envRef.Name)
+			if err != nil {
+				continue
+			}
+
+			compCount := len(envState.Components)
+			plan.EnvironmentReconciliations = append(plan.EnvironmentReconciliations, EnvironmentReconciliation{
+				Name:           envRef.Name,
+				ComponentCount: compCount,
+			})
+		}
+	}
+
+	return plan, nil
+}
+
+// PrintDatacenterPlanSummary writes a human-readable summary of the datacenter plan.
+func (e *Engine) PrintDatacenterPlanSummary(w io.Writer, plan *DatacenterPlan) {
+	if !plan.HasChanges() {
+		fmt.Fprintf(w, "No changes. Datacenter %q is up to date.\n", plan.Datacenter)
+		return
+	}
+
+	// Root-level modules
+	if len(plan.ModuleChanges) > 0 {
+		fmt.Fprintf(w, "Root modules:\n")
+		for _, m := range plan.ModuleChanges {
+			symbol := actionSymbol(m.Action)
+			label := fmt.Sprintf("module/%s", m.Name)
+			if m.Plugin != "" && m.Plugin != "native" {
+				label += fmt.Sprintf(" (%s)", m.Plugin)
+			}
+			fmt.Fprintf(w, "  %s %s\n", symbol, label)
+
+			// Show input-level changes for updates
+			for _, ic := range m.InputChanges {
+				if ic.OldValue == nil {
+					fmt.Fprintf(w, "      + %s = %v\n", ic.Path, ic.NewValue)
+				} else if ic.NewValue == nil {
+					fmt.Fprintf(w, "      - %s = %v\n", ic.Path, ic.OldValue)
+				} else {
+					fmt.Fprintf(w, "      ~ %s: %v → %v\n", ic.Path, ic.OldValue, ic.NewValue)
+				}
+			}
+		}
+		fmt.Fprintln(w)
+	}
+
+	// Datacenter-level component registrations
+	if len(plan.ComponentChanges) > 0 {
+		fmt.Fprintf(w, "Component registrations:\n")
+		for _, c := range plan.ComponentChanges {
+			fmt.Fprintf(w, "  → %s (%s)\n", c.Name, c.Source)
+		}
+		fmt.Fprintln(w)
+	}
+
+	// Environment reconciliation
+	if len(plan.EnvironmentReconciliations) > 0 {
+		fmt.Fprintf(w, "Environments to reconcile:\n")
+		for _, env := range plan.EnvironmentReconciliations {
+			if env.ComponentCount > 0 {
+				fmt.Fprintf(w, "  ~ %s (%d component(s) will be re-deployed)\n", env.Name, env.ComponentCount)
+			} else {
+				fmt.Fprintf(w, "  ~ %s\n", env.Name)
+			}
+		}
+		fmt.Fprintln(w)
+	}
+
+	// Summary line
+	var creates, updates int
+	for _, m := range plan.ModuleChanges {
+		switch m.Action {
+		case "create":
+			creates++
+		case "update":
+			updates++
+		}
+	}
+	fmt.Fprintf(w, "Plan: %d module(s) to create, %d to update, %d environment(s) to reconcile\n",
+		creates, updates, len(plan.EnvironmentReconciliations))
+}
+
+// actionSymbol returns a single-character symbol for a change action.
+func actionSymbol(action string) string {
+	switch action {
+	case "create":
+		return "+"
+	case "update":
+		return "~"
+	case "delete":
+		return "-"
+	case "noop":
+		return " "
+	default:
+		return "?"
+	}
 }
 
 // DeployDatacenter provisions root-level modules defined in the datacenter and

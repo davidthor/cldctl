@@ -375,7 +375,7 @@ func TestCompareInputs(t *testing.T) {
 			"key2": 42,
 		}
 
-		changes := p.compareInputs(desired, current)
+		changes := p.CompareInputs(desired, current)
 		if len(changes) != 0 {
 			t.Errorf("Expected 0 changes, got %d", len(changes))
 		}
@@ -390,7 +390,7 @@ func TestCompareInputs(t *testing.T) {
 			"key1": "value1",
 		}
 
-		changes := p.compareInputs(desired, current)
+		changes := p.CompareInputs(desired, current)
 		if len(changes) != 1 {
 			t.Fatalf("Expected 1 change, got %d", len(changes))
 		}
@@ -410,7 +410,7 @@ func TestCompareInputs(t *testing.T) {
 			"key1": "old-value",
 		}
 
-		changes := p.compareInputs(desired, current)
+		changes := p.CompareInputs(desired, current)
 		if len(changes) != 1 {
 			t.Fatalf("Expected 1 change, got %d", len(changes))
 		}
@@ -428,7 +428,7 @@ func TestCompareInputs(t *testing.T) {
 			"key1": "value1",
 		}
 
-		changes := p.compareInputs(desired, current)
+		changes := p.CompareInputs(desired, current)
 		if len(changes) != 1 {
 			t.Fatalf("Expected 1 change, got %d", len(changes))
 		}

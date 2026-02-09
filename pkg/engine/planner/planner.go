@@ -213,7 +213,7 @@ func (p *Planner) planNodeChange(node *graph.Node, existingResources map[string]
 	}
 
 	// Compare inputs to detect changes
-	changes := p.compareInputs(node.Inputs, existing.Inputs)
+	changes := p.CompareInputs(node.Inputs, existing.Inputs)
 	if len(changes) > 0 {
 		change.Action = ActionUpdate
 		change.PropertyChanges = changes
@@ -234,7 +234,9 @@ func (p *Planner) planNodeChange(node *graph.Node, existingResources map[string]
 	return change
 }
 
-func (p *Planner) compareInputs(desired, current map[string]interface{}) []PropertyChange {
+// CompareInputs compares desired inputs against current inputs and returns
+// a list of property-level changes. Useful for detecting configuration drift.
+func (p *Planner) CompareInputs(desired, current map[string]interface{}) []PropertyChange {
 	var changes []PropertyChange
 
 	// Check for new or changed values
