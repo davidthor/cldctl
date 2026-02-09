@@ -33,6 +33,10 @@ func (m *mockPlugin) Refresh(ctx context.Context, opts RunOptions) (*RefreshResu
 	return &RefreshResult{}, nil
 }
 
+func (m *mockPlugin) Import(ctx context.Context, opts ImportOptions) (*ImportResult, error) {
+	return &ImportResult{}, nil
+}
+
 func TestRegistry_Register(t *testing.T) {
 	r := &Registry{
 		factories: make(map[string]Factory),

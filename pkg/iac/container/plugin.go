@@ -230,6 +230,60 @@ func isSensitiveKey(key string) bool {
 	return false
 }
 
+// Import delegates to the containerized module's import entrypoint.
+func (p *Plugin) Import(ctx context.Context, opts iac.ImportOptions) (*iac.ImportResult, error) {
+	// Build the request with import action and mappings
+	mappingInputs := make([]map[string]string, 0, len(opts.Mappings))
+	for _, m := range opts.Mappings {
+		mappingInputs = append(mappingInputs, map[string]string{
+			"address": m.Address,
+			"id":      m.ID,
+		})
+	}
+
+	inputs := make(map[string]interface{})
+	for k, v := range opts.Inputs {
+		inputs[k] = v
+	}
+	inputs["__import_mappings"] = mappingInputs
+
+	runOpts := iac.RunOptions{
+		ModuleSource: opts.ModuleSource,
+		ModulePath:   opts.ModulePath,
+		Inputs:       inputs,
+		WorkDir:      opts.WorkDir,
+		Environment:  opts.Environment,
+		Stdout:       opts.Stdout,
+		Stderr:       opts.Stderr,
+	}
+
+	response, err := p.executeModule(ctx, "import", runOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	if !response.Success {
+		return nil, fmt.Errorf("import failed: %s", response.Error)
+	}
+
+	result := &iac.ImportResult{
+		Outputs: make(map[string]iac.OutputValue),
+	}
+
+	for name, output := range response.Outputs {
+		result.Outputs[name] = iac.OutputValue{
+			Value:     output.Value,
+			Sensitive: output.Sensitive,
+		}
+	}
+
+	for _, m := range opts.Mappings {
+		result.ImportedResources = append(result.ImportedResources, m.Address)
+	}
+
+	return result, nil
+}
+
 // executeModule runs a containerized module.
 func (p *Plugin) executeModule(ctx context.Context, action string, opts iac.RunOptions) (*ModuleResponse, error) {
 	// Determine the container image

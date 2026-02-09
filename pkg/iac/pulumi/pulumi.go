@@ -213,6 +213,97 @@ func (p *Plugin) Refresh(ctx context.Context, opts iac.RunOptions) (*iac.Refresh
 	}, nil
 }
 
+func (p *Plugin) Import(ctx context.Context, opts iac.ImportOptions) (*iac.ImportResult, error) {
+	workDir := opts.WorkDir
+	if workDir == "" {
+		workDir = opts.ModuleSource
+	}
+
+	runOpts := iac.RunOptions{
+		ModuleSource: opts.ModuleSource,
+		WorkDir:      opts.WorkDir,
+		Inputs:       opts.Inputs,
+		Environment:  opts.Environment,
+		Stdout:       opts.Stdout,
+		Stderr:       opts.Stderr,
+	}
+
+	stackName := getStackName(runOpts.Environment)
+
+	// Write config
+	if err := p.writeConfig(workDir, stackName, opts.Inputs); err != nil {
+		return nil, fmt.Errorf("failed to write config: %w", err)
+	}
+
+	// Ensure stack exists
+	if err := p.ensureStack(ctx, workDir, stackName, runOpts); err != nil {
+		return nil, fmt.Errorf("failed to ensure stack: %w", err)
+	}
+
+	// Import each resource mapping
+	var imported []string
+	for _, mapping := range opts.Mappings {
+		// Pulumi import format: pulumi import <type> <name> <id>
+		// The address for Pulumi is expected in "type:name" format
+		parts := strings.SplitN(mapping.Address, ":", 2)
+		var args []string
+		if len(parts) == 2 {
+			args = []string{
+				"import",
+				"--yes",
+				"--stack", stackName,
+				"--non-interactive",
+				parts[0], // type
+				parts[1], // name
+				mapping.ID,
+			}
+		} else {
+			// If no type:name split, pass as-is
+			args = []string{
+				"import",
+				"--yes",
+				"--stack", stackName,
+				"--non-interactive",
+				mapping.Address,
+				mapping.ID,
+			}
+		}
+
+		output, err := p.runPulumi(ctx, workDir, args, runOpts)
+		if err != nil {
+			return nil, fmt.Errorf("import of %s=%s failed: %w\nOutput: %s", mapping.Address, mapping.ID, err, output)
+		}
+		imported = append(imported, mapping.Address)
+	}
+
+	// Refresh to verify
+	refreshArgs := []string{
+		"refresh",
+		"--yes",
+		"--stack", stackName,
+		"--non-interactive",
+	}
+	_, _ = p.runPulumi(ctx, workDir, refreshArgs, runOpts)
+
+	// Get outputs
+	outputs, err := p.getOutputs(ctx, workDir, stackName, runOpts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get outputs after import: %w", err)
+	}
+
+	// Export state
+	stateBytes, err := p.exportState(ctx, workDir, stackName, runOpts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to export state after import: %w", err)
+	}
+
+	return &iac.ImportResult{
+		Outputs:           outputs,
+		State:             stateBytes,
+		ImportedResources: imported,
+	}, nil
+}
+
 func (p *Plugin) ensureStack(ctx context.Context, workDir, stackName string, opts iac.RunOptions) error {
 	// Check if stack exists
 	listArgs := []string{"stack", "ls", "--json"}

@@ -158,6 +158,110 @@ func (p *Plugin) Refresh(ctx context.Context, opts iac.RunOptions) (*iac.Refresh
 	return &iac.RefreshResult{}, nil
 }
 
+func (p *Plugin) Import(ctx context.Context, opts iac.ImportOptions) (*iac.ImportResult, error) {
+	// Native plugin supports importing Docker containers, networks, and volumes
+	// by inspecting them with Docker commands.
+	outputs := make(map[string]iac.OutputValue)
+	var imported []string
+
+	state := &State{
+		ModulePath: opts.ModuleSource,
+		Inputs:     opts.Inputs,
+		Resources:  make(map[string]*ResourceState),
+		Outputs:    make(map[string]interface{}),
+	}
+
+	for _, mapping := range opts.Mappings {
+		// Determine resource type from the address or by probing Docker
+		// The address should follow native resource naming: "container", "network", "volume"
+		resourceType := ""
+		switch {
+		case strings.Contains(mapping.Address, "container"):
+			resourceType = "docker:container"
+		case strings.Contains(mapping.Address, "network"):
+			resourceType = "docker:network"
+		case strings.Contains(mapping.Address, "volume"):
+			resourceType = "docker:volume"
+		default:
+			// Try to inspect as container first
+			info, err := p.docker.InspectContainer(ctx, mapping.ID)
+			if err == nil && info != nil {
+				resourceType = "docker:container"
+			} else {
+				return nil, fmt.Errorf("cannot determine resource type for %s; native import supports docker containers, networks, and volumes", mapping.Address)
+			}
+		}
+
+		switch resourceType {
+		case "docker:container":
+			info, err := p.docker.InspectContainer(ctx, mapping.ID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to inspect container %s: %w", mapping.ID, err)
+			}
+			rs := &ResourceState{
+				Type: "docker:container",
+				ID:   mapping.ID,
+				Properties: map[string]interface{}{
+					"name": info.Name,
+				},
+				Outputs: map[string]interface{}{
+					"container_id": mapping.ID,
+					"name":         info.Name,
+					"ports":        info.Ports,
+				},
+			}
+			state.Resources[mapping.Address] = rs
+			for k, v := range rs.Outputs {
+				outputs[k] = iac.OutputValue{Value: v}
+			}
+			imported = append(imported, mapping.Address)
+
+		case "docker:network":
+			// Verify network exists
+			exists, err := p.docker.NetworkExists(ctx, mapping.ID)
+			if err != nil || !exists {
+				return nil, fmt.Errorf("network %s not found: %w", mapping.ID, err)
+			}
+			rs := &ResourceState{
+				Type: "docker:network",
+				ID:   mapping.ID,
+				Outputs: map[string]interface{}{
+					"network_id": mapping.ID,
+				},
+			}
+			state.Resources[mapping.Address] = rs
+			imported = append(imported, mapping.Address)
+
+		case "docker:volume":
+			exists, err := p.docker.VolumeExists(ctx, mapping.ID)
+			if err != nil || !exists {
+				return nil, fmt.Errorf("volume %s not found: %w", mapping.ID, err)
+			}
+			rs := &ResourceState{
+				Type: "docker:volume",
+				ID:   mapping.ID,
+				Outputs: map[string]interface{}{
+					"volume_id": mapping.ID,
+				},
+			}
+			state.Resources[mapping.Address] = rs
+			imported = append(imported, mapping.Address)
+		}
+	}
+
+	// Serialize state
+	stateBytes, err := json.Marshal(state)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize state: %w", err)
+	}
+
+	return &iac.ImportResult{
+		Outputs:           outputs,
+		State:             stateBytes,
+		ImportedResources: imported,
+	}, nil
+}
+
 func (p *Plugin) loadState(reader io.Reader) (*State, error) {
 	var state State
 	if err := json.NewDecoder(reader).Decode(&state); err != nil {

@@ -22,6 +22,58 @@ type Plugin interface {
 
 	// Refresh refreshes state without applying changes
 	Refresh(ctx context.Context, opts RunOptions) (*RefreshResult, error)
+
+	// Import adopts existing cloud resources into the module's state.
+	// Each ImportMapping maps an IaC-internal resource address to a real cloud
+	// resource ID. After importing, the plugin extracts outputs from the
+	// resulting state so cldctl can record them.
+	Import(ctx context.Context, opts ImportOptions) (*ImportResult, error)
+}
+
+// ImportMapping maps an IaC resource address to a cloud resource ID.
+type ImportMapping struct {
+	// Address is the IaC-module-internal resource address (e.g., "aws_db_instance.main")
+	Address string
+
+	// ID is the real cloud resource ID (e.g., "mydb-instance-123")
+	ID string
+}
+
+// ImportOptions configures an import operation.
+type ImportOptions struct {
+	// ModuleSource is the OCI image reference or local path to the module
+	ModuleSource string
+
+	// ModulePath is the path within the module (for local modules)
+	ModulePath string
+
+	// Inputs are the values passed to the module
+	Inputs map[string]interface{}
+
+	// Mappings are the resource address to cloud ID mappings
+	Mappings []ImportMapping
+
+	// WorkDir is the working directory for execution
+	WorkDir string
+
+	// Environment contains environment variables for the execution
+	Environment map[string]string
+
+	// Stdout/Stderr for command output
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
+// ImportResult contains the result of an import operation.
+type ImportResult struct {
+	// Outputs extracted from the imported state
+	Outputs map[string]OutputValue
+
+	// State is the serialized IaC state after import
+	State []byte
+
+	// ImportedResources lists the addresses that were successfully imported
+	ImportedResources []string
 }
 
 // RunOptions configures a plugin execution.

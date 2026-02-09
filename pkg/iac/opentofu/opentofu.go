@@ -404,6 +404,84 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
+func (p *Plugin) Import(ctx context.Context, opts iac.ImportOptions) (*iac.ImportResult, error) {
+	workDir := opts.WorkDir
+	if workDir == "" {
+		workDir = opts.ModuleSource
+	}
+
+	// Write tfvars file from inputs
+	if err := p.writeTFVars(workDir, opts.Inputs); err != nil {
+		return nil, fmt.Errorf("failed to write tfvars: %w", err)
+	}
+
+	// Initialize if needed
+	runOpts := iac.RunOptions{
+		ModuleSource: opts.ModuleSource,
+		WorkDir:      opts.WorkDir,
+		Inputs:       opts.Inputs,
+		Environment:  opts.Environment,
+		Stdout:       opts.Stdout,
+		Stderr:       opts.Stderr,
+	}
+	if err := p.init(ctx, workDir, runOpts); err != nil {
+		return nil, fmt.Errorf("init failed: %w", err)
+	}
+
+	// Import each resource mapping
+	var imported []string
+	for _, mapping := range opts.Mappings {
+		args := []string{
+			"import",
+			"-input=false",
+		}
+
+		// Add var file if exists
+		varFile := filepath.Join(workDir, "terraform.tfvars.json")
+		if _, err := os.Stat(varFile); err == nil {
+			args = append(args, "-var-file=terraform.tfvars.json")
+		}
+
+		args = append(args, mapping.Address, mapping.ID)
+
+		output, err := p.runTF(ctx, workDir, args, runOpts)
+		if err != nil {
+			return nil, fmt.Errorf("import of %s=%s failed: %w\nOutput: %s", mapping.Address, mapping.ID, err, output)
+		}
+		imported = append(imported, mapping.Address)
+	}
+
+	// Run plan to verify and refresh state
+	planArgs := []string{
+		"plan",
+		"-input=false",
+		"-refresh-only",
+	}
+	varFile := filepath.Join(workDir, "terraform.tfvars.json")
+	if _, err := os.Stat(varFile); err == nil {
+		planArgs = append(planArgs, "-var-file=terraform.tfvars.json")
+	}
+	_, _ = p.runTF(ctx, workDir, planArgs, runOpts)
+
+	// Read outputs
+	outputs, err := p.getOutputs(ctx, workDir, runOpts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get outputs after import: %w", err)
+	}
+
+	// Read state
+	stateBytes, err := p.readState(workDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read state after import: %w", err)
+	}
+
+	return &iac.ImportResult{
+		Outputs:           outputs,
+		State:             stateBytes,
+		ImportedResources: imported,
+	}, nil
+}
+
 func (p *Plugin) runTF(ctx context.Context, workDir string, args []string, opts iac.RunOptions) (string, error) {
 	cmd := exec.CommandContext(ctx, p.binaryPath, args...)
 	cmd.Dir = workDir

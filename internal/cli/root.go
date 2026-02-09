@@ -85,6 +85,9 @@ func init() {
 	// Artifact cache commands
 	rootCmd.AddCommand(newImagesCmd())
 
+	// Import commands
+	rootCmd.AddCommand(newImportCmd())
+
 	// Migration commands
 	rootCmd.AddCommand(newMigrateCmd())
 
