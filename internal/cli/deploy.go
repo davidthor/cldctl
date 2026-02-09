@@ -12,7 +12,9 @@ import (
 
 	"github.com/davidthor/cldctl/pkg/engine"
 	"github.com/davidthor/cldctl/pkg/engine/executor"
+	"github.com/davidthor/cldctl/pkg/engine/importmap"
 	"github.com/davidthor/cldctl/pkg/engine/planner"
+	"github.com/davidthor/cldctl/pkg/iac"
 	"github.com/davidthor/cldctl/pkg/oci"
 	"github.com/davidthor/cldctl/pkg/registry"
 	"github.com/davidthor/cldctl/pkg/schema/component"
@@ -42,6 +44,7 @@ func newDeployComponentCmd() *cobra.Command {
 		variables     []string
 		varFile       string
 		autoApprove   bool
+		importFile    string
 		targets       []string
 		backendType   string
 		backendConfig []string
@@ -391,6 +394,46 @@ Examples:
 				progress.PrintUpdate(event.NodeID)
 			}
 
+			// If an import file is provided, import existing resources before
+			// deploying. This adopts cloud resources into state atomically so
+			// the subsequent deploy sees them as existing and updates in-place.
+			if importFile != "" {
+				compImportMap, parseErr := importmap.ParseComponentMapping(importFile)
+				if parseErr != nil {
+					return fmt.Errorf("failed to parse import file: %w", parseErr)
+				}
+
+				fmt.Printf("[import] Importing existing resources for %d resource(s)...\n", len(compImportMap.Resources))
+
+				for resourceKey, mappings := range compImportMap.Resources {
+					iacMappings := make([]iac.ImportMapping, 0, len(mappings))
+					for _, m := range mappings {
+						iacMappings = append(iacMappings, iac.ImportMapping{
+							Address: m.Address,
+							ID:      m.ID,
+						})
+					}
+
+					importResult, importErr := eng.ImportResource(ctx, engine.ImportResourceOptions{
+						Datacenter:  dc,
+						Environment: environment,
+						Component:   componentName,
+						ResourceKey: resourceKey,
+						Mappings:    iacMappings,
+						Output:      os.Stdout,
+						Force:       true,
+					})
+					if importErr != nil {
+						return fmt.Errorf("failed to import %s: %w", resourceKey, importErr)
+					}
+					if !importResult.Success {
+						return fmt.Errorf("import of %s failed", resourceKey)
+					}
+				}
+
+				fmt.Println()
+			}
+
 			// Execute deployment using the engine
 			result, err := eng.Deploy(ctx, engine.DeployOptions{
 				Environment: environment,
@@ -428,6 +471,7 @@ Examples:
 	cmd.Flags().StringArrayVar(&variables, "var", nil, "Set variable (key=value)")
 	cmd.Flags().StringVar(&varFile, "var-file", "", "Load variables from file")
 	cmd.Flags().BoolVar(&autoApprove, "auto-approve", false, "Skip confirmation prompt")
+	cmd.Flags().StringVar(&importFile, "import-file", "", "Import existing resources from mapping file during deploy")
 	cmd.Flags().StringArrayVar(&targets, "target", nil, "Target specific resource (repeatable)")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
@@ -502,6 +546,7 @@ func newDeployDatacenterCmd() *cobra.Command {
 		variables     []string
 		varFile       string
 		autoApprove   bool
+		importFile    string
 		backendType   string
 		backendConfig []string
 	)
@@ -517,6 +562,14 @@ The image must be a reference to a datacenter artifact in the local cache
 If the image is not cached locally, it will be pulled from the remote registry
 automatically.
 
+Use --import-file to adopt existing cloud resources into root-level module
+state during the deploy. For each module listed in the import file, cldctl
+imports the mapped resources instead of provisioning from scratch. Modules
+NOT listed in the import file are provisioned normally.
+
+Use 'cldctl audit datacenter <image> --modules' to discover the IaC
+resource addresses you'll need for the import file.
+
 Arguments:
   name    Name for the deployed datacenter
   image   Datacenter image reference (e.g., my-dc:latest, davidthor/local-datacenter)
@@ -524,7 +577,11 @@ Arguments:
 Examples:
   cldctl deploy datacenter local davidthor/local-datacenter
   cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0
-  cldctl deploy datacenter my-dc my-dc:latest`,
+  cldctl deploy datacenter my-dc my-dc:latest
+
+  # Deploy with existing infrastructure imported atomically
+  cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 \
+    --import-file import-datacenter.yml`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
@@ -671,7 +728,101 @@ Examples:
 				fmt.Printf("[config] Default datacenter set to %q\n", dcName)
 			}
 
-			// Execute root-level modules and reconcile environments
+			// If an import file is provided, import existing resources into
+			// module state BEFORE the normal deploy. This way modules that
+			// already have state are updated in-place rather than created.
+			if importFile != "" {
+				dcImportMap, parseErr := importmap.ParseDatacenterMapping(importFile)
+				if parseErr != nil {
+					return fmt.Errorf("failed to parse import file: %w", parseErr)
+				}
+
+				// Phase 1: Import root-level modules
+				if len(dcImportMap.Modules) > 0 {
+					fmt.Printf("[import] Importing %d root module(s)...\n", len(dcImportMap.Modules))
+
+					for modName, mappings := range dcImportMap.Modules {
+						iacMappings := make([]iac.ImportMapping, 0, len(mappings))
+						for _, m := range mappings {
+							iacMappings = append(iacMappings, iac.ImportMapping{
+								Address: m.Address,
+								ID:      m.ID,
+							})
+						}
+
+						importResult, importErr := eng.ImportDatacenterModule(ctx, engine.ImportDatacenterModuleOptions{
+							Datacenter: dcName,
+							Module:     modName,
+							Mappings:   iacMappings,
+							Output:     os.Stdout,
+							Force:      true,
+						})
+						if importErr != nil {
+							return fmt.Errorf("failed to import module %q: %w", modName, importErr)
+						}
+						if !importResult.Success {
+							return fmt.Errorf("import of module %q failed", modName)
+						}
+					}
+				}
+
+				// Phase 2: Import environment-scoped modules.
+				// For each environment listed, create the environment if needed
+				// and import its modules.
+				if len(dcImportMap.Environments) > 0 {
+					fmt.Printf("[import] Importing environment modules for %d environment(s)...\n", len(dcImportMap.Environments))
+
+					for envName, envMapping := range dcImportMap.Environments {
+						// Ensure environment exists (create if it doesn't)
+						if _, envErr := mgr.GetEnvironment(ctx, dcName, envName); envErr != nil {
+							envState := &types.EnvironmentState{
+								Name:       envName,
+								Datacenter: dcName,
+								Components: make(map[string]*types.ComponentState),
+								Modules:    make(map[string]*types.ModuleState),
+								Status:     types.EnvironmentStatusReady,
+								CreatedAt:  time.Now(),
+								UpdatedAt:  time.Now(),
+							}
+							if saveErr := mgr.SaveEnvironment(ctx, dcName, envState); saveErr != nil {
+								return fmt.Errorf("failed to create environment %q: %w", envName, saveErr)
+							}
+							fmt.Printf("  [create] Environment %q created\n", envName)
+						}
+
+						for modName, mappings := range envMapping.Modules {
+							iacMappings := make([]iac.ImportMapping, 0, len(mappings))
+							for _, m := range mappings {
+								iacMappings = append(iacMappings, iac.ImportMapping{
+									Address: m.Address,
+									ID:      m.ID,
+								})
+							}
+
+							importResult, importErr := eng.ImportEnvironmentModule(ctx, engine.ImportEnvironmentModuleOptions{
+								Datacenter:  dcName,
+								Environment: envName,
+								Module:      modName,
+								Mappings:    iacMappings,
+								Output:      os.Stdout,
+								Force:       true,
+							})
+							if importErr != nil {
+								return fmt.Errorf("failed to import environment module %q for %q: %w", modName, envName, importErr)
+							}
+							if !importResult.Success {
+								return fmt.Errorf("import of environment module %q for %q failed", modName, envName)
+							}
+						}
+					}
+				}
+
+				fmt.Println()
+			}
+
+			// Execute root-level modules and reconcile environments.
+			// Modules that were imported above already have state, so the
+			// engine updates them in-place rather than creating new resources.
 			dcResult, err := eng.DeployDatacenter(ctx, engine.DeployDatacenterOptions{
 				Datacenter:  dcName,
 				Output:      os.Stdout,
@@ -695,6 +846,7 @@ Examples:
 	cmd.Flags().StringArrayVar(&variables, "var", nil, "Set variable (key=value)")
 	cmd.Flags().StringVar(&varFile, "var-file", "", "Load variables from file")
 	cmd.Flags().BoolVar(&autoApprove, "auto-approve", false, "Skip confirmation prompt")
+	cmd.Flags().StringVar(&importFile, "import-file", "", "Import existing resources from mapping file during deploy")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
 

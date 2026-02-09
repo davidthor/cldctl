@@ -108,6 +108,12 @@
             ]
           },
           {
+            "group": "Migration",
+            "pages": [
+              "guides/migrating-existing-app"
+            ]
+          },
+          {
             "group": "CI/CD",
             "pages": [
               "guides/ci-cd/overview",
@@ -230,6 +236,15 @@
               "cli/get/component",
               "cli/get/datacenter",
               "cli/get/environment"
+            ]
+          },
+          {
+            "group": "import",
+            "pages": [
+              "cli/import/resource",
+              "cli/import/component",
+              "cli/import/environment",
+              "cli/import/datacenter"
             ]
           },
           {

@@ -31,6 +31,7 @@ cldctl deploy datacenter <name> <config> [options]
 | `--var <key=value>` | Set a datacenter variable (repeatable) |
 | `--var-file <path>` | Load variables from file |
 | `--auto-approve` | Skip confirmation prompt |
+| `--import-file <path>` | Import existing cloud resources from a mapping file during deploy |
 | `--backend <type>` | State backend type |
 | `--backend-config <key=value>` | Backend configuration |
 
@@ -54,6 +55,11 @@ cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 \
 # Deploy with auto-approval (CI/CD)
 cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 \
   --auto-approve
+
+# Deploy with existing infrastructure imported atomically
+cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 \
+  --var region=us-east-1 \
+  --import-file import-datacenter.yml
 ```
 
 ## Execution Plan Output
@@ -109,8 +115,45 @@ No changes. Datacenter "prod-dc" is up to date.
 Proceed? [Y/n]:
 ```
 
+## Importing Existing Infrastructure
+
+When migrating existing cloud infrastructure to cldctl, use `--import-file` to
+adopt existing resources into root-level module state during the deploy. This is
+a single atomic operation — the datacenter is never in a half-deployed state:
+
+```bash
+cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 \
+  --var region=us-east-1 \
+  --import-file import-datacenter.yml
+```
+
+The import file maps module names to existing cloud resource IDs:
+
+```yaml
+# import-datacenter.yml
+modules:
+  vpc:
+    - address: aws_vpc.main
+      id: "vpc-0abc123"
+    - address: aws_subnet.public[0]
+      id: "subnet-aaa111"
+```
+
+For each listed module, cldctl imports the resources into state before running
+the normal deploy. Modules **not** listed in the import file are provisioned from
+scratch as usual.
+
+Use `cldctl audit datacenter <image> --modules` to discover the IaC resource
+addresses you need for the mapping file.
+
+<Tip>
+See the [Migrating an Existing App](/guides/migrating-existing-app) guide for a
+complete end-to-end walkthrough.
+</Tip>
+
 ## See Also
 
 - [`cldctl destroy datacenter`](/cli/destroy/datacenter) - Destroy a datacenter
 - [`cldctl list datacenter`](/cli/list/datacenter) - List deployed datacenters
 - [`cldctl get datacenter`](/cli/get/datacenter) - Get datacenter details
+- [`cldctl import datacenter`](/cli/import/datacenter) - Import existing infrastructure into a datacenter module

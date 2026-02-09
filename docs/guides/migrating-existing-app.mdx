@@ -1,0 +1,559 @@
+---
+title: "Migrating an Existing App to cldctl"
+description: "Adopt existing cloud infrastructure into cldctl without downtime using the import command"
+---
+
+# Migrating an Existing App to cldctl
+
+This guide walks through migrating an application that was **not** built with cldctl — a Next.js frontend, Express API backend, and PostgreSQL database already running on AWS — into a fully cldctl-managed deployment. You will define cldctl components for the first time and then use `cldctl import` to adopt the existing cloud resources into state without destroying or recreating anything.
+
+## Before You Start
+
+You have an application already running on AWS with:
+
+| Layer | Technology | AWS Resource |
+|-------|-----------|--------------|
+| Frontend | Next.js | ECS Fargate service `acme-web` |
+| API | Express.js | ECS Fargate service `acme-api` |
+| Database | PostgreSQL 16 | RDS instance `acme-production-db` |
+
+These resources were provisioned manually (or via standalone Terraform) and are serving production traffic. Your goal is to bring them under cldctl management so future changes flow through `cldctl deploy`.
+
+<Warning>
+Import does **not** provision or modify cloud resources. It records existing infrastructure in cldctl's state so that subsequent deploys can manage it. There is no downtime.
+</Warning>
+
+## Step 1: Define Your Components
+
+Even though the infrastructure already exists, cldctl needs a component definition to understand **what** the application requires. Create a `cloud.component.yml` in each project.
+
+### Frontend Component
+
+```yaml
+# frontend/cloud.component.yml
+dependencies:
+  api:
+    component: ghcr.io/acme/api
+
+databases:
+  main:
+    type: postgres:^16
+
+functions:
+  web:
+    src:
+      path: .
+      framework: nextjs
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+      NEXT_PUBLIC_API_URL: ${{ dependencies.api.routes.api.url }}
+
+routes:
+  main:
+    type: http
+    function: web
+```
+
+<Note>
+The `dependencies` block declares that the frontend depends on the API component. At runtime, `${{ dependencies.api.routes.api.url }}` resolves to the API's route URL. The `databases` block declares a dependency on PostgreSQL — at import time you will map this to the existing RDS instance rather than creating a new one.
+</Note>
+
+### API Component
+
+```yaml
+# api/cloud.component.yml
+variables:
+  jwt_secret:
+    description: "JWT signing secret"
+    required: true
+    sensitive: true
+
+databases:
+  main:
+    type: postgres:^16
+
+builds:
+  api:
+    context: .
+    dockerfile: Dockerfile
+
+deployments:
+  api:
+    image: ${{ builds.api.image }}
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+      JWT_SECRET: ${{ variables.jwt_secret }}
+      PORT: "3000"
+    cpu: "0.5"
+    memory: "1Gi"
+
+services:
+  api:
+    deployment: api
+    port: 3000
+
+routes:
+  api:
+    type: http
+    service: api
+```
+
+### Build the Artifacts
+
+Even though you already have running containers, cldctl needs OCI artifacts so it knows each component's resource graph:
+
+```bash
+# Build component artifacts (this packages the YAML + source, it does NOT deploy)
+cldctl build component ./frontend -t ghcr.io/acme/frontend:v1.0.0
+cldctl build component ./api -t ghcr.io/acme/api:v1.0.0
+
+# Push to your registry
+cldctl push component ghcr.io/acme/frontend:v1.0.0
+cldctl push component ghcr.io/acme/api:v1.0.0
+```
+
+## Step 2: Audit the Datacenter and Component Templates
+
+Before writing any import files, use `cldctl audit` to discover the two pieces of information you need:
+
+1. **Resource keys** from the component (the left side of the mapping: `database.main`, `deployment.api`)
+2. **IaC resource addresses** from the datacenter (the right side: `aws_db_instance.this`, `aws_ecs_service.this`)
+
+### Audit the components
+
+Run `audit component` on each component artifact to see what resource keys exist:
+
+```bash
+cldctl audit component ghcr.io/acme/api:v1.0.0
+```
+
+```
+Component Resource Keys
+============================================================
+
+Use these keys in import mapping files (resources section).
+
+  database.main                  postgres:^16
+  deployment.api                 image=${{ builds.api.image }}
+  service.api                    port=3000
+  route.api                      http
+
+Dependencies:
+  (none)
+
+Variables:
+  jwt_secret                     [required]
+```
+
+```bash
+cldctl audit component ghcr.io/acme/frontend:v1.0.0
+```
+
+```
+Component Resource Keys
+============================================================
+
+Use these keys in import mapping files (resources section).
+
+  database.main                  postgres:^16
+  function.web
+  route.main                     http
+
+Dependencies:
+  api                            ghcr.io/acme/api
+
+Variables:
+  (none)
+```
+
+These resource keys (`database.main`, `deployment.api`, `function.web`, etc.) are what you use as keys in the import mapping file.
+
+### Audit the datacenter
+
+Run `audit datacenter --modules` to see the IaC resource addresses inside each hook module:
+
+```bash
+cldctl pull datacenter ghcr.io/cldctl/aws-ecs:latest
+cldctl audit datacenter ghcr.io/cldctl/aws-ecs:latest --modules
+```
+
+```
+IaC Resource Addresses
+============================================================
+
+Use these addresses in import mapping files (--import-file)
+or --map flags to map existing cloud resources to IaC state.
+
+Root Modules
+------------------------------------------------------------
+
+  module "alb" (plugin=opentofu)
+    Resources (use as --map addresses):
+      aws_lb.this
+      aws_lb_listener.http
+      aws_lb_listener.https
+
+Environment Modules
+------------------------------------------------------------
+
+  module "vpc" (plugin=opentofu)
+    Resources (use as --map addresses):
+      aws_vpc.this
+      aws_subnet.public
+      aws_subnet.private
+
+Hook: database
+------------------------------------------------------------
+  when: element(split(":", node.inputs.type), 0) == "postgres"
+
+  module "rds-database" (plugin=opentofu)
+    Resources (use as --map addresses):
+      random_password.this
+      aws_db_subnet_group.this
+      aws_db_instance.this
+
+Hook: deployment
+------------------------------------------------------------
+
+  module "ecs-service" (plugin=opentofu)
+    Resources (use as --map addresses):
+      aws_ecs_task_definition.this
+      aws_ecs_service.this
+
+Hook: function
+------------------------------------------------------------
+
+  module "lambda-function" (plugin=opentofu)
+    Resources (use as --map addresses):
+      aws_lambda_function.this
+      aws_lambda_permission.this
+
+Hook: service
+------------------------------------------------------------
+
+  module "alb-target-group" (plugin=opentofu)
+    Resources (use as --map addresses):
+      aws_lb_target_group.this
+
+Hook: route
+------------------------------------------------------------
+
+  module "alb-listener-rule" (plugin=opentofu)
+    Resources (use as --map addresses):
+      aws_lb_listener_rule.this
+```
+
+Notice three sections: **Root Modules** (datacenter-wide shared infra like the ALB), **Environment Modules** (per-environment infra like VPCs), and **Hooks** (per-resource modules like databases, deployments). The addresses in each section are what you pair with real cloud resource IDs in the mapping files.
+
+<Tip>
+For a high-level overview (hooks, variables, modules without addresses), omit `--modules`:
+
+```bash
+cldctl audit datacenter ghcr.io/cldctl/aws-ecs:latest
+```
+</Tip>
+
+### Putting it together
+
+Each import mapping entry connects a **resource key** (from `audit component`) with **IaC addresses** (from `audit datacenter --modules`) and your **real cloud resource IDs** (from AWS Console, AWS CLI, or existing Terraform state):
+
+```
+resource key          IaC address                  cloud resource ID
+─────────────        ──────────────────           ─────────────────────
+database.main    →   aws_db_instance.this     →   acme-production-db
+deployment.api   →   aws_ecs_service.this     →   arn:aws:ecs:...
+service.api      →   aws_lb_target_group.this →   arn:aws:elasticloadbalancing:...
+```
+
+## Step 3: Write the Import Mapping Files
+
+Now that you know the resource keys, IaC addresses, and your cloud resource IDs, write the mapping files.
+
+### Datacenter Import File
+
+The datacenter import file covers root-level modules (shared across all environments) and environment-scoped modules (per-environment). Listing an environment here also creates it automatically — no separate `cldctl create environment` step needed:
+
+```yaml
+# import-datacenter.yml
+modules:
+  alb:
+    - address: aws_lb.this
+      id: "arn:aws:elasticloadbalancing:us-east-1:123456789:loadbalancer/app/acme-alb/abc123"
+    - address: aws_lb_listener.https
+      id: "arn:aws:elasticloadbalancing:us-east-1:123456789:listener/app/acme-alb/abc123/def456"
+
+environments:
+  production:
+    modules:
+      vpc:
+        - address: aws_vpc.this
+          id: "vpc-0abc123def456"
+        - address: aws_subnet.public
+          id: "subnet-aaa111"
+        - address: aws_subnet.private
+          id: "subnet-bbb222"
+```
+
+### Component Import Files
+
+Each component mapping file connects that component's resource keys (from `audit component`) to the IaC addresses (from `audit datacenter --modules`) and your real AWS resource IDs:
+
+```yaml
+# import-api.yml
+resources:
+  database.main:
+    - address: aws_db_instance.this
+      id: "acme-production-db"
+    - address: aws_db_subnet_group.this
+      id: "acme-production-db"
+  deployment.api:
+    - address: aws_ecs_service.this
+      id: "arn:aws:ecs:us-east-1:123456789:service/acme/acme-api"
+    - address: aws_ecs_task_definition.this
+      id: "arn:aws:ecs:us-east-1:123456789:task-definition/acme-api:42"
+  service.api:
+    - address: aws_lb_target_group.this
+      id: "arn:aws:elasticloadbalancing:us-east-1:123456789:targetgroup/acme-api/abc123"
+  route.api:
+    - address: aws_lb_listener_rule.this
+      id: "arn:aws:elasticloadbalancing:us-east-1:123456789:listener-rule/app/acme-alb/abc/def/rule123"
+```
+
+```yaml
+# import-frontend.yml
+resources:
+  database.main:
+    - address: aws_db_instance.this
+      id: "acme-production-db"
+    - address: aws_db_subnet_group.this
+      id: "acme-production-db"
+  function.web:
+    - address: aws_lambda_function.this
+      id: "acme-web"
+  route.main:
+    - address: aws_lb_listener_rule.this
+      id: "arn:aws:elasticloadbalancing:us-east-1:123456789:listener-rule/app/acme-alb/abc/def/rule456"
+```
+
+<Tip>
+You can find AWS resource IDs in the AWS Console, via the AWS CLI (`aws ecs describe-services`, `aws rds describe-db-instances`, etc.), or from your existing Terraform state files (`terraform state list` and `terraform state show`).
+</Tip>
+
+## Step 4: Deploy the Datacenter (with Imports)
+
+Deploy the datacenter with `--import-file` to adopt existing root and environment modules in one atomic step. The `production` environment listed in the import file is created automatically:
+
+```bash
+cldctl deploy datacenter prod-dc ghcr.io/cldctl/aws-ecs:latest \
+  --var aws_region=us-east-1 \
+  --var vpc_id=vpc-0abc123def456 \
+  --var ecs_cluster_arn=arn:aws:ecs:us-east-1:123456789:cluster/acme \
+  --var domain=acme.com \
+  --import-file import-datacenter.yml
+```
+
+Modules listed in the import file are imported into state before the deploy runs. Modules **not** listed are provisioned from scratch. The `production` environment is created with its VPC module already imported.
+
+<Note>
+If the datacenter template has no root-level or environment-scoped modules, you can omit `--import-file` and just create the environment manually with `cldctl create environment production -d prod-dc`.
+</Note>
+
+## Step 5: Deploy Components with Import
+
+Deploy each component and import existing resources in one atomic step using `--import-file`. Start with the API (since the frontend depends on it):
+
+### Deploy and Import the API
+
+```bash
+cldctl deploy component ghcr.io/acme/api:v1.0.0 \
+  -d prod-dc -e production \
+  --var jwt_secret=$JWT_SECRET \
+  --import-file import-api.yml
+```
+
+cldctl imports the mapped resources into state, then runs the normal deploy. Since every resource already has state from the import, the deploy reconciles rather than creating duplicates:
+
+```
+[import] Importing existing resources for 4 resource(s)...
+  Importing database.main (2 IaC resource(s))...
+  Verifying import...
+  database.main: imported successfully (no drift)
+  Importing deployment.api (2 IaC resource(s))...
+  Verifying import...
+  deployment.api: imported successfully (no drift)
+  Importing service.api (1 IaC resource(s))...
+  Verifying import...
+  service.api: imported successfully (no drift)
+  Importing route.api (1 IaC resource(s))...
+  Verifying import...
+  route.api: imported successfully (no drift)
+
+Plan Summary:
+  Environment: production
+  Datacenter:  prod-dc
+
+No changes required.
+
+[success] Deployed api to production
+```
+
+### Deploy and Import the Frontend
+
+```bash
+cldctl deploy component ghcr.io/acme/frontend:v1.0.0 \
+  -d prod-dc -e production \
+  --import-file import-frontend.yml
+```
+
+<Note>
+The `--import-file` flag is only needed on the **first** deploy for each component. Subsequent deploys (version updates, config changes) use the normal `deploy component` without it.
+</Note>
+
+## Step 6: Verify the Import
+
+After importing, use `cldctl inspect` to verify everything looks correct:
+
+```bash
+# Check the environment
+cldctl inspect production
+
+# Check the API component
+cldctl inspect production/api
+
+# Check a specific resource
+cldctl inspect production/api/database.main
+```
+
+You should see all resources in `ready` status with their outputs populated (database URLs, service endpoints, etc.).
+
+List the components to confirm:
+
+```bash
+cldctl list component -e production -d prod-dc
+```
+
+```
+NAME        VERSION                          RESOURCES   STATUS
+api         ghcr.io/acme/api:v1.0.0         4           ready
+frontend    ghcr.io/acme/frontend:v1.0.0    3           ready
+```
+
+## Step 7: Deploy Future Changes Through cldctl
+
+Now that state is imported, all future changes go through `cldctl deploy`. For example, to deploy a new API version:
+
+```bash
+# Build the new version
+cldctl build component ./api -t ghcr.io/acme/api:v1.1.0
+cldctl push component ghcr.io/acme/api:v1.1.0
+
+# Deploy — cldctl knows what exists and only updates what changed
+cldctl deploy component ghcr.io/acme/api:v1.1.0 -e production -d prod-dc
+```
+
+cldctl compares the new component definition against the imported state and creates a plan that only modifies what changed — no unnecessary recreation.
+
+## Alternative: Single-File Environment Import
+
+If you prefer to import everything at once instead of component-by-component, use the environment-level import:
+
+```yaml
+# import-production.yml
+components:
+  api:
+    source: ghcr.io/acme/api:v1.0.0
+    variables:
+      jwt_secret: "${JWT_SECRET}"
+    resources:
+      database.main:
+        - address: aws_db_instance.main
+          id: "acme-production-db"
+        - address: aws_security_group.db
+          id: "sg-0db1234567890"
+      deployment.api:
+        - address: aws_ecs_service.main
+          id: "arn:aws:ecs:us-east-1:123456789:service/acme/acme-api"
+        - address: aws_ecs_task_definition.main
+          id: "arn:aws:ecs:us-east-1:123456789:task-definition/acme-api:42"
+      service.api:
+        - address: aws_lb_target_group.main
+          id: "arn:aws:elasticloadbalancing:us-east-1:123456789:targetgroup/acme-api/abc123"
+      route.api:
+        - address: aws_lb_listener_rule.main
+          id: "arn:aws:elasticloadbalancing:us-east-1:123456789:listener-rule/app/acme-alb/abc/def/rule123"
+  frontend:
+    source: ghcr.io/acme/frontend:v1.0.0
+    resources:
+      database.main:
+        - address: aws_db_instance.main
+          id: "acme-production-db"
+        - address: aws_security_group.db
+          id: "sg-0db1234567890"
+      function.web:
+        - address: aws_lambda_function.main
+          id: "acme-web"
+      route.main:
+        - address: aws_lb_listener_rule.main
+          id: "arn:aws:elasticloadbalancing:us-east-1:123456789:listener-rule/app/acme-alb/abc/def/rule456"
+```
+
+```bash
+cldctl import environment production \
+  -d prod-dc \
+  --mapping import-production.yml
+```
+
+## Handling Drift
+
+After import, cldctl may detect **drift** — differences between the imported state and the actual infrastructure. This can happen when the existing resources were configured slightly differently than the datacenter's module expects.
+
+```
+  deployment.api: imported with 2 drift(s) detected
+```
+
+To resolve drift, run a deploy to reconcile:
+
+```bash
+cldctl deploy component ghcr.io/acme/api:v1.0.0 -e production -d prod-dc
+```
+
+This brings the actual infrastructure into alignment with the cldctl-managed configuration.
+
+## Partial Import
+
+You don't have to import everything at once. Common migration patterns:
+
+1. **Database first** — Import the database so cldctl manages backups and connection strings, while keeping deployments manual.
+2. **One component at a time** — Import the API first, verify it works, then import the frontend.
+3. **New environments first** — Use cldctl for staging (fresh deploy), then import production once you're confident.
+
+Resources not included in the mapping file are simply absent from state. A subsequent `cldctl deploy` will create them fresh if the component definition includes them.
+
+## Summary
+
+| Step | Command | What It Does |
+|------|---------|-------------|
+| 1 | Write `cloud.component.yml` + `cldctl build component` | Define and package each component |
+| 2 | `cldctl audit component` + `cldctl audit datacenter --modules` | Discover resource keys and IaC addresses |
+| 3 | Write mapping YAML files | Map resource keys to IaC addresses to cloud resource IDs |
+| 4 | `cldctl deploy datacenter --import-file` | Deploy datacenter, importing root + environment modules |
+| 5 | `cldctl deploy component --import-file` | Deploy each component, importing existing resources |
+| 6 | `cldctl inspect` | Verify the import |
+| 7 | `cldctl deploy component` | Make future changes through cldctl |
+
+## Related Guides
+
+<CardGroup cols={2}>
+  <Card title="Import CLI Reference" icon="download" href="/cli/import/resource">
+    Full command reference for all import subcommands
+  </Card>
+  <Card title="AWS ECS Datacenter" icon="aws" href="/guides/datacenters/aws-ecs">
+    Official AWS ECS Fargate datacenter template
+  </Card>
+  <Card title="Next.js App" icon="react" href="/guides/components/nextjs-app">
+    Building a Next.js component from scratch
+  </Card>
+  <Card title="Managing Environments" icon="layer-group" href="/guides/managing-environments">
+    Day-to-day environment operations
+  </Card>
+</CardGroup>

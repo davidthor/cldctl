@@ -1,0 +1,70 @@
+---
+title: "import resource"
+description: "Import a single existing cloud resource into cldctl state"
+---
+
+## Usage
+
+```bash
+cldctl import resource <component> <resource-key> [flags]
+```
+
+## Description
+
+Import an existing cloud resource into cldctl state by providing the mapping from IaC-module-internal resource addresses to real cloud resource IDs.
+
+The resource-key uses the type-qualified format: `database.main`, `deployment.api`, `service.api`, etc.
+
+Import does **not** provision new resources — it records existing cloud resource state in cldctl's state backend. After importing, the resource is managed by cldctl alongside other deployed resources.
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `component` | Name of the component to import the resource into |
+| `resource-key` | Type-qualified resource key (e.g., `database.main`, `deployment.api`) |
+
+## Flags
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--environment` | `-e` | Target environment (required) |
+| `--datacenter` | `-d` | Target datacenter (uses default if not set) |
+| `--map` | | Resource mapping in `address=cloud-id` format (repeatable) |
+| `--auto-approve` | | Skip confirmation prompt |
+| `--force` | | Overwrite existing resource state |
+| `--backend` | | State backend type |
+| `--backend-config` | | Backend configuration (`key=value`) |
+
+## Examples
+
+### Simple single-resource module
+
+```bash
+cldctl import resource my-app deployment.api \
+  -d prod-dc -e production \
+  --map "aws_ecs_service.main=arn:aws:ecs:us-east-1:123:service/my-cluster/api"
+```
+
+### Multi-resource module (e.g., database with security group)
+
+```bash
+cldctl import resource my-app database.main \
+  -d prod-dc -e production \
+  --map "aws_db_instance.main=mydb-instance-123" \
+  --map "aws_security_group.db=sg-abc456"
+```
+
+## How It Works
+
+1. **Hook matching** — cldctl uses the datacenter configuration to determine which IaC module manages the resource type.
+2. **Plugin import** — The appropriate IaC plugin (`tofu import`, `pulumi import`, or Docker inspect) imports each mapped resource.
+3. **Output extraction** — After importing, cldctl extracts module outputs (e.g., database URL, host, port) from the resulting state.
+4. **State save** — The resource state (including IaC state and outputs) is saved so future deploys can manage it.
+5. **Verification** — A refresh is run to verify the imported state matches the actual cloud infrastructure and detect any drift.
+
+## Prerequisites
+
+- A datacenter must be deployed (`cldctl deploy datacenter`)
+- An environment must exist (`cldctl create environment`)
+- The `--map` values must use the IaC resource addresses defined in the datacenter's hook modules

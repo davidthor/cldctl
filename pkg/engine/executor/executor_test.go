@@ -160,6 +160,10 @@ func (p *mockPlugin) Refresh(ctx context.Context, opts iac.RunOptions) (*iac.Ref
 	return &iac.RefreshResult{}, nil
 }
 
+func (p *mockPlugin) Import(ctx context.Context, opts iac.ImportOptions) (*iac.ImportResult, error) {
+	return &iac.ImportResult{}, nil
+}
+
 // testRegistry creates a test registry with plugins registered
 // Note: This uses the global DefaultRegistry which has its factories map initialized
 var testRegistry *iac.Registry

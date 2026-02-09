@@ -1,0 +1,81 @@
+---
+title: "import environment"
+description: "Import multiple components into an environment from existing infrastructure"
+---
+
+## Usage
+
+```bash
+cldctl import environment <environment-name> [flags]
+```
+
+## Description
+
+Import multiple components and their resources into an environment at once using a mapping file. This is the highest-level import command — it creates the environment state (if it doesn't exist) and all component/resource state entries.
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `environment-name` | Name for the target environment |
+
+## Flags
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--datacenter` | `-d` | Target datacenter (uses default if not set) |
+| `--mapping` | | Path to environment mapping YAML file (required) |
+| `--auto-approve` | | Skip confirmation prompt |
+| `--force` | | Overwrite existing state |
+| `--backend` | | State backend type |
+| `--backend-config` | | Backend configuration (`key=value`) |
+
+## Mapping File Format
+
+```yaml
+# import-production.yml
+components:
+  my-app:
+    source: ghcr.io/myorg/app:v1.0.0
+    variables:
+      log_level: info
+    resources:
+      database.main:
+        - address: aws_db_instance.main
+          id: "mydb-instance-123"
+      deployment.api:
+        - address: aws_ecs_service.main
+          id: "arn:aws:ecs:..."
+  my-api:
+    source: ghcr.io/myorg/api:v2.0.0
+    resources:
+      deployment.worker:
+        - address: aws_ecs_service.main
+          id: "arn:aws:ecs:..."
+```
+
+Each component entry requires a `source` (OCI reference) and `resources` mapping. Optional `variables` provide component variable values.
+
+## Examples
+
+```bash
+cldctl import environment production \
+  -d prod-dc \
+  --mapping import-production.yml
+```
+
+### Auto-approve (for CI)
+
+```bash
+cldctl import environment production \
+  -d prod-dc \
+  --mapping import-production.yml \
+  --auto-approve
+```
+
+## Behavior
+
+- If the environment does not exist, it is created automatically.
+- Each component is imported independently — failure of one component does not prevent others from being imported.
+- Import is additive: it does not remove existing components or resources.
+- Use `--force` to overwrite existing component state.

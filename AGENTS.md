@@ -35,6 +35,7 @@ cldctl deploy component myorg/myapp:v1 -e production -d my-datacenter
 cldctl deploy component myorg/stripe:latest -d my-dc --var key=secret  # datacenter-level component (no -e)
 cldctl deploy datacenter local davidthor/local-datacenter
 cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0
+cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 --import-file import.yml  # adopt existing infra during deploy
 
 # Environment management
 cldctl create environment staging -d my-datacenter
@@ -81,6 +82,11 @@ cldctl inspect staging/my-app/api -o json            # JSON output
 cldctl inspect component ./my-app                    # Visualize resource graph
 cldctl inspect component ./my-app --expand           # Include dependencies
 
+# Audit templates (not deployed state — for building import mapping files)
+cldctl audit datacenter ./my-dc                      # Show hooks, modules, variables
+cldctl audit datacenter ghcr.io/myorg/dc:v1 --modules  # Show IaC resource addresses for import
+cldctl audit component ./my-app                      # Show resource keys and dependencies
+
 # Local development (up command)
 cldctl up                                         # Auto-detect cloud.component.yml or cloud.environment.yml in CWD
 cldctl up -c ./my-app -d local                    # Component mode: deploy single component
@@ -88,6 +94,15 @@ cldctl up -e cloud.environment.yml -d local       # Environment mode: deploy all
 cldctl up -c ./my-app --name my-feature -d local  # Named environment
 cldctl up -e ./envs/dev.yml --var key=secret      # Environment mode with variable overrides
 cldctl up --detach                                # Run in background
+
+# Import existing infrastructure
+cldctl import resource my-app database.main -d prod-dc -e production \
+  --map "aws_db_instance.main=mydb-123" --map "aws_security_group.db=sg-abc"
+cldctl import component my-app -d prod-dc -e production \
+  --source ghcr.io/myorg/app:v1.0.0 --mapping import-my-app.yml
+cldctl import environment production -d prod-dc --mapping import-production.yml
+cldctl import datacenter prod-dc --module vpc \
+  --map "aws_vpc.main=vpc-0abc123" --map "aws_subnet.public[0]=subnet-xyz789"
 
 # Logs and observability
 cldctl logs -e staging -d my-datacenter           # All logs in the environment
@@ -136,7 +151,7 @@ When deploying a component that declares `dependencies` in its `cloud.component.
 | `internal/cli/` | Cobra command implementations |
 | `pkg/schema/` | YAML/HCL config parsing with versioned schemas |
 | `pkg/state/backend/` | Pluggable state backends (local, s3, gcs, azurerm) |
-| `pkg/engine/` | Execution engine (graph, planner, executor, expressions) |
+| `pkg/engine/` | Execution engine (graph, planner, executor, expressions, import) |
 | `pkg/iac/` | IaC plugins (native, pulumi, opentofu) |
 | `pkg/logs/` | Log query plugin system (querier interface, Loki adapter) |
 | `pkg/errors/` | Structured error types |
