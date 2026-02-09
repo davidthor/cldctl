@@ -559,11 +559,6 @@ Examples:
 				}
 			}
 
-			// Display execution plan
-			fmt.Printf("Datacenter: %s\n", dcName)
-			fmt.Printf("Image:      %s\n", imageRef)
-			fmt.Println()
-
 			// Resolve the image: check local cache first, then pull from remote
 			reg, err := registry.NewRegistry()
 			if err != nil {
@@ -625,8 +620,18 @@ Examples:
 				if dcFile == "" {
 					return fmt.Errorf("cached artifact for %s is missing from disk; try: cldctl pull datacenter %s", imageRef, imageRef)
 				}
-				fmt.Printf("[cache] Using locally cached %s\n", imageRef)
 			}
+
+			// Generate and display the deployment plan
+			eng := createEngine(mgr)
+			dcPlan, err := eng.PlanDatacenter(ctx, dcName, imageRef)
+			if err != nil {
+				return fmt.Errorf("failed to plan datacenter deployment: %w", err)
+			}
+
+			fmt.Println()
+			eng.PrintDatacenterPlanSummary(os.Stdout, dcPlan)
+			fmt.Println()
 
 			// Confirm unless --auto-approve is provided
 			if !autoApprove {
@@ -667,8 +672,6 @@ Examples:
 			}
 
 			// Execute root-level modules and reconcile environments
-			eng := createEngine(mgr)
-
 			dcResult, err := eng.DeployDatacenter(ctx, engine.DeployDatacenterOptions{
 				Datacenter:  dcName,
 				Output:      os.Stdout,

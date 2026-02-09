@@ -58,21 +58,53 @@ cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 \
 
 ## Execution Plan Output
 
+Before deploying, the command generates a plan showing what changes will be made.
+The plan compares the incoming datacenter configuration against the current state
+to identify modules that will be created or updated, component registrations, and
+environments that need reconciliation.
+
+### First deployment (all modules are new)
+
 ```
-$ cldctl deploy dc prod-dc ./datacenter
+$ cldctl deploy dc prod-dc ghcr.io/myorg/dc:v1.0.0
 
-Datacenter: prod-dc
-Source:     ./datacenter
+Root modules:
+  + module/eks (opentofu)
+  + module/rds-postgres (opentofu)
 
-Execution Plan:
+Plan: 2 module(s) to create, 0 to update, 0 environment(s) to reconcile
 
-  module "eks"
-    + create: Module "eks"
+Proceed? [Y/n]:
+```
 
-  module "rds-postgres"
-    + create: Module "rds-postgres"
+### Updating an existing datacenter
 
-Plan: 2 modules to deploy
+```
+$ cldctl deploy dc prod-dc ghcr.io/myorg/dc:v2.0.0
+
+Root modules:
+  ~ module/eks (opentofu)
+      ~ region: us-east-1 → us-west-2
+  ~ module/rds-postgres (opentofu)
+
+Component registrations:
+  → myorg/stripe (latest)
+
+Environments to reconcile:
+  ~ staging (3 component(s) will be re-deployed)
+  ~ production (5 component(s) will be re-deployed)
+
+Plan: 0 module(s) to create, 2 to update, 2 environment(s) to reconcile
+
+Proceed? [Y/n]:
+```
+
+### No changes
+
+```
+$ cldctl deploy dc prod-dc ghcr.io/myorg/dc:v1.0.0
+
+No changes. Datacenter "prod-dc" is up to date.
 
 Proceed? [Y/n]:
 ```
