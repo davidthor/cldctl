@@ -71,6 +71,25 @@ Access database connection information in other resources:
 | `${{ databases.<name>.username }}` | Username |
 | `${{ databases.<name>.password }}` | Password |
 
+### Read/Write Endpoint Separation
+
+Databases also expose optional `read` and `write` sub-objects for advanced scenarios like zero-downtime migrations where read and write traffic may route to different backends:
+
+| Output | Description |
+|--------|-------------|
+| `${{ databases.<name>.read.url }}` | Read endpoint connection URL |
+| `${{ databases.<name>.read.host }}` | Read endpoint hostname |
+| `${{ databases.<name>.read.port }}` | Read endpoint port |
+| `${{ databases.<name>.read.username }}` | Read endpoint username |
+| `${{ databases.<name>.read.password }}` | Read endpoint password |
+| `${{ databases.<name>.write.url }}` | Write endpoint connection URL |
+| `${{ databases.<name>.write.host }}` | Write endpoint hostname |
+| `${{ databases.<name>.write.port }}` | Write endpoint port |
+| `${{ databases.<name>.write.username }}` | Write endpoint username |
+| `${{ databases.<name>.write.password }}` | Write endpoint password |
+
+**Fallback behavior**: When the datacenter does not explicitly set `read` or `write` outputs, they automatically mirror the top-level values. This means `${{ databases.main.read.url }}` and `${{ databases.main.write.url }}` always work—even against existing datacenters that only define flat outputs.
+
 ### Example Usage
 
 ```yaml
@@ -83,6 +102,19 @@ deployments:
       DB_NAME: ${{ databases.main.database }}
       DB_USER: ${{ databases.main.username }}
       DB_PASS: ${{ databases.main.password }}
+```
+
+### Read/Write Endpoint Example
+
+```yaml
+deployments:
+  api:
+    environment:
+      # Standard connection (backwards compatible)
+      DATABASE_URL: ${{ databases.main.url }}
+      # Separate read/write endpoints for migration scenarios
+      DATABASE_READ_URL: ${{ databases.main.read.url }}
+      DATABASE_WRITE_URL: ${{ databases.main.write.url }}
 ```
 
 ## Database Migrations

@@ -54,7 +54,7 @@ Each hook handles a component resource type:
 
 | Hook | Purpose | Required Outputs |
 |------|---------|-----------------|
-| `database` | Provision databases | `host`, `port`, `url`, `username`, `password` |
+| `database` | Provision databases | `host`, `port`, `url`, `username`, `password`; optional nested: `read`, `write` (auto-populated from top-level if omitted) |
 | `task` | One-shot jobs (e.g., migrations) | `id` |
 | `bucket` | Object storage | `endpoint`, `bucket`, `accessKeyId`, `secretAccessKey` |
 | `encryptionKey` | Encryption keys | RSA/ECDSA: `privateKey`, `publicKey`, `privateKeyBase64`, `publicKeyBase64`; Symmetric: `key`, `keyBase64` |
@@ -125,6 +125,34 @@ database {
     url      = module.postgres.url
     username = module.postgres.username
     password = module.postgres.password
+  }
+}
+```
+
+### Multi-Module Hooks and Nested Outputs
+
+Hooks can define multiple modules. All modules are executed in order, and later modules
+can reference earlier modules' outputs via `module.<name>.<output>`. Outputs can include
+nested objects (e.g., `read`/`write` for database read/write endpoint separation):
+
+```hcl
+database {
+  module "primary" { ... }
+  module "replica" { ... }
+
+  outputs = {
+    host = module.primary.host
+    url  = module.primary.url
+    # ...
+
+    read = {
+      host = module.replica.host
+      url  = module.replica.url
+    }
+    write = {
+      host = module.primary.host
+      url  = module.primary.url
+    }
   }
 }
 ```
