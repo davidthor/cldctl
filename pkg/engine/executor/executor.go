@@ -1715,7 +1715,6 @@ func (e *Executor) executePortAllocation(ctx context.Context, change *planner.Re
 	// Priority 3: Built-in deterministic hash fallback
 	if !allocated {
 		allocatedPort = stablePortForNode(envState.Name, componentName, portName)
-		allocated = true
 	}
 
 	// Save to state
