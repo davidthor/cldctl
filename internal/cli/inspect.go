@@ -144,6 +144,7 @@ Examples:
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
 
 	cmd.AddCommand(newInspectComponentCmd())
+	cmd.AddCommand(newInspectDatacenterCmd())
 
 	return cmd
 }

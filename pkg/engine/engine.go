@@ -384,14 +384,6 @@ func (e *Engine) loadDatacenterConfig(ref string) (datacenter.Datacenter, error)
 	return e.loadDatacenterFromOCI(context.Background(), ref)
 }
 
-// LoadDatacenterForRegistration loads a datacenter configuration from an image
-// reference without provisioning anything. This is used by --skip-modules to
-// register datacenter-level component declarations before root modules are
-// imported.
-func (e *Engine) LoadDatacenterForRegistration(_ context.Context, ref string) (datacenter.Datacenter, error) {
-	return e.loadDatacenterConfig(ref)
-}
-
 // loadDatacenterFromOCI pulls a datacenter artifact from a remote OCI registry,
 // caches it locally, registers it in the unified artifact registry, and loads it.
 func (e *Engine) loadDatacenterFromOCI(ctx context.Context, ref string) (datacenter.Datacenter, error) {

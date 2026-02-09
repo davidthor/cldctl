@@ -12,7 +12,9 @@ import (
 
 	"github.com/davidthor/cldctl/pkg/engine"
 	"github.com/davidthor/cldctl/pkg/engine/executor"
+	"github.com/davidthor/cldctl/pkg/engine/importmap"
 	"github.com/davidthor/cldctl/pkg/engine/planner"
+	"github.com/davidthor/cldctl/pkg/iac"
 	"github.com/davidthor/cldctl/pkg/oci"
 	"github.com/davidthor/cldctl/pkg/registry"
 	"github.com/davidthor/cldctl/pkg/schema/component"
@@ -42,6 +44,7 @@ func newDeployComponentCmd() *cobra.Command {
 		variables     []string
 		varFile       string
 		autoApprove   bool
+		importFile    string
 		targets       []string
 		backendType   string
 		backendConfig []string
@@ -391,6 +394,46 @@ Examples:
 				progress.PrintUpdate(event.NodeID)
 			}
 
+			// If an import file is provided, import existing resources before
+			// deploying. This adopts cloud resources into state atomically so
+			// the subsequent deploy sees them as existing and updates in-place.
+			if importFile != "" {
+				compImportMap, parseErr := importmap.ParseComponentMapping(importFile)
+				if parseErr != nil {
+					return fmt.Errorf("failed to parse import file: %w", parseErr)
+				}
+
+				fmt.Printf("[import] Importing existing resources for %d resource(s)...\n", len(compImportMap.Resources))
+
+				for resourceKey, mappings := range compImportMap.Resources {
+					iacMappings := make([]iac.ImportMapping, 0, len(mappings))
+					for _, m := range mappings {
+						iacMappings = append(iacMappings, iac.ImportMapping{
+							Address: m.Address,
+							ID:      m.ID,
+						})
+					}
+
+					importResult, importErr := eng.ImportResource(ctx, engine.ImportResourceOptions{
+						Datacenter:  dc,
+						Environment: environment,
+						Component:   componentName,
+						ResourceKey: resourceKey,
+						Mappings:    iacMappings,
+						Output:      os.Stdout,
+						Force:       true,
+					})
+					if importErr != nil {
+						return fmt.Errorf("failed to import %s: %w", resourceKey, importErr)
+					}
+					if !importResult.Success {
+						return fmt.Errorf("import of %s failed", resourceKey)
+					}
+				}
+
+				fmt.Println()
+			}
+
 			// Execute deployment using the engine
 			result, err := eng.Deploy(ctx, engine.DeployOptions{
 				Environment: environment,
@@ -428,6 +471,7 @@ Examples:
 	cmd.Flags().StringArrayVar(&variables, "var", nil, "Set variable (key=value)")
 	cmd.Flags().StringVar(&varFile, "var-file", "", "Load variables from file")
 	cmd.Flags().BoolVar(&autoApprove, "auto-approve", false, "Skip confirmation prompt")
+	cmd.Flags().StringVar(&importFile, "import-file", "", "Import existing resources from mapping file during deploy")
 	cmd.Flags().StringArrayVar(&targets, "target", nil, "Target specific resource (repeatable)")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
@@ -502,7 +546,7 @@ func newDeployDatacenterCmd() *cobra.Command {
 		variables     []string
 		varFile       string
 		autoApprove   bool
-		skipModules   bool
+		importFile    string
 		backendType   string
 		backendConfig []string
 	)
@@ -518,10 +562,13 @@ The image must be a reference to a datacenter artifact in the local cache
 If the image is not cached locally, it will be pulled from the remote registry
 automatically.
 
-Use --skip-modules to register the datacenter without provisioning root-level
-modules. This is useful when adopting existing infrastructure: register the
-datacenter first, then use 'cldctl import datacenter' to import existing
-cloud resources into module state before the first full deploy.
+Use --import-file to adopt existing cloud resources into root-level module
+state during the deploy. For each module listed in the import file, cldctl
+imports the mapped resources instead of provisioning from scratch. Modules
+NOT listed in the import file are provisioned normally.
+
+Use 'cldctl inspect datacenter <image> --modules' to discover the IaC
+resource addresses you'll need for the import file.
 
 Arguments:
   name    Name for the deployed datacenter
@@ -532,8 +579,9 @@ Examples:
   cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0
   cldctl deploy datacenter my-dc my-dc:latest
 
-  # Register without provisioning (for import workflows)
-  cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 --skip-modules`,
+  # Deploy with existing infrastructure imported atomically
+  cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 \
+    --import-file import-datacenter.yml`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
@@ -680,49 +728,62 @@ Examples:
 				fmt.Printf("[config] Default datacenter set to %q\n", dcName)
 			}
 
-			if skipModules {
-				// Register datacenter-level component declarations without
-				// provisioning root modules. This lets operators import
-				// existing infrastructure before the first full deploy.
-				dcConfig, loadErr := eng.LoadDatacenterForRegistration(ctx, imageRef)
-				if loadErr == nil && dcConfig != nil {
-					for _, comp := range dcConfig.Components() {
-						compConfig := &types.DatacenterComponentConfig{
-							Name:      comp.Name(),
-							Source:    comp.Source(),
-							Variables: comp.Variables(),
-						}
-						_ = mgr.SaveDatacenterComponent(ctx, dcName, compConfig)
+			// If an import file is provided, import existing resources into
+			// module state BEFORE the normal deploy. This way modules that
+			// already have state are updated in-place rather than created.
+			if importFile != "" {
+				dcImportMap, parseErr := importmap.ParseDatacenterMapping(importFile)
+				if parseErr != nil {
+					return fmt.Errorf("failed to parse import file: %w", parseErr)
+				}
+
+				fmt.Printf("[import] Importing existing resources for %d module(s)...\n", len(dcImportMap.Modules))
+
+				for modName, mappings := range dcImportMap.Modules {
+					iacMappings := make([]iac.ImportMapping, 0, len(mappings))
+					for _, m := range mappings {
+						iacMappings = append(iacMappings, iac.ImportMapping{
+							Address: m.Address,
+							ID:      m.ID,
+						})
+					}
+
+					result, importErr := eng.ImportDatacenterModule(ctx, engine.ImportDatacenterModuleOptions{
+						Datacenter: dcName,
+						Module:     modName,
+						Mappings:   iacMappings,
+						Output:     os.Stdout,
+						Force:      true,
+					})
+					if importErr != nil {
+						return fmt.Errorf("failed to import module %q: %w", modName, importErr)
+					}
+					if !result.Success {
+						return fmt.Errorf("import of module %q failed", modName)
 					}
 				}
 
-				fmt.Printf("[success] Datacenter %q registered from %s (modules skipped)\n", dcName, imageRef)
 				fmt.Println()
-				fmt.Println("Root-level modules were NOT provisioned. To adopt existing")
-				fmt.Println("infrastructure, import each module now:")
-				fmt.Println()
-				fmt.Println("  cldctl import datacenter " + dcName + " --module <name> --map <address>=<id>")
-				fmt.Println()
-				fmt.Println("Then run 'cldctl deploy datacenter' again without --skip-modules")
-				fmt.Println("to reconcile and provision any remaining resources.")
-			} else {
-				// Execute root-level modules and reconcile environments
-				dcResult, err := eng.DeployDatacenter(ctx, engine.DeployDatacenterOptions{
-					Datacenter:  dcName,
-					Output:      os.Stdout,
-					Parallelism: defaultParallelism,
-				})
-				if err != nil {
-					return fmt.Errorf("failed to provision datacenter infrastructure: %w", err)
-				}
-				if !dcResult.Success {
-					return fmt.Errorf("datacenter infrastructure provisioning failed")
-				}
-
-				fmt.Printf("[success] Datacenter %q deployed from %s\n", dcName, imageRef)
-				fmt.Println()
-				fmt.Println("The datacenter is now available for use with environments.")
 			}
+
+			// Execute root-level modules and reconcile environments.
+			// Modules that were imported above already have state, so the
+			// engine updates them in-place rather than creating new resources.
+			dcResult, err := eng.DeployDatacenter(ctx, engine.DeployDatacenterOptions{
+				Datacenter:  dcName,
+				Output:      os.Stdout,
+				Parallelism: defaultParallelism,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to provision datacenter infrastructure: %w", err)
+			}
+			if !dcResult.Success {
+				return fmt.Errorf("datacenter infrastructure provisioning failed")
+			}
+
+			fmt.Printf("[success] Datacenter %q deployed from %s\n", dcName, imageRef)
+			fmt.Println()
+			fmt.Println("The datacenter is now available for use with environments.")
 
 			return nil
 		},
@@ -731,7 +792,7 @@ Examples:
 	cmd.Flags().StringArrayVar(&variables, "var", nil, "Set variable (key=value)")
 	cmd.Flags().StringVar(&varFile, "var-file", "", "Load variables from file")
 	cmd.Flags().BoolVar(&autoApprove, "auto-approve", false, "Skip confirmation prompt")
-	cmd.Flags().BoolVar(&skipModules, "skip-modules", false, "Register datacenter without provisioning root modules (for import workflows)")
+	cmd.Flags().StringVar(&importFile, "import-file", "", "Import existing resources from mapping file during deploy")
 	cmd.Flags().StringVar(&backendType, "backend", "", "State backend type")
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
 

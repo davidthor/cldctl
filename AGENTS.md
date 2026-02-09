@@ -35,7 +35,7 @@ cldctl deploy component myorg/myapp:v1 -e production -d my-datacenter
 cldctl deploy component myorg/stripe:latest -d my-dc --var key=secret  # datacenter-level component (no -e)
 cldctl deploy datacenter local davidthor/local-datacenter
 cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0
-cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 --skip-modules  # register without provisioning (for import)
+cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0 --import-file import.yml  # adopt existing infra during deploy
 
 # Environment management
 cldctl create environment staging -d my-datacenter
@@ -81,6 +81,10 @@ cldctl inspect staging/my-app/api -o json            # JSON output
 # Inspect component topology (not deployed state)
 cldctl inspect component ./my-app                    # Visualize resource graph
 cldctl inspect component ./my-app --expand           # Include dependencies
+
+# Inspect datacenter template (not deployed state)
+cldctl inspect datacenter ./my-dc                    # Show hooks, modules, variables
+cldctl inspect datacenter ghcr.io/myorg/dc:v1 --modules  # Show IaC resource addresses for import
 
 # Local development (up command)
 cldctl up                                         # Auto-detect cloud.component.yml or cloud.environment.yml in CWD

@@ -45,6 +45,44 @@ type EnvironmentMapping struct {
 	Components map[string]EnvironmentComponentMapping `yaml:"components"`
 }
 
+// DatacenterMapping describes import mappings for datacenter root-level modules.
+// Used by `deploy datacenter --import-file` to import existing infrastructure
+// atomically during the first deploy.
+type DatacenterMapping struct {
+	// Modules maps module names to their IaC resource mappings
+	Modules map[string][]ResourceMapping `yaml:"modules"`
+}
+
+// ParseDatacenterMapping reads and parses a datacenter-level import mapping file.
+func ParseDatacenterMapping(path string) (*DatacenterMapping, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read mapping file: %w", err)
+	}
+
+	var mapping DatacenterMapping
+	if err := yaml.Unmarshal(data, &mapping); err != nil {
+		return nil, fmt.Errorf("failed to parse mapping file: %w", err)
+	}
+
+	if len(mapping.Modules) == 0 {
+		return nil, fmt.Errorf("mapping file contains no module mappings")
+	}
+
+	for modName, mappings := range mapping.Modules {
+		for i, m := range mappings {
+			if m.Address == "" {
+				return nil, fmt.Errorf("module %s mapping[%d]: address is required", modName, i)
+			}
+			if m.ID == "" {
+				return nil, fmt.Errorf("module %s mapping[%d]: id is required", modName, i)
+			}
+		}
+	}
+
+	return &mapping, nil
+}
+
 // ParseComponentMapping reads and parses a component-level mapping file.
 func ParseComponentMapping(path string) (*ComponentMapping, error) {
 	data, err := os.ReadFile(path)

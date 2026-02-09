@@ -112,46 +112,45 @@ cldctl push component ghcr.io/acme/frontend:v1.0.0
 cldctl push component ghcr.io/acme/api:v1.0.0
 ```
 
-## Step 2: Register a Datacenter (Without Provisioning)
+## Step 2: Deploy the Datacenter (with Imports)
 
-cldctl needs a datacenter to know **how** resources are provisioned. But since your infrastructure already exists, you don't want the deploy to create new root-level modules (VPC, networking, etc.). Use `--skip-modules` to register the datacenter without provisioning anything:
+cldctl needs a datacenter to know **how** resources are provisioned. If the datacenter template has root-level modules (VPC, networking, ALB), those resources already exist in your AWS account. Use `--import-file` to adopt them during the deploy — cldctl imports the mapped resources into state first, then runs the normal deploy which sees them as existing and updates in place:
 
 ```bash
 # Pull the official AWS ECS datacenter template
 cldctl pull datacenter ghcr.io/cldctl/aws-ecs:latest
 
-# Register it — --skip-modules prevents root module provisioning
+# Deploy with existing root modules imported atomically
 cldctl deploy datacenter prod-dc ghcr.io/cldctl/aws-ecs:latest \
-  --skip-modules \
   --var aws_region=us-east-1 \
   --var vpc_id=vpc-0abc123def456 \
   --var ecs_cluster_arn=arn:aws:ecs:us-east-1:123456789:cluster/acme \
-  --var domain=acme.com
+  --var domain=acme.com \
+  --import-file import-datacenter.yml
 ```
 
-This saves the datacenter state (variables, source reference, component declarations) but does **not** provision any root-level modules. The datacenter is now known to cldctl, so hook matching works for environment-level imports.
+The import file maps each root-level module to existing cloud resource IDs:
 
-### Import Root Modules
-
-If the datacenter template has root-level modules for shared infrastructure (VPC, ALB, networking), import them now so cldctl knows about the existing resources:
-
-```bash
-cldctl import datacenter prod-dc \
-  --module vpc \
-  --map "aws_vpc.main=vpc-0abc123def456" \
-  --map "aws_subnet.public[0]=subnet-aaa111" \
-  --map "aws_subnet.public[1]=subnet-bbb222"
-
-cldctl import datacenter prod-dc \
-  --module alb \
-  --map "aws_lb.main=arn:aws:elasticloadbalancing:us-east-1:123456789:loadbalancer/app/acme-alb/abc123"
+```yaml
+# import-datacenter.yml
+modules:
+  vpc:
+    - address: aws_vpc.main
+      id: "vpc-0abc123def456"
+    - address: aws_subnet.public[0]
+      id: "subnet-aaa111"
+    - address: aws_subnet.public[1]
+      id: "subnet-bbb222"
+  alb:
+    - address: aws_lb.main
+      id: "arn:aws:elasticloadbalancing:us-east-1:123456789:loadbalancer/app/acme-alb/abc123"
 ```
+
+This is a single atomic operation — the datacenter is never in a half-deployed state. Modules listed in the import file are imported, modules not listed are provisioned normally.
 
 <Note>
-If the datacenter template has no root-level modules (some templates only define hooks and rely on pre-existing shared infrastructure), you can skip this step.
+If the datacenter template has no root-level modules (some templates only define hooks and rely on pre-existing shared infrastructure via variables), you can omit `--import-file` entirely.
 </Note>
-
-Later, once all imports are complete, you can run `deploy datacenter` again **without** `--skip-modules` to reconcile. Since the modules already have imported state, cldctl will update them in place rather than creating duplicates.
 
 ## Step 3: Create the Environment
 
@@ -165,20 +164,61 @@ This creates an empty environment in state. The next step fills it with your exi
 
 ## Step 4: Discover IaC Resource Addresses
 
-Before importing, you need to know the IaC resource addresses used by the datacenter's hook modules. These are the Terraform/OpenTofu resource names inside the modules that handle each resource type.
+Before writing mapping files, you need to know the IaC resource addresses used by the datacenter's hook modules. Use `cldctl inspect datacenter --modules` to discover them directly from the template:
 
-For the official AWS ECS datacenter, the relevant addresses are:
+```bash
+cldctl inspect datacenter ghcr.io/cldctl/aws-ecs:latest --modules
+```
 
-| cldctl Resource | Hook Module | IaC Addresses |
-|----------------|-------------|---------------|
-| `database.main` (postgres) | `postgres` | `aws_db_instance.main`, `aws_security_group.db` |
-| `deployment.api` | `container` | `aws_ecs_service.main`, `aws_ecs_task_definition.main` |
-| `service.api` | `service` | `aws_lb_target_group.main` |
-| `route.main` | `route` | `aws_lb_listener_rule.main` |
+```
+IaC Resource Addresses
+============================================================
 
-<Note>
-The exact addresses depend on the datacenter template you're using. Check the template's module source code or documentation for the resource names.
-</Note>
+Use these addresses in import mapping files (--import-file)
+or --map flags to map existing cloud resources to IaC state.
+
+Hook: database
+------------------------------------------------------------
+  when: element(split(":", node.inputs.type), 0) == "postgres"
+
+  module "rds-database" (plugin=opentofu)
+    Resources (use as --map addresses):
+      random_password.this
+      aws_db_subnet_group.this
+      aws_db_instance.this
+
+Hook: deployment
+------------------------------------------------------------
+
+  module "ecs-service" (plugin=opentofu)
+    Resources (use as --map addresses):
+      aws_ecs_task_definition.this
+      aws_ecs_service.this
+
+Hook: service
+------------------------------------------------------------
+
+  module "alb-target-group" (plugin=opentofu)
+    Resources (use as --map addresses):
+      aws_lb_target_group.this
+
+Hook: route
+------------------------------------------------------------
+
+  module "alb-listener-rule" (plugin=opentofu)
+    Resources (use as --map addresses):
+      aws_lb_listener_rule.this
+```
+
+The output shows every Terraform/OpenTofu `resource` block and every native module resource. These are the addresses you use in your mapping files.
+
+<Tip>
+For a high-level overview without resource addresses (hooks, modules, variables), omit `--modules`:
+
+```bash
+cldctl inspect datacenter ghcr.io/cldctl/aws-ecs:latest
+```
+</Tip>
 
 ## Step 5: Write the Import Mapping File
 
@@ -229,43 +269,23 @@ resources:
 You can find AWS resource IDs in the AWS Console, via the AWS CLI (`aws ecs describe-services`, `aws rds describe-db-instances`, etc.), or from your existing Terraform state files.
 </Tip>
 
-## Step 6: Import the Components
+## Step 6: Deploy Components with Import
 
-Import each component into the cldctl environment. Start with the API (since the frontend may depend on its service URL):
+Deploy each component and import existing resources in one atomic step using `--import-file`. Start with the API (since the frontend depends on it):
 
-### Import the API
+### Deploy and Import the API
 
 ```bash
-cldctl import component api \
+cldctl deploy component ghcr.io/acme/api:v1.0.0 \
   -d prod-dc -e production \
-  --source ghcr.io/acme/api:v1.0.0 \
-  --mapping import-api.yml \
-  --var jwt_secret=$JWT_SECRET
+  --var jwt_secret=$JWT_SECRET \
+  --import-file import-api.yml
 ```
 
-cldctl shows a preview before importing:
+cldctl imports the mapped resources into state, then runs the normal deploy. Since every resource already has state from the import, the deploy reconciles rather than creating duplicates:
 
 ```
-Import plan for component "api":
-
-  Source:      ghcr.io/acme/api:v1.0.0
-  Environment: production
-  Datacenter:  prod-dc
-
-  Resources:
-    + database.main (import 2 IaC resource(s))
-    + deployment.api (import 2 IaC resource(s))
-    + service.api (import 1 IaC resource(s))
-    + route.api (import 1 IaC resource(s))
-
-  4 resource(s) to import.
-
-Proceed with import? [y/N]: y
-
-Importing component "api" into environment "production"
-  Source: ghcr.io/acme/api:v1.0.0
-  Resources to import: 4
-
+[import] Importing existing resources for 4 resource(s)...
   Importing database.main (2 IaC resource(s))...
   Verifying import...
   database.main: imported successfully (no drift)
@@ -279,17 +299,26 @@ Importing component "api" into environment "production"
   Verifying import...
   route.api: imported successfully (no drift)
 
-Import complete: 4 imported, 0 failed (3.2s)
+Plan Summary:
+  Environment: production
+  Datacenter:  prod-dc
+
+No changes required.
+
+[success] Deployed api to production
 ```
 
-### Import the Frontend
+### Deploy and Import the Frontend
 
 ```bash
-cldctl import component frontend \
+cldctl deploy component ghcr.io/acme/frontend:v1.0.0 \
   -d prod-dc -e production \
-  --source ghcr.io/acme/frontend:v1.0.0 \
-  --mapping import-frontend.yml
+  --import-file import-frontend.yml
 ```
+
+<Note>
+The `--import-file` flag is only needed on the **first** deploy for each component. Subsequent deploys (version updates, config changes) use the normal `deploy component` without it.
+</Note>
 
 ## Step 7: Verify the Import
 
@@ -417,11 +446,11 @@ Resources not included in the mapping file are simply absent from state. A subse
 |------|---------|-------------|
 | 1 | Write `cloud.component.yml` | Describe what each app needs |
 | 2 | `cldctl build component` | Package the component definition |
-| 3 | `cldctl deploy datacenter --skip-modules` | Register the datacenter without provisioning |
-| 4 | `cldctl import datacenter --module` | Import existing root-level modules |
+| 3 | `cldctl deploy datacenter --import-file` | Deploy datacenter, importing existing root modules |
+| 4 | `cldctl inspect datacenter --modules` | Discover IaC resource addresses for mapping files |
 | 5 | `cldctl create environment` | Create an empty environment |
 | 6 | Write mapping YAML | Map cloud resource IDs to IaC addresses |
-| 7 | `cldctl import component` | Adopt existing resources into state |
+| 7 | `cldctl deploy component --import-file` | Deploy component, importing existing resources |
 | 8 | `cldctl inspect` | Verify the import |
 | 9 | `cldctl deploy component` | Make future changes through cldctl |
 
