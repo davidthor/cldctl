@@ -548,7 +548,24 @@ func (p *Parser) parseHook(block *hcl.Block) (*HookBlockV1, hcl.Diagnostics) {
 		attrs, attrDiags := outputsBlock.Body.JustAttributes()
 		diags = append(diags, attrDiags...)
 		if len(attrs) > 0 {
-			hook.OutputsAttrs = attrs
+			flatAttrs := make(hcl.Attributes)
+			nestedExprs := make(map[string]hcl.Expression)
+			for name, attr := range attrs {
+				// Try to evaluate the expression to see if it's a nested object
+				val, valDiags := attr.Expr.Value(hclCtx)
+				if !valDiags.HasErrors() && (val.Type().IsObjectType() || val.Type().IsMapType()) {
+					// This is a nested object (e.g., read = { ... }, write = { ... })
+					nestedExprs[name] = attr.Expr
+				} else {
+					flatAttrs[name] = attr
+				}
+			}
+			if len(flatAttrs) > 0 {
+				hook.OutputsAttrs = flatAttrs
+			}
+			if len(nestedExprs) > 0 {
+				hook.NestedOutputExprs = nestedExprs
+			}
 		}
 	}
 

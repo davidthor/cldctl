@@ -9,6 +9,7 @@ import (
 	"github.com/davidthor/cldctl/pkg/engine/planner"
 	"github.com/davidthor/cldctl/pkg/graph"
 	"github.com/davidthor/cldctl/pkg/iac"
+	"github.com/davidthor/cldctl/pkg/schema/datacenter"
 	"github.com/davidthor/cldctl/pkg/state"
 	"github.com/davidthor/cldctl/pkg/state/backend"
 	"github.com/davidthor/cldctl/pkg/state/types"
@@ -906,6 +907,119 @@ func TestExecute_CascadedFailure_ResolvesExpressions(t *testing.T) {
 		t.Errorf("environment input is %T, want map[string]string", envVars)
 	}
 }
+
+func TestAutoPopulateDatabaseEndpoints(t *testing.T) {
+	exec := &Executor{}
+
+	t.Run("auto-populates read and write from top-level outputs", func(t *testing.T) {
+		outputs := map[string]interface{}{
+			"host":     "db.example.com",
+			"port":     5432,
+			"url":      "postgresql://user:pass@db.example.com:5432/mydb",
+			"username": "user",
+			"password": "pass",
+			"database": "mydb",
+		}
+
+		exec.autoPopulateDatabaseEndpoints(outputs, &mockHook{})
+
+		// read should be auto-populated
+		readRaw, hasRead := outputs["read"]
+		if !hasRead {
+			t.Fatal("expected 'read' to be auto-populated")
+		}
+		readMap, ok := readRaw.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected 'read' to be map[string]interface{}, got %T", readRaw)
+		}
+		if readMap["host"] != "db.example.com" {
+			t.Errorf("read.host = %v, want %v", readMap["host"], "db.example.com")
+		}
+		if readMap["url"] != "postgresql://user:pass@db.example.com:5432/mydb" {
+			t.Errorf("read.url = %v, want connection URL", readMap["url"])
+		}
+
+		// write should be auto-populated
+		writeRaw, hasWrite := outputs["write"]
+		if !hasWrite {
+			t.Fatal("expected 'write' to be auto-populated")
+		}
+		writeMap, ok := writeRaw.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected 'write' to be map[string]interface{}, got %T", writeRaw)
+		}
+		if writeMap["host"] != "db.example.com" {
+			t.Errorf("write.host = %v, want %v", writeMap["host"], "db.example.com")
+		}
+	})
+
+	t.Run("does not overwrite explicit read/write", func(t *testing.T) {
+		outputs := map[string]interface{}{
+			"host":     "primary.db.example.com",
+			"port":     5432,
+			"url":      "postgresql://user:pass@primary.db.example.com:5432/mydb",
+			"username": "user",
+			"password": "pass",
+			"read": map[string]interface{}{
+				"host": "replica.db.example.com",
+				"url":  "postgresql://readonly:pass@replica.db.example.com:5433/mydb",
+			},
+			"write": map[string]interface{}{
+				"host": "proxy.db.example.com",
+				"url":  "postgresql://writer:pass@proxy.db.example.com:5434/mydb",
+			},
+		}
+
+		exec.autoPopulateDatabaseEndpoints(outputs, &mockHook{})
+
+		// read should NOT be overwritten
+		readMap := outputs["read"].(map[string]interface{})
+		if readMap["host"] != "replica.db.example.com" {
+			t.Errorf("read.host should be preserved, got %v", readMap["host"])
+		}
+
+		// write should NOT be overwritten
+		writeMap := outputs["write"].(map[string]interface{})
+		if writeMap["host"] != "proxy.db.example.com" {
+			t.Errorf("write.host should be preserved, got %v", writeMap["host"])
+		}
+	})
+
+	t.Run("read and write are independent copies", func(t *testing.T) {
+		outputs := map[string]interface{}{
+			"host":     "db.example.com",
+			"port":     5432,
+			"url":      "postgresql://user:pass@db.example.com:5432/mydb",
+			"username": "user",
+			"password": "pass",
+		}
+
+		exec.autoPopulateDatabaseEndpoints(outputs, &mockHook{})
+
+		// Modify read, write should not be affected
+		readMap := outputs["read"].(map[string]interface{})
+		writeMap := outputs["write"].(map[string]interface{})
+
+		readMap["host"] = "modified"
+		if writeMap["host"] == "modified" {
+			t.Error("modifying read should not affect write (must be independent copies)")
+		}
+	})
+}
+
+// mockHook implements the datacenter.Hook interface for testing
+type mockHook struct {
+	when          string
+	outputs       map[string]string
+	nestedOutputs map[string]map[string]string
+	errorMsg      string
+}
+
+func (h *mockHook) When() string                              { return h.when }
+func (h *mockHook) Modules() []datacenter.Module              { return nil }
+func (h *mockHook) Outputs() map[string]string                { return h.outputs }
+func (h *mockHook) NestedOutputs() map[string]map[string]string { return h.nestedOutputs }
+func (h *mockHook) Error() string                             { return h.errorMsg }
 
 func TestBuildDependencyError(t *testing.T) {
 	exec := &Executor{}

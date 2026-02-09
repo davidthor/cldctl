@@ -258,4 +258,6 @@ func (h *hookWrapper) Modules() []Module {
 
 func (h *hookWrapper) Outputs() map[string]string { return h.h.Outputs }
 
+func (h *hookWrapper) NestedOutputs() map[string]map[string]string { return h.h.NestedOutputs }
+
 func (h *hookWrapper) Error() string { return h.h.Error }
