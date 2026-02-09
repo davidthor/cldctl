@@ -88,6 +88,9 @@ func init() {
 	// Import commands
 	rootCmd.AddCommand(newImportCmd())
 
+	// Audit commands (template introspection)
+	rootCmd.AddCommand(newAuditCmd())
+
 	// Migration commands
 	rootCmd.AddCommand(newMigrateCmd())
 

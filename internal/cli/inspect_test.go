@@ -19,17 +19,10 @@ func TestNewInspectCmd(t *testing.T) {
 	// Should have RunE for state inspection
 	assert.NotNil(t, cmd.RunE)
 
-	// Should have component and datacenter subcommands
+	// Should have component subcommand
 	subcommands := cmd.Commands()
-	assert.Len(t, subcommands, 2)
-
-	// Subcommands are sorted alphabetically by cobra
-	subNames := make([]string, len(subcommands))
-	for i, sc := range subcommands {
-		subNames[i] = sc.Name()
-	}
-	assert.Contains(t, subNames, "component")
-	assert.Contains(t, subNames, "datacenter")
+	assert.Len(t, subcommands, 1)
+	assert.Equal(t, "component [path|image]", subcommands[0].Use)
 
 	// Should have state-related flags
 	assert.NotNil(t, cmd.Flags().Lookup("datacenter"))

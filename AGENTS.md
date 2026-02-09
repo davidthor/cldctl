@@ -82,9 +82,10 @@ cldctl inspect staging/my-app/api -o json            # JSON output
 cldctl inspect component ./my-app                    # Visualize resource graph
 cldctl inspect component ./my-app --expand           # Include dependencies
 
-# Inspect datacenter template (not deployed state)
-cldctl inspect datacenter ./my-dc                    # Show hooks, modules, variables
-cldctl inspect datacenter ghcr.io/myorg/dc:v1 --modules  # Show IaC resource addresses for import
+# Audit templates (not deployed state — for building import mapping files)
+cldctl audit datacenter ./my-dc                      # Show hooks, modules, variables
+cldctl audit datacenter ghcr.io/myorg/dc:v1 --modules  # Show IaC resource addresses for import
+cldctl audit component ./my-app                      # Show resource keys and dependencies
 
 # Local development (up command)
 cldctl up                                         # Auto-detect cloud.component.yml or cloud.environment.yml in CWD

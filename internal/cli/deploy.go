@@ -567,7 +567,7 @@ state during the deploy. For each module listed in the import file, cldctl
 imports the mapped resources instead of provisioning from scratch. Modules
 NOT listed in the import file are provisioned normally.
 
-Use 'cldctl inspect datacenter <image> --modules' to discover the IaC
+Use 'cldctl audit datacenter <image> --modules' to discover the IaC
 resource addresses you'll need for the import file.
 
 Arguments:

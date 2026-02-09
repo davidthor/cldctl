@@ -164,10 +164,10 @@ This creates an empty environment in state. The next step fills it with your exi
 
 ## Step 4: Discover IaC Resource Addresses
 
-Before writing mapping files, you need to know the IaC resource addresses used by the datacenter's hook modules. Use `cldctl inspect datacenter --modules` to discover them directly from the template:
+Before writing mapping files, you need to know the IaC resource addresses used by the datacenter's hook modules. Use `cldctl audit datacenter --modules` to discover them directly from the template:
 
 ```bash
-cldctl inspect datacenter ghcr.io/cldctl/aws-ecs:latest --modules
+cldctl audit datacenter ghcr.io/cldctl/aws-ecs:latest --modules
 ```
 
 ```
@@ -216,7 +216,13 @@ The output shows every Terraform/OpenTofu `resource` block and every native modu
 For a high-level overview without resource addresses (hooks, modules, variables), omit `--modules`:
 
 ```bash
-cldctl inspect datacenter ghcr.io/cldctl/aws-ecs:latest
+cldctl audit datacenter ghcr.io/cldctl/aws-ecs:latest
+```
+
+You can also audit the component template to see resource keys for the mapping file:
+
+```bash
+cldctl audit component ghcr.io/acme/api:v1.0.0
 ```
 </Tip>
 
@@ -447,7 +453,7 @@ Resources not included in the mapping file are simply absent from state. A subse
 | 1 | Write `cloud.component.yml` | Describe what each app needs |
 | 2 | `cldctl build component` | Package the component definition |
 | 3 | `cldctl deploy datacenter --import-file` | Deploy datacenter, importing existing root modules |
-| 4 | `cldctl inspect datacenter --modules` | Discover IaC resource addresses for mapping files |
+| 4 | `cldctl audit datacenter --modules` | Discover IaC resource addresses for mapping files |
 | 5 | `cldctl create environment` | Create an empty environment |
 | 6 | Write mapping YAML | Map cloud resource IDs to IaC addresses |
 | 7 | `cldctl deploy component --import-file` | Deploy component, importing existing resources |
