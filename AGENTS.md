@@ -397,6 +397,8 @@ a value the component author explicitly set.
 ### Available Expression References
 - `builds.<name>.image` (built Docker image)
 - `databases.<name>.url|host|port|username|password|database`
+- `databases.<name>.read.url|host|port|username|password` (read endpoint; falls back to top-level if not set by datacenter)
+- `databases.<name>.write.url|host|port|username|password` (write endpoint; falls back to top-level if not set by datacenter)
 - `buckets.<name>.endpoint|bucket|accessKeyId|secretAccessKey`
 - `encryptionKeys.<name>.privateKey|publicKey|privateKeyBase64|publicKeyBase64|key|keyBase64`
 - `smtp.<name>.host|port|username|password`
@@ -465,7 +467,7 @@ component "myorg/stripe" {
 ### Hook Types & Required Outputs
 | Hook | Required Outputs |
 |------|-----------------|
-| `database` | `host`, `port`, `url`, `username`, `password` |
+| `database` | `host`, `port`, `url`, `username`, `password`; optional nested: `read` { `host`, `port`, `url`, `username`, `password` }, `write` { `host`, `port`, `url`, `username`, `password` } (auto-populated from top-level if omitted) |
 | `bucket` | `endpoint`, `bucket`, `accessKeyId`, `secretAccessKey` |
 | `encryptionKey` | RSA/ECDSA: `privateKey`, `publicKey`, `privateKeyBase64`, `publicKeyBase64`; Symmetric: `key`, `keyBase64` |
 | `smtp` | `host`, `port`, `username`, `password` |

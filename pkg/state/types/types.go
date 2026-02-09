@@ -107,8 +107,14 @@ type ResourceState struct {
 	// Resource outputs (from hook execution)
 	Outputs map[string]interface{} `json:"outputs,omitempty"`
 
-	// IaC state (serialized state from the plugin)
+	// IaC state (serialized state from the plugin) - used for single-module hooks
 	IaCState []byte `json:"iac_state,omitempty"`
+
+	// Per-module IaC states for multi-module hooks.
+	// Maps module name to its ModuleState (inputs, outputs, IaC state).
+	// When a hook has multiple modules, each module's state is tracked separately
+	// so they can be destroyed independently.
+	ModuleStates map[string]*ModuleState `json:"module_states,omitempty"`
 
 	// Status
 	Status       ResourceStatus `json:"status"`

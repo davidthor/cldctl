@@ -204,9 +204,10 @@ func (t *Transformer) transformHooks(hooks []HookBlockV1) []internal.InternalHoo
 		}
 
 		ih := internal.InternalHook{
-			When:    when,
-			Error:   h.Error,
-			Outputs: make(map[string]string),
+			When:          when,
+			Error:         h.Error,
+			Outputs:       make(map[string]string),
+			NestedOutputs: make(map[string]map[string]string),
 		}
 
 		// Transform modules
@@ -220,13 +221,49 @@ func (t *Transformer) transformHooks(hooks []HookBlockV1) []internal.InternalHoo
 			val, diags := h.OutputsExpr.Value(nil)
 			if !diags.HasErrors() && (val.Type().IsObjectType() || val.Type().IsMapType()) {
 				for k, v := range val.AsValueMap() {
-					ih.Outputs[k] = ctyValueToString(v)
+					// Check if value is a nested object (e.g., read = { ... }, write = { ... })
+					if (v.Type().IsObjectType() || v.Type().IsMapType()) && !v.IsNull() {
+						nested := make(map[string]string)
+						for nk, nv := range v.AsValueMap() {
+							nested[nk] = ctyValueToString(nv)
+						}
+						ih.NestedOutputs[k] = nested
+					} else {
+						ih.Outputs[k] = ctyValueToString(v)
+					}
 				}
 			}
 		} else if h.OutputsAttrs != nil {
 			// Block syntax: outputs { ... }
 			for name, attr := range h.OutputsAttrs {
 				ih.Outputs[name] = exprToString(attr.Expr)
+			}
+		}
+
+		// Transform nested output expressions (from block syntax parsing)
+		for name, expr := range h.NestedOutputExprs {
+			val, diags := expr.Value(nil)
+			if !diags.HasErrors() && (val.Type().IsObjectType() || val.Type().IsMapType()) {
+				nested := make(map[string]string)
+				for nk, nv := range val.AsValueMap() {
+					nested[nk] = ctyValueToString(nv)
+				}
+				ih.NestedOutputs[name] = nested
+			} else {
+				// Store as expression strings for runtime evaluation
+				nested := make(map[string]string)
+				if objExpr, ok := expr.(*hclsyntax.ObjectConsExpr); ok {
+					for _, item := range objExpr.Items {
+						key, keyDiags := item.KeyExpr.Value(nil)
+						if keyDiags.HasErrors() {
+							continue
+						}
+						nested[key.AsString()] = exprToString(item.ValueExpr)
+					}
+				}
+				if len(nested) > 0 {
+					ih.NestedOutputs[name] = nested
+				}
 			}
 		}
 

@@ -100,6 +100,7 @@ type Hook interface {
 	When() string
 	Modules() []Module
 	Outputs() map[string]string
+	NestedOutputs() map[string]map[string]string
 	Error() string
 }
 

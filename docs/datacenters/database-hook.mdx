@@ -58,6 +58,52 @@ Optional outputs:
 |-------|------|-------------|
 | `username` | string | Database username |
 | `password` | string | Database password |
+| `read` | object | Optional read endpoint (nested object with `host`, `port`, `url`, `username`, `password`) |
+| `write` | object | Optional write endpoint (nested object with `host`, `port`, `url`, `username`, `password`) |
+
+### Read/Write Endpoint Separation
+
+Database hooks can optionally provide separate `read` and `write` sub-objects within their outputs. This enables advanced infrastructure workflows like zero-downtime database migrations where read and write traffic temporarily route to different backends.
+
+**Fallback behavior**: If the operator omits `read` and/or `write` from the outputs block, the engine automatically populates them by mirroring the top-level flat outputs. Datacenter authors never need to declare `read`/`write` unless they want them to differ from the root values. This means **zero changes** to existing datacenters.
+
+```hcl
+database {
+  when = element(split(":", node.inputs.type), 0) == "postgres"
+
+  module "primary" {
+    build = "./modules/rds-postgres"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.name}"
+    }
+  }
+
+  outputs = {
+    # Standard flat outputs (unchanged, backwards compatible)
+    host     = module.primary.host
+    port     = module.primary.port
+    url      = module.primary.url
+    username = module.primary.username
+    password = module.primary.password
+    database = node.name
+
+    # Optional nested read/write objects
+    read = {
+      host     = module.primary.host
+      url      = module.primary.url
+      username = module.primary.username
+      password = module.primary.password
+    }
+
+    write = {
+      host     = module.primary.host
+      url      = module.primary.url
+      username = module.primary.username
+      password = module.primary.password
+    }
+  }
+}
+```
 
 ## Multiple Database Types
 
@@ -209,6 +255,64 @@ output "connection_url" {
   sensitive = true
 }
 ```
+
+## Multi-Module Hooks
+
+Database hooks can define multiple modules that are all executed for the same resource. Later modules can reference earlier modules' outputs using `module.<name>.<output>` syntax. This enables advanced workflows like database migrations with a write proxy:
+
+```hcl
+database {
+  when = element(split(":", node.inputs.type), 0) == "postgres"
+
+  module "old_db" {
+    build = "./modules/postgres"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.name}"
+    }
+  }
+
+  module "new_db" {
+    build = "./modules/postgres"
+    inputs = {
+      name = "${environment.name}-${node.component}-${node.name}-v2"
+    }
+  }
+
+  module "write_proxy" {
+    build = "./modules/db-write-proxy"
+    inputs = {
+      primary_url   = module.old_db.url
+      secondary_url = module.new_db.url
+    }
+  }
+
+  outputs = {
+    host     = module.old_db.host
+    port     = module.old_db.port
+    url      = module.old_db.url
+    username = module.old_db.username
+    password = module.old_db.password
+    database = node.name
+
+    read = {
+      host = module.old_db.host
+      url  = module.old_db.url
+    }
+
+    write = {
+      host = module.write_proxy.host
+      url  = module.write_proxy.url
+    }
+  }
+}
+```
+
+In this example:
+- `old_db` is provisioned first
+- `new_db` is provisioned next
+- `write_proxy` references outputs from both `old_db` and `new_db`
+- Read traffic goes to the old database, write traffic goes through a dual-write proxy
+- Each module's IaC state is tracked separately for independent lifecycle management
 
 ## Local Development
 

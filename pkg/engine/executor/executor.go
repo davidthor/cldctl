@@ -528,10 +528,10 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 
 	e.stateMu.Unlock()
 
-	// Find the matching hook from datacenter
-	modulePath, moduleInputs, pluginName, err := e.findMatchingHook(change.Node, envState.Name)
+	// Find the matching hook from datacenter and execute all its modules
+	hookResult, err := e.executeHookModules(ctx, change.Node, envState.Name, compState)
 	if err != nil {
-		result.Error = fmt.Errorf("failed to find matching hook: %w", err)
+		result.Error = fmt.Errorf("failed to execute hook: %w", err)
 		result.Success = false
 
 		// Update resource state to failed (lock for state update)
@@ -551,106 +551,342 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 		return result
 	}
 
-	// Get IaC plugin
-	if pluginName == "" {
-		pluginName = "native"
-	}
-	plugin, err := e.iacRegistry.Get(pluginName)
-	if err != nil {
-		result.Error = fmt.Errorf("failed to get IaC plugin %q: %w", pluginName, err)
-		result.Success = false
-		return result
-	}
-
-	// Build run options
-	runOpts := iac.RunOptions{
-		ModuleSource: modulePath,
-		Inputs:       moduleInputs,
-		Environment:  map[string]string{},
-	}
-
-	// Execute
-	applyResult, err := plugin.Apply(ctx, runOpts)
-	if err != nil {
-		result.Error = fmt.Errorf("apply failed: %w", err)
-		result.Success = false
-
-		// Log resource configuration on failure for debugging
-		if os.Getenv("CLDCTL_DEBUG") != "" {
-			fmt.Fprintf(os.Stderr, "\n[debug] Resource %s/%s failed — configuration:\n", change.Node.Type, change.Node.Name)
-			fmt.Fprintf(os.Stderr, "  Component:        %s\n", change.Node.Component)
-			fmt.Fprintf(os.Stderr, "  Module:           %s (plugin: %s)\n", modulePath, pluginName)
-			if wd, ok := change.Node.Inputs["workingDirectory"]; ok {
-				fmt.Fprintf(os.Stderr, "  Working Directory: %s\n", wd)
-			}
-			if cmd, ok := change.Node.Inputs["command"]; ok {
-				fmt.Fprintf(os.Stderr, "  Command:          %v\n", cmd)
-			}
-			if envMap, ok := change.Node.Inputs["environment"]; ok {
-				fmt.Fprintf(os.Stderr, "  Environment:\n")
-				switch ev := envMap.(type) {
-				case map[string]string:
-					for k, v := range ev {
-						fmt.Fprintf(os.Stderr, "    %s = %s\n", k, v)
-					}
-				case map[string]interface{}:
-					for k, v := range ev {
-						fmt.Fprintf(os.Stderr, "    %s = %v\n", k, v)
-					}
-				default:
-					fmt.Fprintf(os.Stderr, "    %v\n", envMap)
-				}
-			}
-			if rt, ok := change.Node.Inputs["runtime"]; ok && rt != nil {
-				fmt.Fprintf(os.Stderr, "  Runtime:          %v\n", rt)
-			}
-			fmt.Fprintf(os.Stderr, "\n")
-		}
-
-		// Update resource state to failed (lock for state update)
-		e.stateMu.Lock()
-		compState.Resources[resourceKey(change.Node)] = &types.ResourceState{
-			Component:    change.Node.Component,
-			Name:         change.Node.Name,
-			Type:         string(change.Node.Type),
-			Status:       types.ResourceStatusFailed,
-			StatusReason: result.Error.Error(),
-			Inputs:       change.Node.Inputs,
-			UpdatedAt:    time.Now(),
-		}
-		e.saveStateLocked(envState)
-		e.stateMu.Unlock()
-
-		return result
-	}
-
-	// Extract outputs
-	outputs := make(map[string]interface{})
-	for name, out := range applyResult.Outputs {
-		outputs[name] = out.Value
-	}
-	result.Outputs = outputs
+	result.Outputs = hookResult.Outputs
 	result.Success = true
 
 	// Update resource state including IaC state for cleanup (lock for state update)
 	e.stateMu.Lock()
-	compState.Resources[resourceKey(change.Node)] = &types.ResourceState{
+	resourceState := &types.ResourceState{
 		Component: change.Node.Component,
 		Name:      change.Node.Name,
 		Type:      string(change.Node.Type),
 		Status:    types.ResourceStatusReady,
 		Inputs:    change.Node.Inputs,
-		Outputs:   outputs,
-		IaCState:  applyResult.State, // Store IaC state for destroy
+		Outputs:   hookResult.Outputs,
 		UpdatedAt: time.Now(),
 	}
+	// For single-module hooks, store IaC state in the legacy field for backward compatibility.
+	// For multi-module hooks, store per-module states.
+	if len(hookResult.ModuleStates) == 1 {
+		for _, ms := range hookResult.ModuleStates {
+			resourceState.IaCState = ms.IaCState
+		}
+	} else if len(hookResult.ModuleStates) > 1 {
+		resourceState.ModuleStates = hookResult.ModuleStates
+	}
+	compState.Resources[resourceKey(change.Node)] = resourceState
 	e.saveStateLocked(envState)
 	e.stateMu.Unlock()
 
 	return result
 }
 
+// hookExecutionResult contains the combined results of executing all modules in a hook.
+type hookExecutionResult struct {
+	Outputs      map[string]interface{}
+	ModuleStates map[string]*types.ModuleState
+}
+
+// executeHookModules finds the matching hook, executes ALL its modules (not just the first),
+// allows cross-module references in inputs, evaluates hook outputs including nested objects,
+// and auto-populates read/write fallback outputs for database hooks.
+func (e *Executor) executeHookModules(ctx context.Context, node *graph.Node, envName string, compState *types.ComponentState) (*hookExecutionResult, error) {
+	dc := e.options.Datacenter
+	if dc == nil {
+		return nil, fmt.Errorf("no datacenter configuration provided")
+	}
+
+	// Get hooks for this node type
+	hooks := e.getHooksForType(node.Type)
+	if len(hooks) == 0 {
+		return nil, fmt.Errorf("no hooks defined for resource type %s in datacenter (source: %s)", node.Type, dc.SourcePath())
+	}
+
+	// Find the first matching hook based on 'when' condition
+	var matchedHook datacenter.Hook
+	for _, hook := range hooks {
+		when := hook.When()
+		matches := e.evaluateWhenCondition(when, node.Inputs)
+		if matches {
+			matchedHook = hook
+			break
+		}
+	}
+
+	if matchedHook == nil {
+		return nil, fmt.Errorf("no matching hook found for %s (inputs: %v)", node.Type, node.Inputs)
+	}
+
+	// Check if the matched hook is an error hook (rejects the resource)
+	if errMsg := matchedHook.Error(); errMsg != "" {
+		evaluatedMsg := e.evaluateErrorMessage(errMsg, node.Inputs)
+		return nil, arcerrors.DatacenterHookError(
+			string(node.Type),
+			node.Component,
+			node.Name,
+			evaluatedMsg,
+		)
+	}
+
+	modules := matchedHook.Modules()
+	if len(modules) == 0 {
+		return nil, fmt.Errorf("hook has no modules defined for %s", node.Type)
+	}
+
+	// Resolve datacenter path for module paths
+	dcPath := dc.SourcePath()
+	dcDir := filepath.Dir(dcPath)
+
+	// Execute all modules, accumulating outputs for cross-module references
+	// moduleOutputs maps module name -> output name -> value
+	moduleOutputs := make(map[string]map[string]interface{})
+	moduleStates := make(map[string]*types.ModuleState)
+
+	for _, module := range modules {
+		// Check module's when condition (if any)
+		moduleWhen := module.When()
+		if moduleWhen != "" && !e.evaluateWhenCondition(moduleWhen, node.Inputs) {
+			continue
+		}
+
+		// Resolve module path
+		modulePath := module.Build()
+		if modulePath == "" {
+			modulePath = module.Source()
+		}
+
+		if os.Getenv("CLDCTL_DEBUG") != "" && e.options.Output != nil {
+			fmt.Fprintf(e.options.Output, "  [debug] Node %s: executing module %s (dcDir=%s, build=%q, source=%q)\n",
+				node.ID, module.Name(), dcDir, module.Build(), module.Source())
+		}
+
+		if modulePath != "" && !filepath.IsAbs(modulePath) {
+			modulePath = filepath.Join(dcDir, modulePath)
+		}
+
+		if modulePath == "" {
+			return nil, fmt.Errorf("module %s has no build or source path", module.Name())
+		}
+
+		// Build module inputs, resolving cross-module references (module.<name>.<output>)
+		inputs := e.buildModuleInputsWithCrossRef(module, node, envName, moduleOutputs)
+
+		// Get IaC plugin
+		pluginName := module.Plugin()
+		if pluginName == "" {
+			pluginName = "native"
+		}
+		plugin, err := e.iacRegistry.Get(pluginName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get IaC plugin %q: %w", pluginName, err)
+		}
+
+		// Execute
+		runOpts := iac.RunOptions{
+			ModuleSource: modulePath,
+			Inputs:       inputs,
+			Environment:  map[string]string{},
+		}
+
+		applyResult, err := plugin.Apply(ctx, runOpts)
+		if err != nil {
+			// Log resource configuration on failure for debugging
+			if os.Getenv("CLDCTL_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "\n[debug] Resource %s/%s module %s failed — configuration:\n", node.Type, node.Name, module.Name())
+				fmt.Fprintf(os.Stderr, "  Component:        %s\n", node.Component)
+				fmt.Fprintf(os.Stderr, "  Module:           %s (plugin: %s)\n", modulePath, pluginName)
+			}
+			return nil, fmt.Errorf("module %s apply failed: %w", module.Name(), err)
+		}
+
+		// Collect module outputs
+		modOutputs := make(map[string]interface{})
+		for name, out := range applyResult.Outputs {
+			modOutputs[name] = out.Value
+		}
+		moduleOutputs[module.Name()] = modOutputs
+
+		// Track per-module state
+		moduleStates[module.Name()] = &types.ModuleState{
+			Name:    module.Name(),
+			Plugin:  pluginName,
+			Source:  modulePath,
+			Inputs:  inputs,
+			Outputs: modOutputs,
+			IaCState: applyResult.State,
+			Status:  types.ModuleStatusReady,
+		}
+	}
+
+	// Evaluate hook-level outputs using module outputs
+	outputs := e.evaluateHookOutputs(matchedHook, moduleOutputs, node, envName)
+
+	// Auto-populate read/write nested outputs for database hooks
+	if node.Type == graph.NodeTypeDatabase {
+		e.autoPopulateDatabaseEndpoints(outputs, matchedHook)
+	}
+
+	return &hookExecutionResult{
+		Outputs:      outputs,
+		ModuleStates: moduleStates,
+	}, nil
+}
+
+// buildModuleInputsWithCrossRef builds inputs for a module, resolving cross-module references
+// (module.<name>.<output>) from previously executed modules' outputs.
+func (e *Executor) buildModuleInputsWithCrossRef(module datacenter.Module, node *graph.Node, envName string, moduleOutputs map[string]map[string]interface{}) map[string]interface{} {
+	// Start with the standard input building
+	inputs := e.buildModuleInputs(module, node, envName)
+
+	// Resolve cross-module references in input values
+	dcVars := e.options.DatacenterVariables
+	if dcVars == nil {
+		dcVars = make(map[string]interface{})
+	}
+
+	for key, value := range inputs {
+		if strVal, ok := value.(string); ok {
+			resolved := e.resolveCrossModuleRefs(strVal, moduleOutputs, node, envName, dcVars)
+			if resolved != strVal {
+				inputs[key] = resolved
+			}
+		}
+	}
+
+	// Also check the raw module input definitions for cross-module refs that
+	// buildModuleInputs may have stored as expression strings
+	moduleInputDefs := module.Inputs()
+	for inputName, exprStr := range moduleInputDefs {
+		if strings.Contains(exprStr, "module.") {
+			resolved := e.resolveCrossModuleRefs(exprStr, moduleOutputs, node, envName, dcVars)
+			if resolved != exprStr {
+				inputs[inputName] = resolved
+			}
+		}
+	}
+
+	return inputs
+}
+
+// resolveCrossModuleRefs resolves module.<name>.<output> references in an expression string
+// using the accumulated outputs from previously executed modules.
+func (e *Executor) resolveCrossModuleRefs(expr string, moduleOutputs map[string]map[string]interface{}, node *graph.Node, envName string, dcVars map[string]interface{}) string {
+	if !strings.Contains(expr, "module.") {
+		return expr
+	}
+
+	// Handle ${module.<name>.<output>} interpolation patterns
+	result := expr
+	for modName, modOutputs := range moduleOutputs {
+		for outName, outVal := range modOutputs {
+			ref := fmt.Sprintf("module.%s.%s", modName, outName)
+			interpolatedRef := fmt.Sprintf("${module.%s.%s}", modName, outName)
+
+			// Replace ${module.x.y} interpolation
+			if strings.Contains(result, interpolatedRef) {
+				result = strings.ReplaceAll(result, interpolatedRef, fmt.Sprintf("%v", outVal))
+			}
+
+			// Replace bare module.x.y references (when the whole value is a reference)
+			if result == ref {
+				result = fmt.Sprintf("%v", outVal)
+			}
+		}
+	}
+
+	return result
+}
+
+// evaluateHookOutputs evaluates the hook's output expressions using accumulated module outputs.
+// For expressions like "module.postgres.url", it looks up the value from moduleOutputs.
+// Also handles nested output objects (e.g., read = { ... }, write = { ... }).
+func (e *Executor) evaluateHookOutputs(hook datacenter.Hook, moduleOutputs map[string]map[string]interface{}, node *graph.Node, envName string) map[string]interface{} {
+	outputs := make(map[string]interface{})
+
+	dcVars := e.options.DatacenterVariables
+	if dcVars == nil {
+		dcVars = make(map[string]interface{})
+	}
+
+	// Evaluate flat outputs
+	for name, exprStr := range hook.Outputs() {
+		value := e.resolveOutputExpression(exprStr, moduleOutputs, node, envName, dcVars)
+		if value != nil {
+			outputs[name] = value
+		}
+	}
+
+	// Evaluate nested outputs (e.g., read = { ... }, write = { ... })
+	nestedOutputs := hook.NestedOutputs()
+	for name, nested := range nestedOutputs {
+		nestedMap := make(map[string]interface{})
+		for nk, nv := range nested {
+			value := e.resolveOutputExpression(nv, moduleOutputs, node, envName, dcVars)
+			if value != nil {
+				nestedMap[nk] = value
+			}
+		}
+		if len(nestedMap) > 0 {
+			outputs[name] = nestedMap
+		}
+	}
+
+	return outputs
+}
+
+// resolveOutputExpression resolves a hook output expression, handling module references,
+// string interpolation, and node/environment references.
+func (e *Executor) resolveOutputExpression(exprStr string, moduleOutputs map[string]map[string]interface{}, node *graph.Node, envName string, dcVars map[string]interface{}) interface{} {
+	// First try to resolve cross-module references
+	resolved := e.resolveCrossModuleRefs(exprStr, moduleOutputs, node, envName, dcVars)
+
+	// If fully resolved (no more module. references), return the value
+	if resolved != exprStr {
+		return resolved
+	}
+
+	// Fall back to the standard input expression evaluator for non-module references
+	return e.evaluateInputExpression(exprStr, node, envName, dcVars)
+}
+
+// autoPopulateDatabaseEndpoints ensures that database outputs have read/write sub-objects.
+// If the datacenter hook didn't explicitly set read/write outputs, they are auto-populated
+// by mirroring the top-level flat outputs. This ensures backwards compatibility.
+func (e *Executor) autoPopulateDatabaseEndpoints(outputs map[string]interface{}, hook datacenter.Hook) {
+	// Build a default endpoint from top-level outputs
+	defaultEndpoint := map[string]interface{}{}
+	for _, key := range []string{"host", "port", "url", "username", "password"} {
+		if val, ok := outputs[key]; ok {
+			defaultEndpoint[key] = val
+		}
+	}
+
+	// Auto-populate "read" if not explicitly set
+	if _, hasRead := outputs["read"]; !hasRead {
+		if len(defaultEndpoint) > 0 {
+			readCopy := make(map[string]interface{}, len(defaultEndpoint))
+			for k, v := range defaultEndpoint {
+				readCopy[k] = v
+			}
+			outputs["read"] = readCopy
+		}
+	}
+
+	// Auto-populate "write" if not explicitly set
+	if _, hasWrite := outputs["write"]; !hasWrite {
+		if len(defaultEndpoint) > 0 {
+			writeCopy := make(map[string]interface{}, len(defaultEndpoint))
+			for k, v := range defaultEndpoint {
+				writeCopy[k] = v
+			}
+			outputs["write"] = writeCopy
+		}
+	}
+}
+
 // findMatchingHook finds the matching datacenter hook for a node and returns the module path, inputs, and plugin name.
+// NOTE: This method is retained for backward compatibility with single-module execution paths
+// (e.g., port allocation). For multi-module execution, use executeHookModules instead.
 func (e *Executor) findMatchingHook(node *graph.Node, envName string) (modulePath string, inputs map[string]interface{}, pluginName string, err error) {
 	dc := e.options.Datacenter
 	if dc == nil {
@@ -1479,7 +1715,6 @@ func (e *Executor) executePortAllocation(ctx context.Context, change *planner.Re
 	// Priority 3: Built-in deterministic hash fallback
 	if !allocated {
 		allocatedPort = stablePortForNode(envState.Name, componentName, portName)
-		allocated = true
 	}
 
 	// Save to state
@@ -1595,6 +1830,21 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeDatabase, parts[1])
 				depNode, ok := e.graph.Nodes[nodeID]
 				if !ok || depNode.Outputs == nil {
+					return match
+				}
+				// Handle read/write sub-objects: databases.<name>.read.<prop> / databases.<name>.write.<prop>
+				if (parts[2] == "read" || parts[2] == "write") && len(parts) >= 4 {
+					if nested, ok := depNode.Outputs[parts[2]]; ok {
+						if nestedMap, ok := nested.(map[string]interface{}); ok {
+							if val, ok := nestedMap[parts[3]]; ok {
+								return fmt.Sprintf("%v", val)
+							}
+						}
+					}
+					// Fallback to top-level output when read/write is not explicitly set
+					if val, ok := depNode.Outputs[parts[3]]; ok {
+						return fmt.Sprintf("%v", val)
+					}
 					return match
 				}
 				if val, ok := depNode.Outputs[parts[2]]; ok {

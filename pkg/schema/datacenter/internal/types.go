@@ -93,8 +93,9 @@ type InternalHooks struct {
 
 // InternalHook represents a resource hook.
 type InternalHook struct {
-	When    string                  // Conditional expression
-	Modules []InternalModule        // Modules to execute
-	Outputs map[string]string       // Output mappings (HCL expressions)
-	Error   string                  // Human-readable error message (mutually exclusive with Modules/Outputs)
+	When          string                        // Conditional expression
+	Modules       []InternalModule              // Modules to execute
+	Outputs       map[string]string             // Output mappings (HCL expressions)
+	NestedOutputs map[string]map[string]string  // Nested output objects (e.g., read/write sub-objects for database hooks)
+	Error         string                        // Human-readable error message (mutually exclusive with Modules/Outputs)
 }
