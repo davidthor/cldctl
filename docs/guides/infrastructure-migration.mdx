@@ -511,6 +511,60 @@ cldctl logs -e production --since 5m
 cldctl observability dashboard -e production
 ```
 
+## Simplifying with `extends`
+
+Instead of duplicating the entire datacenter for each migration step, you can use the [`extends`](/datacenters/extends) feature to create minimal changesets that inherit from the current production datacenter. Each step only declares the hooks that change:
+
+```hcl
+# migration-v2-provision.dc
+# Only declares what changes -- everything else inherited from v1
+extends = {
+  image = "ghcr.io/myorg/my-dc:v1"
+}
+
+environment {
+  database {
+    when = element(split(":", node.inputs.type), 0) == "postgres"
+
+    module "old_db" {
+      plugin = "pulumi"
+      build  = "./modules/rds-postgres"
+      inputs = {
+        name = "${environment.name}-${node.component}-${node.name}"
+      }
+    }
+
+    module "new_db" {
+      plugin = "pulumi"
+      build  = "./modules/aurora-postgres"
+      inputs = {
+        name = "${environment.name}-${node.component}-${node.name}-v2"
+      }
+    }
+
+    outputs = {
+      host     = module.old_db.host
+      port     = module.old_db.port
+      url      = module.old_db.url
+      username = module.old_db.username
+      password = module.old_db.password
+      database = node.name
+    }
+  }
+}
+```
+
+This approach has several advantages:
+
+- **Less duplication**: Each step only contains the changed hooks, not the entire datacenter
+- **Easier review**: Reviewers can clearly see what changed between steps
+- **Automatic inheritance**: New hooks added to the parent datacenter are automatically available
+- **Composable**: Each migration step can extend the previous step or the original
+
+<Tip>
+For path-based extends (when files are in the same repo), the parent is collapsed into the child at build time, producing a single self-contained artifact. For image-based extends, the parent is resolved from the registry at deploy time.
+</Tip>
+
 ## Best Practices
 
 <AccordionGroup>

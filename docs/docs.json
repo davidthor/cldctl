@@ -60,6 +60,7 @@
                   "datacenters/port-hook"
                 ]
               },
+              "datacenters/extends",
               "datacenters/error-handling",
               "datacenters/expressions"
             ]

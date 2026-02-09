@@ -433,7 +433,30 @@ a value the component author explicitly set.
 
 ## Datacenter Authoring (datacenter.dc)
 
-Datacenters define infrastructure using HCL with hooks for each resource type:
+Datacenters define infrastructure using HCL with hooks for each resource type.
+
+### Extends (Inheritance)
+
+Datacenters can inherit from a parent datacenter using the `extends` attribute:
+
+```hcl
+# Image-based: parent resolved at deploy time
+extends = {
+  image = "ghcr.io/myorg/my-dc:v1"
+}
+
+# Path-based: parent collapsed at build time
+extends = {
+  path = "./base-datacenter"
+}
+```
+
+Merge semantics:
+- **Variables, modules, components**: Union; child wins on name collision
+- **Hooks**: Child hooks prepended before parent hooks (child has higher priority in waterfall)
+- **Catch-all hooks**: If both have catch-alls, child's shadows parent's
+
+### Example Datacenter
 
 ```hcl
 variable "region" {
@@ -703,7 +726,7 @@ func TestParse(t *testing.T) {
 | Directory | Content |
 |-----------|---------|
 | `docs/components/` | Component schema reference (one page per resource type: databases, deployments, functions, etc.) |
-| `docs/datacenters/` | Datacenter schema reference (one page per hook type, plus expressions, variables, modules) |
+| `docs/datacenters/` | Datacenter schema reference (one page per hook type, plus expressions, variables, modules, extends) |
 | `docs/cli/` | CLI command reference (one page per command, organized by action) |
 | `docs/environments/` | Environment configuration reference |
 | `docs/guides/components/` | Step-by-step component authoring guides (Next.js, microservices, dependency deployment, etc.) |
