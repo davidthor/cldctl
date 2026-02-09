@@ -116,6 +116,72 @@ func TestExprToString_FileNotReadable(t *testing.T) {
 	}
 }
 
+func TestTransformer_Extends_Image(t *testing.T) {
+	transformer := NewTransformer()
+
+	schema := &SchemaV1{
+		Version: "v1",
+		Extends: &ExtendsBlockV1{
+			Image: "ghcr.io/myorg/dc:v1",
+		},
+	}
+
+	dc, err := transformer.Transform(schema)
+	if err != nil {
+		t.Fatalf("failed to transform: %v", err)
+	}
+
+	if dc.Extends == nil {
+		t.Fatal("expected Extends to be set")
+	}
+	if dc.Extends.Image != "ghcr.io/myorg/dc:v1" {
+		t.Errorf("expected Image 'ghcr.io/myorg/dc:v1', got %q", dc.Extends.Image)
+	}
+	if dc.Extends.Path != "" {
+		t.Errorf("expected empty Path, got %q", dc.Extends.Path)
+	}
+}
+
+func TestTransformer_Extends_Path(t *testing.T) {
+	transformer := NewTransformer()
+
+	schema := &SchemaV1{
+		Version: "v1",
+		Extends: &ExtendsBlockV1{
+			Path: "../base-dc",
+		},
+	}
+
+	dc, err := transformer.Transform(schema)
+	if err != nil {
+		t.Fatalf("failed to transform: %v", err)
+	}
+
+	if dc.Extends == nil {
+		t.Fatal("expected Extends to be set")
+	}
+	if dc.Extends.Path != "../base-dc" {
+		t.Errorf("expected Path '../base-dc', got %q", dc.Extends.Path)
+	}
+}
+
+func TestTransformer_NoExtends(t *testing.T) {
+	transformer := NewTransformer()
+
+	schema := &SchemaV1{
+		Version: "v1",
+	}
+
+	dc, err := transformer.Transform(schema)
+	if err != nil {
+		t.Fatalf("failed to transform: %v", err)
+	}
+
+	if dc.Extends != nil {
+		t.Error("expected Extends to be nil")
+	}
+}
+
 func TestCtyValueToString_Null(t *testing.T) {
 	result := ctyValueToString(cty.NullVal(cty.String))
 	if result != "" {

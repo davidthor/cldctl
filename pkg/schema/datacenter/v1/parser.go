@@ -164,16 +164,17 @@ func (p *Parser) parseExtends(attr *hcl.Attribute) (*ExtendsBlockV1, hcl.Diagnos
 
 	extends := &ExtendsBlockV1{}
 
-	valMap := val.AsValueMap()
-	if valMap == nil {
+	if val.LengthInt() == 0 {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  "Empty extends value",
-			Detail:   "The 'extends' attribute must have either 'image' or 'path' set.",
+			Summary:  "Invalid extends: missing 'image' or 'path'",
+			Detail:   "The 'extends' attribute must have exactly one of 'image' or 'path' set.",
 			Subject:  attr.Expr.Range().Ptr(),
 		})
 		return nil, diags
 	}
+
+	valMap := val.AsValueMap()
 
 	if v, ok := valMap["image"]; ok && v.Type() == cty.String && v.AsString() != "" {
 		extends.Image = v.AsString()
