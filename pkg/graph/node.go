@@ -25,6 +25,15 @@ const (
 	NodeTypePort          NodeType = "port"
 )
 
+// NodeInstance holds instance context for per-instance nodes in progressive delivery.
+type NodeInstance struct {
+	// Name is the instance identifier (e.g., "canary", "stable", "default").
+	Name string
+
+	// Weight is the traffic weight (0-100) for this instance.
+	Weight int
+}
+
 // Node represents a resource in the dependency graph.
 type Node struct {
 	// Unique identifier within the graph
@@ -53,6 +62,14 @@ type Node struct {
 
 	// State tracking
 	State NodeState
+
+	// Instance holds the instance context for per-instance nodes.
+	// Nil for shared nodes in multi-instance mode and for single-instance mode.
+	Instance *NodeInstance
+
+	// Instances holds all instance metadata for shared nodes (e.g., routes).
+	// This lets shared hooks see all instances and their weights for traffic splitting.
+	Instances []NodeInstance
 }
 
 // NodeState tracks the execution state of a node.
@@ -79,6 +96,38 @@ func NewNode(nodeType NodeType, component, name string) *Node {
 		DependedOnBy: []string{},
 		State:        NodeStatePending,
 	}
+}
+
+// NewInstanceNode creates a node qualified by an instance name.
+// The node ID includes the instance: component/instance/type/name.
+func NewInstanceNode(nodeType NodeType, component, instanceName string, weight int, name string) *Node {
+	return &Node{
+		ID:        fmt.Sprintf("%s/%s/%s/%s", component, instanceName, nodeType, name),
+		Type:      nodeType,
+		Component: component,
+		Name:      name,
+		Inputs:    make(map[string]interface{}),
+		Outputs:   make(map[string]interface{}),
+		DependsOn: []string{},
+		DependedOnBy: []string{},
+		State:     NodeStatePending,
+		Instance:  &NodeInstance{Name: instanceName, Weight: weight},
+	}
+}
+
+// IsPerInstanceType returns true if the given node type is per-instance by default.
+func IsPerInstanceType(t NodeType) bool {
+	switch t {
+	case NodeTypeDeployment, NodeTypeFunction, NodeTypeService, NodeTypeCronjob, NodeTypeDockerBuild, NodeTypePort:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsSharedType returns true if the given node type is shared by default.
+func IsSharedType(t NodeType) bool {
+	return !IsPerInstanceType(t)
 }
 
 // AddDependency adds a dependency to this node.

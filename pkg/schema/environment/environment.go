@@ -52,7 +52,7 @@ type EnvironmentVariable interface {
 }
 
 // ComponentConfig represents a component's configuration within an environment.
-// Exactly one of Path or Image will be set.
+// Exactly one of Path or Image will be set (in single-instance mode).
 type ComponentConfig interface {
 	// Path returns the local file path to the component, or empty string if using an image.
 	Path() string
@@ -77,6 +77,28 @@ type ComponentConfig interface {
 
 	// Route configurations per route
 	Routes() map[string]RouteConfig
+
+	// Instances returns the weighted instances for progressive delivery.
+	// Empty if running in single-instance mode.
+	Instances() []InstanceConfig
+
+	// Distinct returns resource patterns promoted to per-instance.
+	Distinct() []string
+}
+
+// InstanceConfig represents a weighted component instance.
+type InstanceConfig interface {
+	// Name returns the instance identifier (e.g., "canary", "stable").
+	Name() string
+
+	// Source returns the component image/path for this instance.
+	Source() string
+
+	// Weight returns the traffic weight (0-100).
+	Weight() int
+
+	// Variables returns optional variable overrides for this instance.
+	Variables() map[string]interface{}
 }
 
 // ScalingConfig represents scaling configuration for a deployment.

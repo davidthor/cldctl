@@ -32,7 +32,7 @@ type InternalEnvironmentVariable struct {
 }
 
 // InternalComponentConfig represents the configuration for a component in an environment.
-// Exactly one of Path or Image must be set.
+// Exactly one of Path or Image must be set (at the top level or within instances).
 type InternalComponentConfig struct {
 	// Path is a local file path to the component directory or file.
 	// Mutually exclusive with Image.
@@ -59,6 +59,31 @@ type InternalComponentConfig struct {
 
 	// Route configuration per route
 	Routes map[string]InternalRouteConfig
+
+	// Instances defines weighted component instances for progressive delivery.
+	// The first instance in the list is treated as the newest (shared resources
+	// derive their inputs from it). When empty, the component runs in single-instance mode.
+	Instances []InternalInstanceConfig
+
+	// Distinct lists resource type.name patterns (e.g., "encryptionKey.signing")
+	// that should be promoted from shared to per-instance.
+	Distinct []string
+}
+
+// InternalInstanceConfig represents a single weighted instance of a component.
+type InternalInstanceConfig struct {
+	// Name is the instance identifier (e.g., "canary", "stable").
+	Name string
+
+	// Source is the component image/path for this instance.
+	// Overrides the top-level Path/Image when set.
+	Source string
+
+	// Weight is the traffic weight (0-100) for this instance.
+	Weight int
+
+	// Variables are optional variable overrides for this instance.
+	Variables map[string]interface{}
 }
 
 // InternalScalingConfig represents scaling configuration for a deployment.

@@ -56,6 +56,7 @@ func (t *Transformer) transformComponent(v1 ComponentConfigV1) internal.Internal
 		Functions:   make(map[string]internal.InternalFunctionConfig),
 		Environment: v1.Environment,
 		Routes:      make(map[string]internal.InternalRouteConfig),
+		Distinct:    v1.Distinct,
 	}
 
 	// Transform scaling configs
@@ -73,7 +74,21 @@ func (t *Transformer) transformComponent(v1 ComponentConfigV1) internal.Internal
 		comp.Routes[name] = t.transformRoute(routeConfig)
 	}
 
+	// Transform instances
+	for _, inst := range v1.Instances {
+		comp.Instances = append(comp.Instances, t.transformInstance(inst))
+	}
+
 	return comp
+}
+
+func (t *Transformer) transformInstance(v1 InstanceConfigV1) internal.InternalInstanceConfig {
+	return internal.InternalInstanceConfig{
+		Name:      v1.Name,
+		Source:    v1.Source,
+		Weight:    v1.Weight,
+		Variables: v1.Variables,
+	}
 }
 
 func (t *Transformer) transformScaling(v1 ScalingConfigV1) internal.InternalScalingConfig {

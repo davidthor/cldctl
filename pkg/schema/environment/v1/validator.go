@@ -123,18 +123,24 @@ func (v *Validator) validateComponent(name string, comp ComponentConfigV1) []Val
 	var errors []ValidationError
 	prefix := fmt.Sprintf("components.%s", name)
 
-	// Exactly one of path or image must be set
-	if comp.Path == "" && comp.Image == "" {
-		errors = append(errors, ValidationError{
-			Field:   prefix,
-			Message: "either path or image is required",
-		})
-	}
-	if comp.Path != "" && comp.Image != "" {
-		errors = append(errors, ValidationError{
-			Field:   prefix,
-			Message: "path and image are mutually exclusive",
-		})
+	if len(comp.Instances) > 0 {
+		// Multi-instance mode: path/image are optional at top level
+		// (each instance must have a source)
+		errors = append(errors, v.validateInstances(prefix, comp)...)
+	} else {
+		// Single-instance mode: exactly one of path or image must be set
+		if comp.Path == "" && comp.Image == "" {
+			errors = append(errors, ValidationError{
+				Field:   prefix,
+				Message: "either path or image is required",
+			})
+		}
+		if comp.Path != "" && comp.Image != "" {
+			errors = append(errors, ValidationError{
+				Field:   prefix,
+				Message: "path and image are mutually exclusive",
+			})
+		}
 	}
 
 	// Validate scaling configs
@@ -153,6 +159,64 @@ func (v *Validator) validateComponent(name string, comp ComponentConfigV1) []Val
 	for routeName, routeConfig := range comp.Routes {
 		routeErrors := v.validateRoute(fmt.Sprintf("%s.routes.%s", prefix, routeName), routeConfig)
 		errors = append(errors, routeErrors...)
+	}
+
+	return errors
+}
+
+func (v *Validator) validateInstances(prefix string, comp ComponentConfigV1) []ValidationError {
+	var errors []ValidationError
+
+	if len(comp.Instances) == 0 {
+		return errors
+	}
+
+	// Check for duplicate instance names
+	namesSeen := make(map[string]bool)
+	totalWeight := 0
+
+	for i, inst := range comp.Instances {
+		instPrefix := fmt.Sprintf("%s.instances[%d]", prefix, i)
+
+		// Name is required
+		if inst.Name == "" {
+			errors = append(errors, ValidationError{
+				Field:   instPrefix + ".name",
+				Message: "instance name is required",
+			})
+		} else if namesSeen[inst.Name] {
+			errors = append(errors, ValidationError{
+				Field:   instPrefix + ".name",
+				Message: fmt.Sprintf("duplicate instance name %q", inst.Name),
+			})
+		}
+		namesSeen[inst.Name] = true
+
+		// Source is required
+		if inst.Source == "" {
+			errors = append(errors, ValidationError{
+				Field:   instPrefix + ".source",
+				Message: "instance source is required",
+			})
+		}
+
+		// Weight must be 0-100
+		if inst.Weight < 0 || inst.Weight > 100 {
+			errors = append(errors, ValidationError{
+				Field:   instPrefix + ".weight",
+				Message: "weight must be between 0 and 100",
+			})
+		}
+
+		totalWeight += inst.Weight
+	}
+
+	// Total weight should not exceed 100
+	if totalWeight > 100 {
+		errors = append(errors, ValidationError{
+			Field:   prefix + ".instances",
+			Message: fmt.Sprintf("total instance weights (%d) exceed 100", totalWeight),
+		})
 	}
 
 	return errors
