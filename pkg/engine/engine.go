@@ -164,6 +164,12 @@ type DeployEnvironmentResult struct {
 	ModuleOutputs map[string]map[string]interface{}
 }
 
+// RouteOverride holds environment-level overrides for a single route.
+type RouteOverride struct {
+	Subdomain  string
+	PathPrefix string
+}
+
 // DeployOptions configures a deployment operation.
 type DeployOptions struct {
 	// Environment name
@@ -180,6 +186,9 @@ type DeployOptions struct {
 
 	// Ports overrides for components (maps component name to port name to port number)
 	Ports map[string]map[string]int
+
+	// Routes overrides for components (maps component name to route name to override)
+	Routes map[string]map[string]RouteOverride
 
 	// Output writer for progress
 	Output io.Writer
@@ -332,6 +341,22 @@ func (e *Engine) Deploy(ctx context.Context, opts DeployOptions) (*DeployResult,
 		dcVars[k] = v
 	}
 
+	// Build component routes map for the executor
+	var componentRoutes map[string]map[string]executor.RouteOverride
+	if opts.Routes != nil {
+		componentRoutes = make(map[string]map[string]executor.RouteOverride, len(opts.Routes))
+		for compName, routes := range opts.Routes {
+			m := make(map[string]executor.RouteOverride, len(routes))
+			for routeName, ro := range routes {
+				m[routeName] = executor.RouteOverride{
+					Subdomain:  ro.Subdomain,
+					PathPrefix: ro.PathPrefix,
+				}
+			}
+			componentRoutes[compName] = m
+		}
+	}
+
 	// Execute plan
 	execOpts := executor.Options{
 		Parallelism:         opts.Parallelism,
@@ -344,6 +369,7 @@ func (e *Engine) Deploy(ctx context.Context, opts DeployOptions) (*DeployResult,
 		ComponentSources:    opts.Components,
 		ComponentVariables:  opts.Variables,
 		ComponentPorts:      opts.Ports,
+		ComponentRoutes:     componentRoutes,
 	}
 
 	exec := executor.NewExecutor(e.stateManager, e.iacRegistry, execOpts)
@@ -809,6 +835,9 @@ func (e *Engine) DeployFromEnvironmentFile(ctx context.Context, envPath string, 
 	if opts.Ports == nil {
 		opts.Ports = make(map[string]map[string]int)
 	}
+	if opts.Routes == nil {
+		opts.Routes = make(map[string]map[string]RouteOverride)
+	}
 
 	for name, compConfig := range env.Components() {
 		if compConfig.Path() != "" {
@@ -819,6 +848,21 @@ func (e *Engine) DeployFromEnvironmentFile(ctx context.Context, envPath string, 
 		opts.Variables[name] = compConfig.Variables()
 		if compConfig.Ports() != nil {
 			opts.Ports[name] = compConfig.Ports()
+		}
+		// Copy route configs (subdomain/pathPrefix) from environment file
+		if routeConfigs := compConfig.Routes(); len(routeConfigs) > 0 {
+			routeMap := make(map[string]RouteOverride, len(routeConfigs))
+			for routeName, rc := range routeConfigs {
+				if rc.Subdomain() != "" || rc.PathPrefix() != "" {
+					routeMap[routeName] = RouteOverride{
+						Subdomain:  rc.Subdomain(),
+						PathPrefix: rc.PathPrefix(),
+					}
+				}
+			}
+			if len(routeMap) > 0 {
+				opts.Routes[name] = routeMap
+			}
 		}
 	}
 

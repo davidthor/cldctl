@@ -100,6 +100,17 @@ type Options struct {
 	// Environment-level port overrides take priority over datacenter hooks and
 	// the built-in deterministic port allocator.
 	ComponentPorts map[string]map[string]int
+
+	// ComponentRoutes maps component name to route name to route override.
+	// Environment-level route overrides (subdomain, pathPrefix) are injected
+	// into route node inputs by buildModuleInputs.
+	ComponentRoutes map[string]map[string]RouteOverride
+}
+
+// RouteOverride holds environment-level overrides for a single route.
+type RouteOverride struct {
+	Subdomain  string
+	PathPrefix string
 }
 
 // DefaultOptions returns default executor options.
