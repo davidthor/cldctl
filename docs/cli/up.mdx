@@ -26,6 +26,8 @@ cldctl up [options]
 | `--detach` | Run in background (don't watch for changes) |
 | `--no-open` | Don't open browser to application URL |
 | `--port <port>` | Override the port for local access |
+| `--route-subdomain <route=subdomain>` | Set route subdomain (repeatable; component mode only) |
+| `--route-path-prefix <route=/path>` | Set route path prefix (repeatable; component mode only) |
 
 ## Description
 
@@ -75,6 +77,11 @@ cldctl up -c ./my-app --var log_level=debug --var api_key=test123
 
 # Named environment
 cldctl up -c ./my-app --name my-feature-branch
+
+# With route overrides (component mode only)
+cldctl up -c ./my-app -d local \
+  --route-subdomain main=cool-prefix \
+  --route-path-prefix api=/v2
 ```
 
 ### Environment Mode
