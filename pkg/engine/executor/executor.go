@@ -19,6 +19,7 @@ import (
 	"github.com/davidthor/cldctl/pkg/engine/planner"
 	"github.com/davidthor/cldctl/pkg/graph"
 	"github.com/davidthor/cldctl/pkg/iac"
+	"github.com/davidthor/cldctl/pkg/names"
 	"github.com/davidthor/cldctl/pkg/schema/datacenter"
 	v1 "github.com/davidthor/cldctl/pkg/schema/datacenter/v1"
 	"github.com/davidthor/cldctl/pkg/state"
@@ -1628,6 +1629,27 @@ func (e *Executor) buildModuleInputs(module datacenter.Module, node *graph.Node,
 		setIfMissing(inputs, "rules", node.Inputs["rules"])
 		setIfMissing(inputs, "internal", node.Inputs["internal"])
 		setIfMissing(inputs, "host", host)
+
+		// Inject subdomain and path_prefix from environment route config or generate defaults.
+		// Priority: environment-level override > deterministic default.
+		subdomain := ""
+		pathPrefix := "/"
+		if e.options.ComponentRoutes != nil {
+			if compRoutes, ok := e.options.ComponentRoutes[node.Component]; ok {
+				if ro, ok := compRoutes[node.Name]; ok {
+					subdomain = ro.Subdomain
+					pathPrefix = ro.PathPrefix
+				}
+			}
+		}
+		if subdomain == "" {
+			subdomain = names.Generate(envName, node.Component, node.Name)
+		}
+		if pathPrefix == "" {
+			pathPrefix = "/"
+		}
+		setIfMissing(inputs, "subdomain", subdomain)
+		setIfMissing(inputs, "path_prefix", pathPrefix)
 
 		// Resolve upstream port for the route's target service/function.
 		// This allows datacenter route hooks to know the upstream endpoint
