@@ -69,6 +69,7 @@ databases:
 
 func TestBuilder_TaskDependencyInsertion(t *testing.T) {
 	builder := NewBuilder("test-env", "test-dc")
+	builder.EnableImplicitNodes(true, false)
 
 	comp := loadComponent(t, `
 databases:
@@ -205,6 +206,7 @@ functions:
 
 func TestBuilder_NoTaskNoDependencyInsertion(t *testing.T) {
 	builder := NewBuilder("test-env", "test-dc")
+	builder.EnableImplicitNodes(true, false)
 
 	// Database WITHOUT migrations
 	comp := loadComponent(t, `
@@ -401,8 +403,58 @@ databases:
 
 // === Tests for implicit databaseUser nodes ===
 
+func TestBuilder_DatabaseUserNode_NotCreatedWithoutHook(t *testing.T) {
+	// When hasDatabaseUserHook is false (default), no databaseUser nodes should be created.
+	// The deployment should depend directly on the database.
+	builder := NewBuilder("test-env", "test-dc")
+
+	comp := loadComponent(t, `
+databases:
+  main:
+    type: postgres:^16
+
+deployments:
+  api:
+    image: my-app:latest
+    environment:
+      DATABASE_URL: "${{ databases.main.url }}"
+`)
+
+	err := builder.AddComponent("my-app", comp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := builder.Build()
+
+	// Should NOT have any databaseUser nodes
+	dbUserNodes := g.GetNodesByType(NodeTypeDatabaseUser)
+	if len(dbUserNodes) != 0 {
+		t.Errorf("expected 0 databaseUser nodes when hook is not enabled, got %d", len(dbUserNodes))
+	}
+
+	// Deployment should depend directly on database
+	deployNode := g.GetNode("my-app/deployment/api")
+	dbNode := g.GetNode("my-app/database/main")
+	if deployNode == nil || dbNode == nil {
+		t.Fatal("expected both deployment and database nodes to exist")
+	}
+
+	deployDependsOnDB := false
+	for _, dep := range deployNode.DependsOn {
+		if dep == dbNode.ID {
+			deployDependsOnDB = true
+			break
+		}
+	}
+	if !deployDependsOnDB {
+		t.Error("expected deployment to depend directly on database when no databaseUser hook")
+	}
+}
+
 func TestBuilder_DatabaseUserNode_SingleDeployment(t *testing.T) {
 	builder := NewBuilder("test-env", "test-dc")
+	builder.EnableImplicitNodes(true, false)
 
 	comp := loadComponent(t, `
 databases:
@@ -492,6 +544,7 @@ deployments:
 
 func TestBuilder_DatabaseUserNode_TwoConsumers(t *testing.T) {
 	builder := NewBuilder("test-env", "test-dc")
+	builder.EnableImplicitNodes(true, false)
 
 	comp := loadComponent(t, `
 databases:
@@ -555,6 +608,7 @@ deployments:
 
 func TestBuilder_DatabaseUserNode_NoDuplicates(t *testing.T) {
 	builder := NewBuilder("test-env", "test-dc")
+	builder.EnableImplicitNodes(true, false)
 
 	// A deployment referencing the same database twice should still produce only one databaseUser node
 	comp := loadComponent(t, `
@@ -586,6 +640,7 @@ deployments:
 
 func TestBuilder_DatabaseUserNode_FunctionConsumer(t *testing.T) {
 	builder := NewBuilder("test-env", "test-dc")
+	builder.EnableImplicitNodes(true, false)
 
 	comp := loadComponent(t, `
 databases:
@@ -619,6 +674,7 @@ functions:
 
 func TestBuilder_DatabaseUserNode_CronjobConsumer(t *testing.T) {
 	builder := NewBuilder("test-env", "test-dc")
+	builder.EnableImplicitNodes(true, false)
 
 	comp := loadComponent(t, `
 databases:
@@ -653,8 +709,45 @@ cronjobs:
 
 // === Tests for implicit networkPolicy nodes ===
 
+func TestBuilder_NetworkPolicyNode_NotCreatedWithoutHook(t *testing.T) {
+	// When hasNetworkPolicyHook is false (default), no networkPolicy nodes should be created.
+	builder := NewBuilder("test-env", "test-dc")
+
+	comp := loadComponent(t, `
+deployments:
+  auth:
+    image: auth:latest
+  api:
+    image: api:latest
+    environment:
+      AUTH_URL: "${{ services.auth.url }}"
+
+services:
+  auth:
+    deployment: auth
+    port: 8080
+  api:
+    deployment: api
+    port: 3001
+`)
+
+	err := builder.AddComponent("my-app", comp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := builder.Build()
+
+	// Should NOT have any networkPolicy nodes
+	npNodes := g.GetNodesByType(NodeTypeNetworkPolicy)
+	if len(npNodes) != 0 {
+		t.Errorf("expected 0 networkPolicy nodes when hook is not enabled, got %d", len(npNodes))
+	}
+}
+
 func TestBuilder_NetworkPolicyNode_DeploymentReferencesService(t *testing.T) {
 	builder := NewBuilder("test-env", "test-dc")
+	builder.EnableImplicitNodes(false, true)
 
 	comp := loadComponent(t, `
 deployments:
@@ -733,6 +826,7 @@ services:
 
 func TestBuilder_NetworkPolicyNode_NoDuplicates(t *testing.T) {
 	builder := NewBuilder("test-env", "test-dc")
+	builder.EnableImplicitNodes(false, true)
 
 	comp := loadComponent(t, `
 deployments:
@@ -764,6 +858,7 @@ services:
 
 func TestBuilder_NetworkPolicyNode_NoNetworkPolicyForNonServiceRefs(t *testing.T) {
 	builder := NewBuilder("test-env", "test-dc")
+	builder.EnableImplicitNodes(false, true)
 
 	// Deployment referencing a database — should NOT create a networkPolicy
 	comp := loadComponent(t, `
@@ -793,6 +888,7 @@ deployments:
 
 func TestBuilder_TopologicalSort_WithImplicitNodes(t *testing.T) {
 	builder := NewBuilder("test-env", "test-dc")
+	builder.EnableImplicitNodes(true, true)
 
 	comp := loadComponent(t, `
 databases:

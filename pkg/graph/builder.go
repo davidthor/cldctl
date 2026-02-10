@@ -12,6 +12,15 @@ import (
 // Builder constructs a dependency graph from component specifications.
 type Builder struct {
 	graph *Graph
+
+	// hasDatabaseUserHook indicates whether the datacenter defines at least one
+	// databaseUser hook. When false, no databaseUser nodes are generated and
+	// workloads depend directly on database nodes.
+	hasDatabaseUserHook bool
+
+	// hasNetworkPolicyHook indicates whether the datacenter defines at least one
+	// networkPolicy hook. When false, no networkPolicy leaf nodes are generated.
+	hasNetworkPolicyHook bool
 }
 
 // NewBuilder creates a new graph builder.
@@ -19,6 +28,14 @@ func NewBuilder(environment, datacenter string) *Builder {
 	return &Builder{
 		graph: NewGraph(environment, datacenter),
 	}
+}
+
+// EnableImplicitNodes configures which implicit node types the builder should
+// generate. Pass true for each hook type that the datacenter defines.
+// By default both are false, meaning no implicit nodes are created.
+func (b *Builder) EnableImplicitNodes(databaseUser, networkPolicy bool) {
+	b.hasDatabaseUserHook = databaseUser
+	b.hasNetworkPolicyHook = networkPolicy
 }
 
 // AddComponent adds a component's resources to the graph.
@@ -427,9 +444,10 @@ func (b *Builder) addEnvDependencies(componentName string, node *Node, value str
 			continue
 		}
 
-		// Implicit databaseUser interposition: when a workload references a database,
-		// inject a databaseUser node between the database and the consumer.
-		if depNode.Type == NodeTypeDatabase && IsWorkloadType(node.Type) {
+		// Implicit databaseUser interposition: when a workload references a database
+		// and the datacenter defines a databaseUser hook, inject a databaseUser node
+		// between the database and the consumer. Otherwise, depend on the database directly.
+		if depNode.Type == NodeTypeDatabase && IsWorkloadType(node.Type) && b.hasDatabaseUserHook {
 			dbUserNode := b.getOrCreateDatabaseUserNode(componentName, depNode, node)
 			// Consumer depends on databaseUser instead of database directly
 			node.AddDependency(dbUserNode.ID)
@@ -450,9 +468,10 @@ func (b *Builder) addEnvDependencies(componentName string, node *Node, value str
 		node.AddDependency(depNodeID)
 		depNode.AddDependent(node.ID)
 
-		// Implicit networkPolicy creation: when a workload references a service,
-		// create a networkPolicy leaf node capturing the from/to relationship.
-		if depNode.Type == NodeTypeService && IsWorkloadType(node.Type) {
+		// Implicit networkPolicy creation: when a workload references a service
+		// and the datacenter defines a networkPolicy hook, create a networkPolicy
+		// leaf node capturing the from/to relationship.
+		if depNode.Type == NodeTypeService && IsWorkloadType(node.Type) && b.hasNetworkPolicyHook {
 			b.getOrCreateNetworkPolicyNode(componentName, node, depNode)
 		}
 
@@ -470,8 +489,9 @@ func (b *Builder) addEnvDependencies(componentName string, node *Node, value str
 }
 
 // getOrCreateDatabaseUserNode returns (or creates) a databaseUser node for the given
-// database-consumer pair. The databaseUser node depends on the database and passes
-// through its outputs unless a datacenter hook customizes them.
+// database-consumer pair. The databaseUser node depends on the database. The datacenter's
+// databaseUser hook provisions per-consumer credentials for each node.
+// Only called when hasDatabaseUserHook is true.
 // Naming convention: {dbName}--{consumerName}
 func (b *Builder) getOrCreateDatabaseUserNode(componentName string, dbNode, consumerNode *Node) *Node {
 	dbUserName := dbNode.Name + "--" + consumerNode.Name
@@ -928,7 +948,7 @@ func (b *Builder) addInstanceEnvDependencies(componentName, instanceName string,
 		}
 
 		// Implicit databaseUser interposition for multi-instance mode
-		if depNode.Type == NodeTypeDatabase && IsWorkloadType(node.Type) {
+		if depNode.Type == NodeTypeDatabase && IsWorkloadType(node.Type) && b.hasDatabaseUserHook {
 			dbUserNode := b.getOrCreateDatabaseUserNode(componentName, depNode, node)
 			node.AddDependency(dbUserNode.ID)
 			dbUserNode.AddDependent(node.ID)
@@ -947,7 +967,7 @@ func (b *Builder) addInstanceEnvDependencies(componentName, instanceName string,
 		depNode.AddDependent(node.ID)
 
 		// Implicit networkPolicy creation for multi-instance mode
-		if depNode.Type == NodeTypeService && IsWorkloadType(node.Type) {
+		if depNode.Type == NodeTypeService && IsWorkloadType(node.Type) && b.hasNetworkPolicyHook {
 			b.getOrCreateNetworkPolicyNode(componentName, node, depNode)
 		}
 

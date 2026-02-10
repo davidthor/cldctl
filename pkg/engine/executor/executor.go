@@ -554,20 +554,15 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 		return e.executePortAllocation(ctx, change, envState)
 	}
 
-	// databaseUser nodes: if no hooks defined, pass through parent database outputs
-	if change.Node.Type == graph.NodeTypeDatabaseUser {
-		hooks := e.getHooksForType(graph.NodeTypeDatabaseUser)
-		if len(hooks) == 0 {
-			return e.executeDatabaseUserPassthrough(ctx, change, envState)
-		}
+	// Implicit nodes (databaseUser, networkPolicy) are only created when the datacenter
+	// defines at least one hook of that type. However, a specific node might not match
+	// any hook's `when` condition (e.g., a Redis database when only a Postgres databaseUser
+	// hook exists). In that case, fall back to default behavior instead of erroring.
+	if change.Node.Type == graph.NodeTypeDatabaseUser && !e.hasMatchingHook(change.Node) {
+		return e.executeDatabaseUserPassthrough(ctx, change, envState)
 	}
-
-	// networkPolicy nodes: if no hooks defined, complete with no outputs (no-op)
-	if change.Node.Type == graph.NodeTypeNetworkPolicy {
-		hooks := e.getHooksForType(graph.NodeTypeNetworkPolicy)
-		if len(hooks) == 0 {
-			return e.executeNetworkPolicyNoop(ctx, change, envState)
-		}
+	if change.Node.Type == graph.NodeTypeNetworkPolicy && !e.hasMatchingHook(change.Node) {
+		return e.executeNetworkPolicyNoop(ctx, change, envState)
 	}
 
 	// Lock for state initialization
@@ -1159,6 +1154,20 @@ func (e *Executor) getHooksForType(nodeType graph.NodeType) []datacenter.Hook {
 	default:
 		return nil
 	}
+}
+
+// hasMatchingHook returns true if at least one datacenter hook of the node's type
+// matches the node's inputs (evaluating `when` conditions). This is used for
+// implicit node types (databaseUser, networkPolicy) to decide whether to execute
+// the hook pipeline or fall back to default behavior.
+func (e *Executor) hasMatchingHook(node *graph.Node) bool {
+	hooks := e.getHooksForType(node.Type)
+	for _, hook := range hooks {
+		if e.evaluateWhenCondition(hook.When(), node.Inputs) {
+			return true
+		}
+	}
+	return false
 }
 
 // evaluateWhenCondition evaluates a 'when' condition string against node inputs.
@@ -1985,10 +1994,10 @@ func (e *Executor) executePortAllocation(ctx context.Context, change *planner.Re
 	return result
 }
 
-// executeDatabaseUserPassthrough handles databaseUser nodes when no hooks are defined.
-// It copies the parent database node's outputs so that consumers receive the same
-// connection credentials. This is the zero-config default — existing datacenters
-// work identically without defining a databaseUser hook.
+// executeDatabaseUserPassthrough handles databaseUser nodes when no matching hook
+// exists for the specific database type (e.g., a Redis database when only a Postgres
+// databaseUser hook is defined). It copies the parent database node's outputs so that
+// consumers receive the same connection credentials as a direct database reference.
 func (e *Executor) executeDatabaseUserPassthrough(ctx context.Context, change *planner.ResourceChange, envState *types.EnvironmentState) *NodeResult {
 	result := &NodeResult{
 		NodeID: change.Node.ID,
@@ -2003,7 +2012,6 @@ func (e *Executor) executeDatabaseUserPassthrough(ctx context.Context, change *p
 			dbNodeID := fmt.Sprintf("%s/%s/%s", change.Node.Component, graph.NodeTypeDatabase, dbName)
 			dbNode := e.graph.GetNode(dbNodeID)
 			if dbNode != nil && dbNode.Outputs != nil {
-				// Pass through all database outputs
 				for k, v := range dbNode.Outputs {
 					outputs[k] = v
 				}
@@ -2039,10 +2047,9 @@ func (e *Executor) executeDatabaseUserPassthrough(ctx context.Context, change *p
 	return result
 }
 
-// executeNetworkPolicyNoop handles networkPolicy nodes when no hooks are defined.
-// It completes the node immediately with no outputs. NetworkPolicy nodes are
-// fire-and-forget leaf nodes — datacenter authors opt-in to enforcement by
-// defining a networkPolicy hook.
+// executeNetworkPolicyNoop handles networkPolicy nodes when no matching hook exists
+// for the specific workload-service pair. It completes the node immediately with no
+// outputs or side effects.
 func (e *Executor) executeNetworkPolicyNoop(ctx context.Context, change *planner.ResourceChange, envState *types.EnvironmentState) *NodeResult {
 	result := &NodeResult{
 		NodeID: change.Node.ID,
@@ -2169,13 +2176,12 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 				}
 				dbName := parts[1]
 
-				// Try to resolve through the interposed databaseUser node first.
-				// The consumer's name is used to form the databaseUser ID: {dbName}--{consumerName}
+				// If the datacenter defines a databaseUser hook, resolve through the
+				// interposed databaseUser node. Otherwise, fall back to the database directly.
 				dbUserNodeID := fmt.Sprintf("%s/%s/%s--%s", node.Component, graph.NodeTypeDatabaseUser, dbName, node.Name)
 				depNode, ok := e.graph.Nodes[dbUserNodeID]
 				if !ok || depNode == nil || depNode.Outputs == nil {
-					// Fallback to the database node directly (for non-workload consumers or
-					// when databaseUser interposition doesn't apply)
+					// No databaseUser node — resolve directly from the database node
 					dbNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeDatabase, dbName)
 					depNode, ok = e.graph.Nodes[dbNodeID]
 					if !ok || depNode.Outputs == nil {

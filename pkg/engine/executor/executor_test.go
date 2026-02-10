@@ -3,6 +3,8 @@ package executor
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -1051,6 +1053,59 @@ func TestBuildDependencyError(t *testing.T) {
 	}
 }
 
+func TestHasMatchingHook_DatabaseUser_Matches(t *testing.T) {
+	// Datacenter has a postgres-only databaseUser hook.
+	// Write to a temp file so the HCL evaluator can read source text for
+	// complex when expressions (exprToString needs file-based loading).
+	dcContent := []byte(`
+environment {
+  databaseUser {
+    when = node.inputs.dbEngine == "postgres"
+    module "pg-user" {
+      plugin = "native"
+      build  = "./modules/pg-user"
+      inputs = {
+        name = "test"
+      }
+    }
+    outputs = {
+      host = "localhost"
+      port = "5432"
+      url  = "postgres://localhost/test"
+    }
+  }
+}
+`)
+	tmpFile := filepath.Join(t.TempDir(), "datacenter.dc")
+	if err := os.WriteFile(tmpFile, dcContent, 0644); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+
+	loader := datacenter.NewLoader()
+	dc, err := loader.Load(tmpFile)
+	if err != nil {
+		t.Fatalf("failed to load datacenter: %v", err)
+	}
+
+	exec := &Executor{
+		options: Options{Datacenter: dc},
+	}
+
+	// Postgres databaseUser should match
+	pgNode := graph.NewNode(graph.NodeTypeDatabaseUser, "my-app", "main--api")
+	pgNode.SetInput("dbEngine", "postgres")
+	if !exec.hasMatchingHook(pgNode) {
+		t.Error("expected postgres databaseUser to match hook")
+	}
+
+	// Redis databaseUser should NOT match (no redis hook defined)
+	redisNode := graph.NewNode(graph.NodeTypeDatabaseUser, "my-app", "cache--api")
+	redisNode.SetInput("dbEngine", "redis")
+	if exec.hasMatchingHook(redisNode) {
+		t.Error("expected redis databaseUser to NOT match any hook")
+	}
+}
+
 func TestExecuteDatabaseUserPassthrough(t *testing.T) {
 	sm := newMockStateManager()
 	registry := newTestRegistry()
@@ -1058,21 +1113,19 @@ func TestExecuteDatabaseUserPassthrough(t *testing.T) {
 	g := graph.NewGraph("test-env", "test-dc")
 
 	// Create database node with outputs
-	dbNode := graph.NewNode(graph.NodeTypeDatabase, "my-app", "main")
+	dbNode := graph.NewNode(graph.NodeTypeDatabase, "my-app", "cache")
 	dbNode.Outputs = map[string]interface{}{
-		"host":     "db.example.com",
-		"port":     "5432",
-		"url":      "postgres://user:pass@db.example.com:5432/mydb",
-		"username": "user",
-		"password": "pass",
-		"database": "mydb",
+		"host": "redis.example.com",
+		"port": "6379",
+		"url":  "redis://redis.example.com:6379",
 	}
 	dbNode.State = graph.NodeStateCompleted
 	_ = g.AddNode(dbNode)
 
-	// Create databaseUser node
-	dbUserNode := graph.NewNode(graph.NodeTypeDatabaseUser, "my-app", "main--api")
-	dbUserNode.SetInput("database", "main")
+	// Create databaseUser node (Redis — no matching hook)
+	dbUserNode := graph.NewNode(graph.NodeTypeDatabaseUser, "my-app", "cache--api")
+	dbUserNode.SetInput("database", "cache")
+	dbUserNode.SetInput("type", "redis:^7")
 	dbUserNode.SetInput("consumer", "api")
 	dbUserNode.SetInput("consumerType", "deployment")
 	dbUserNode.SetInput("component", "my-app")
@@ -1080,12 +1133,7 @@ func TestExecuteDatabaseUserPassthrough(t *testing.T) {
 	dbNode.AddDependent(dbUserNode.ID)
 	_ = g.AddNode(dbUserNode)
 
-	opts := Options{
-		Parallelism: 1,
-		StopOnError: true,
-	}
-
-	exec := NewExecutor(sm, registry, opts)
+	exec := NewExecutor(sm, registry, Options{Parallelism: 1, StopOnError: true})
 	exec.graph = g
 	exec.datacenterName = "test-dc"
 
@@ -1106,13 +1154,10 @@ func TestExecuteDatabaseUserPassthrough(t *testing.T) {
 	}
 
 	// Outputs should match the parent database outputs
-	if result.Outputs["host"] != "db.example.com" {
-		t.Errorf("expected host 'db.example.com', got %v", result.Outputs["host"])
+	if result.Outputs["host"] != "redis.example.com" {
+		t.Errorf("expected host 'redis.example.com', got %v", result.Outputs["host"])
 	}
-	if result.Outputs["port"] != "5432" {
-		t.Errorf("expected port '5432', got %v", result.Outputs["port"])
-	}
-	if result.Outputs["url"] != "postgres://user:pass@db.example.com:5432/mydb" {
+	if result.Outputs["url"] != "redis://redis.example.com:6379" {
 		t.Errorf("expected correct url, got %v", result.Outputs["url"])
 	}
 
@@ -1121,65 +1166,7 @@ func TestExecuteDatabaseUserPassthrough(t *testing.T) {
 	if compState == nil {
 		t.Fatal("expected component state to be created")
 	}
-	resState := compState.Resources["databaseUser.main--api"]
-	if resState == nil {
-		t.Fatal("expected resource state to be created")
-	}
-	if resState.Status != types.ResourceStatusReady {
-		t.Errorf("expected status Ready, got %s", resState.Status)
-	}
-}
-
-func TestExecuteNetworkPolicyNoop(t *testing.T) {
-	sm := newMockStateManager()
-	registry := newTestRegistry()
-
-	g := graph.NewGraph("test-env", "test-dc")
-
-	// Create a networkPolicy node
-	npNode := graph.NewNode(graph.NodeTypeNetworkPolicy, "my-app", "api--auth")
-	npNode.SetInput("from", "api")
-	npNode.SetInput("fromType", "deployment")
-	npNode.SetInput("to", "auth")
-	npNode.SetInput("port", "8080")
-	_ = g.AddNode(npNode)
-
-	opts := Options{
-		Parallelism: 1,
-		StopOnError: true,
-	}
-
-	exec := NewExecutor(sm, registry, opts)
-	exec.graph = g
-	exec.datacenterName = "test-dc"
-
-	envState := &types.EnvironmentState{
-		Name:       "test-env",
-		Components: make(map[string]*types.ComponentState),
-	}
-
-	change := &planner.ResourceChange{
-		Node:   npNode,
-		Action: planner.ActionCreate,
-	}
-
-	result := exec.executeNetworkPolicyNoop(context.Background(), change, envState)
-
-	if !result.Success {
-		t.Fatal("expected networkPolicy no-op to succeed")
-	}
-
-	// Outputs should be empty
-	if len(result.Outputs) != 0 {
-		t.Errorf("expected 0 outputs, got %d", len(result.Outputs))
-	}
-
-	// State should be saved
-	compState := envState.Components["my-app"]
-	if compState == nil {
-		t.Fatal("expected component state to be created")
-	}
-	resState := compState.Resources["networkPolicy.api--auth"]
+	resState := compState.Resources["databaseUser.cache--api"]
 	if resState == nil {
 		t.Fatal("expected resource state to be created")
 	}

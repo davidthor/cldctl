@@ -5,24 +5,24 @@ description: "Provision per-consumer database credentials"
 
 # Database User Hook
 
-The database user hook provisions per-consumer database users with scoped permissions. It is triggered by **implicit databaseUser nodes** that are automatically generated when workloads (deployments, functions, cronjobs, or migration tasks) reference a database via `${{ databases.<name>.* }}` expressions.
+The database user hook provisions per-consumer database users with scoped permissions. It is triggered by **implicit databaseUser nodes** that are automatically generated when a datacenter defines a `databaseUser` hook and workloads (deployments, functions, cronjobs, or migration tasks) reference a database via `${{ databases.<name>.* }}` expressions.
 
 ## How It Works
 
-When a component declares a database and one or more workloads reference it, cldctl automatically injects a `databaseUser` node **between** the database and each consumer. The consumer then depends on the `databaseUser` node instead of the database directly.
+When a datacenter defines a `databaseUser` hook and a component declares a database that one or more workloads reference, cldctl automatically injects a `databaseUser` node **between** the database and each consumer. The consumer then depends on the `databaseUser` node instead of the database directly.
 
 ```
 database/main → databaseUser/main--api → deployment/api
               → databaseUser/main--admin → deployment/admin
 ```
 
-### Default Behavior (No Hook Defined)
+### When No Hook Is Defined
 
-When no `databaseUser` hook is defined in the datacenter, the databaseUser node **passes through** all outputs from the parent database node unchanged. This means existing datacenters work identically without any changes — zero breaking changes.
+When no `databaseUser` hook is defined in the datacenter, **no databaseUser nodes are created**. Workloads depend directly on database nodes, and `${{ databases.<name>.* }}` expressions resolve from the database node's outputs. This keeps the graph clean and avoids unnecessary nodes when the datacenter doesn't need per-consumer credentials.
 
-### Custom Behavior (Hook Defined)
+### When a Hook Is Defined
 
-When a datacenter defines a `databaseUser` hook, the hook can provision per-consumer database users with scoped permissions, returning customized connection strings with per-consumer credentials.
+When a datacenter defines a `databaseUser` hook, databaseUser nodes are automatically injected into the graph. The hook can provision per-consumer database users with scoped permissions, returning customized connection strings with per-consumer credentials.
 
 ## Basic Usage
 
@@ -189,8 +189,9 @@ output "url" {
 
 ## Design Notes
 
-- **Implicit creation**: databaseUser nodes are generated automatically by the graph builder — component authors never declare them
+- **Opt-in creation**: databaseUser nodes are only generated when the datacenter defines a `databaseUser` hook — component authors never declare them
 - **Deterministic naming**: Node IDs use the format `{dbName}--{consumerName}` (e.g., `main--api`)
 - **No duplicates**: If a workload references the same database multiple times (e.g., `databases.main.url` and `databases.main.host`), only one databaseUser node is created
-- **Pass-through default**: When no hook is defined, all parent database outputs are copied unchanged
-- **Expression resolution**: `${{ databases.main.url }}` expressions resolve through the databaseUser node's outputs (not the database directly)
+- **Direct fallback**: When no hook is defined, workloads depend directly on database nodes and expressions resolve from the database's outputs
+- **Partial hook matching**: If databaseUser hooks exist but none match a specific database type (e.g., a Postgres hook but a Redis database), the databaseUser node passes through the parent database's outputs — no error is raised
+- **Expression resolution**: When a hook is defined, `${{ databases.main.url }}` expressions resolve through the databaseUser node's outputs

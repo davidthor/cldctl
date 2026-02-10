@@ -77,20 +77,22 @@ func NewProcessManager() *ProcessManager {
 // StartProcess starts a new process.
 func (pm *ProcessManager) StartProcess(ctx context.Context, opts ProcessOptions) (*ProcessInfo, error) {
 	pm.mu.Lock()
-	defer pm.mu.Unlock()
 
 	// Check if process already running
 	if mp, exists := pm.processes[opts.Name]; exists {
 		if mp.cmd.Process != nil {
 			// Check if still running
 			if err := mp.cmd.Process.Signal(syscall.Signal(0)); err == nil {
-				return mp.info, nil
+				info := mp.info
+				pm.mu.Unlock()
+				return info, nil
 			}
 		}
 		delete(pm.processes, opts.Name)
 	}
 
 	if len(opts.Command) == 0 {
+		pm.mu.Unlock()
 		return nil, fmt.Errorf("command is required")
 	}
 
@@ -108,15 +110,18 @@ func (pm *ProcessManager) StartProcess(ctx context.Context, opts ProcessOptions)
 	// Set up output capture
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
+		pm.mu.Unlock()
 		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
+		pm.mu.Unlock()
 		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
+		pm.mu.Unlock()
 		return nil, fmt.Errorf("failed to start process: %w", err)
 	}
 
@@ -152,10 +157,16 @@ func (pm *ProcessManager) StartProcess(ctx context.Context, opts ProcessOptions)
 		done: done,
 	}
 
+	// Release the lock before the potentially long-running readiness check so
+	// that other processes can start concurrently. The process is already
+	// registered in the map, so concurrent callers will see it.
+	pm.mu.Unlock()
+
 	// Wait for readiness if configured
 	if opts.Readiness != nil {
 		if err := pm.waitForReady(ctx, opts.Readiness); err != nil {
-			_ = pm.stopProcessLocked(opts.Name, 5*time.Second) // Best effort cleanup; ignore error
+			// Re-acquire lock for cleanup
+			_ = pm.StopProcess(opts.Name, 5*time.Second)
 			return nil, fmt.Errorf("process failed readiness check: %w", err)
 		}
 	}

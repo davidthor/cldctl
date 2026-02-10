@@ -3,7 +3,6 @@ package native
 import (
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 )
 
@@ -13,38 +12,92 @@ type EvalContext struct {
 	Resources map[string]*ResourceState
 }
 
-var expressionPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
-
 // evaluateExpression evaluates a simple expression string.
-// Supports: ${inputs.name}, ${resources.name.outputs.field}
+// Supports: ${inputs.name}, ${resources.name.outputs.field},
+// and expressions with nested braces like ${merge(a, { KEY: 'val' })}.
 func evaluateExpression(expr string, ctx *EvalContext) (interface{}, error) {
 	// If no expressions, return as-is
 	if !strings.Contains(expr, "${") {
 		return expr, nil
 	}
 
-	// Count how many ${...} patterns are in the string
-	matches := expressionPattern.FindAllString(expr, -1)
+	// Find all ${...} spans using brace-depth tracking (the simple regex
+	// \$\{[^}]+\} breaks when expressions contain nested braces such as
+	// inline map literals like { PORT: 'auto' }).
+	spans := findExpressionSpans(expr)
+
+	if len(spans) == 0 {
+		return expr, nil
+	}
 
 	// If the entire string is a single expression, return the actual value (preserving type)
-	// Only do this if there's exactly one match and it spans the entire string
-	if len(matches) == 1 && matches[0] == expr {
-		trimmed := expr[2 : len(expr)-1]
+	if len(spans) == 1 && spans[0][0] == 0 && spans[0][1] == len(expr) {
+		trimmed := expr[2 : len(expr)-1] // strip ${ and }
 		return resolveReference(trimmed, ctx)
 	}
 
 	// Otherwise, substitute expressions in the string
-	result := expressionPattern.ReplaceAllStringFunc(expr, func(match string) string {
-		// Extract reference
-		ref := match[2 : len(match)-1]
-		value, err := resolveReference(ref, ctx)
-		if err != nil {
-			return match // Keep original on error
-		}
-		return fmt.Sprintf("%v", value)
-	})
+	var result strings.Builder
+	lastEnd := 0
+	for _, span := range spans {
+		// Append literal text before this expression
+		result.WriteString(expr[lastEnd:span[0]])
 
-	return result, nil
+		// Extract and resolve the expression body
+		body := expr[span[0]+2 : span[1]-1] // strip ${ and }
+		value, err := resolveReference(body, ctx)
+		if err != nil {
+			result.WriteString(expr[span[0]:span[1]]) // keep original on error
+		} else {
+			result.WriteString(fmt.Sprintf("%v", value))
+		}
+		lastEnd = span[1]
+	}
+	// Append any trailing literal text
+	result.WriteString(expr[lastEnd:])
+
+	return result.String(), nil
+}
+
+// findExpressionSpans locates all ${...} expression boundaries in s,
+// correctly handling nested braces. Each returned [2]int is [start, end)
+// where start is the index of '$' and end is one past the closing '}'.
+func findExpressionSpans(s string) [][2]int {
+	var spans [][2]int
+
+	for i := 0; i < len(s)-1; i++ {
+		if s[i] != '$' || s[i+1] != '{' {
+			continue
+		}
+
+		// Track brace depth starting after the opening '{'
+		depth := 1
+		j := i + 2
+		inSingle := false
+		inDouble := false
+
+		for j < len(s) && depth > 0 {
+			c := s[j]
+			switch {
+			case c == '\'' && !inDouble:
+				inSingle = !inSingle
+			case c == '"' && !inSingle:
+				inDouble = !inDouble
+			case c == '{' && !inSingle && !inDouble:
+				depth++
+			case c == '}' && !inSingle && !inDouble:
+				depth--
+			}
+			j++
+		}
+
+		if depth == 0 {
+			spans = append(spans, [2]int{i, j})
+			i = j - 1 // advance past this expression
+		}
+	}
+
+	return spans
 }
 
 // resolveReference resolves a dotted reference like "inputs.name" or "resources.container.outputs.port"
@@ -52,6 +105,12 @@ func resolveReference(ref string, ctx *EvalContext) (interface{}, error) {
 	parts := strings.Split(strings.TrimSpace(ref), ".")
 	if len(parts) == 0 {
 		return nil, fmt.Errorf("empty reference")
+	}
+
+	// Handle inline map literals like { PORT: 'auto', KEY: 'value' }
+	trimmedRef := strings.TrimSpace(ref)
+	if strings.HasPrefix(trimmedRef, "{") && strings.HasSuffix(trimmedRef, "}") {
+		return parseMapLiteral(trimmedRef)
 	}
 
 	switch parts[0] {
@@ -101,6 +160,72 @@ func resolveReference(ref string, ctx *EvalContext) (interface{}, error) {
 		// Try as a function call
 		return evaluateFunction(ref, ctx)
 	}
+}
+
+// parseMapLiteral parses an inline map literal like { KEY: 'value', OTHER: 'val2' }
+// into a map[string]interface{}. Supports single-quoted, double-quoted, and unquoted values.
+func parseMapLiteral(s string) (map[string]interface{}, error) {
+	inner := strings.TrimSpace(s[1 : len(s)-1])
+	if inner == "" {
+		return make(map[string]interface{}), nil
+	}
+
+	result := make(map[string]interface{})
+
+	// Split on commas, respecting quoted strings
+	pairs := splitMapPairs(inner)
+	for _, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+
+		// Split key: value (first colon only)
+		idx := strings.Index(pair, ":")
+		if idx < 0 {
+			return nil, fmt.Errorf("invalid map pair (missing ':'): %s", pair)
+		}
+
+		key := strings.TrimSpace(pair[:idx])
+		value := strings.TrimSpace(pair[idx+1:])
+
+		// Strip surrounding quotes from key and value
+		key = stripQuotes(key)
+		value = stripQuotes(value)
+
+		result[key] = value
+	}
+
+	return result, nil
+}
+
+// splitMapPairs splits a string by commas at the top level, respecting quoted strings.
+func splitMapPairs(s string) []string {
+	var pairs []string
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+			current.WriteByte(c)
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+			current.WriteByte(c)
+		case c == ',' && !inSingle && !inDouble:
+			pairs = append(pairs, current.String())
+			current.Reset()
+		default:
+			current.WriteByte(c)
+		}
+	}
+	if current.Len() > 0 {
+		pairs = append(pairs, current.String())
+	}
+	return pairs
 }
 
 // navigatePath navigates a path through nested maps and arrays.

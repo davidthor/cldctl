@@ -5,11 +5,11 @@ description: "Control inter-service traffic based on declared communication patt
 
 # Network Policy Hook
 
-The network policy hook provisions network policies (e.g., Kubernetes NetworkPolicies, security group rules) based on the actual communication patterns declared in components. It is triggered by **implicit networkPolicy nodes** that are automatically generated when workloads reference services via `${{ services.<name>.* }}` expressions.
+The network policy hook provisions network policies (e.g., Kubernetes NetworkPolicies, security group rules) based on the actual communication patterns declared in components. It is triggered by **implicit networkPolicy nodes** that are automatically generated when a datacenter defines a `networkPolicy` hook and workloads reference services via `${{ services.<name>.* }}` expressions.
 
 ## How It Works
 
-When a workload (deployment, function, cronjob, or migration task) references a service, cldctl automatically creates a `networkPolicy` node capturing the from/to relationship. The networkPolicy node depends on both the source workload and the target service, but **nothing depends on the networkPolicy** — it is a fire-and-forget leaf node with no outputs.
+When a datacenter defines a `networkPolicy` hook and a workload (deployment, function, cronjob, or migration task) references a service, cldctl automatically creates a `networkPolicy` node capturing the from/to relationship. The networkPolicy node depends on both the source workload and the target service, but **nothing depends on the networkPolicy** — it is a fire-and-forget leaf node with no outputs.
 
 ```
 deployment/api ──┐
@@ -17,13 +17,13 @@ deployment/api ──┐
 service/auth ────┘
 ```
 
-### Default Behavior (No Hook Defined)
+### When No Hook Is Defined
 
-When no `networkPolicy` hook is defined in the datacenter, the networkPolicy node completes immediately with no side effects (no-op). Datacenter authors **opt-in** to network policy enforcement by defining a hook.
+When no `networkPolicy` hook is defined in the datacenter, **no networkPolicy nodes are created**. The graph remains clean with just the direct workload-to-service dependencies. Since nothing depends on networkPolicy nodes, omitting them has no impact on other resources.
 
-### Custom Behavior (Hook Defined)
+### When a Hook Is Defined
 
-When a datacenter defines a `networkPolicy` hook, the hook can provision network policies (Kubernetes NetworkPolicies, security group rules, firewall rules, etc.) to enforce zero-trust networking based on declared communication patterns.
+When a datacenter defines a `networkPolicy` hook, networkPolicy nodes are automatically created for every workload-to-service reference. The hook can provision network policies (Kubernetes NetworkPolicies, security group rules, firewall rules, etc.) to enforce zero-trust networking based on declared communication patterns.
 
 ## Basic Usage
 
@@ -123,47 +123,174 @@ networkPolicy {
 }
 ```
 
-## Example Kubernetes Module
+## Full End-to-End Example
+
+This section walks through the complete flow: a component that triggers implicit networkPolicy nodes, a datacenter hook that handles them, and the OpenTofu module that provisions actual Kubernetes NetworkPolicy resources.
+
+### Step 1: Component
+
+Consider a component with three deployments where `api` talks to both `auth` and `cache`:
+
+```yaml
+# cloud.component.yml
+databases:
+  main:
+    type: postgres:16
+
+deployments:
+  auth:
+    image: ${{ builds.auth.image }}
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+  cache:
+    image: ${{ builds.cache.image }}
+  api:
+    image: ${{ builds.api.image }}
+    environment:
+      AUTH_URL: ${{ services.auth.url }}
+      CACHE_URL: ${{ services.cache.url }}
+      DATABASE_URL: ${{ databases.main.url }}
+
+services:
+  auth:
+    deployment: auth
+    port: 8080
+  cache:
+    deployment: cache
+    port: 6379
+  api:
+    deployment: api
+    port: 3001
+
+builds:
+  auth:
+    context: ./auth
+  cache:
+    context: ./cache
+  api:
+    context: ./api
+
+routes:
+  main:
+    type: http
+    service: api
+```
+
+Because `api` references `services.auth` and `services.cache`, cldctl automatically generates two networkPolicy nodes:
+
+```
+deployment/api ──┐
+                 ├──→ networkPolicy/api--auth   (port 8080)
+service/auth ────┘
+
+deployment/api ──┐
+                 ├──→ networkPolicy/api--cache  (port 6379)
+service/cache ───┘
+```
+
+### Step 2: Datacenter Hook
+
+The datacenter defines a `networkPolicy` hook that routes each implicit node to an OpenTofu module:
+
+```hcl
+networkPolicy {
+  module "net-policy" {
+    build = "./modules/k8s-network-policy"
+    inputs = {
+      namespace      = environment.name
+      from_workload  = node.inputs.from
+      from_component = node.inputs.fromComponent
+      to_service     = node.inputs.to
+      to_component   = node.inputs.toComponent
+      port           = node.inputs.port
+    }
+  }
+}
+```
+
+### Step 3: OpenTofu Module
+
+The module provisions a Kubernetes `NetworkPolicy` that allows ingress from the source pod to the target service on the declared port:
 
 ```hcl
 # modules/k8s-network-policy/main.tf
+
+terraform {
+  required_providers {
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.25"
+    }
+  }
+}
+
 variable "namespace" {
-  type = string
+  description = "Kubernetes namespace where the pods are deployed"
+  type        = string
 }
 
 variable "from_workload" {
-  type = string
+  description = "Name of the source workload (used as pod label selector)"
+  type        = string
+}
+
+variable "from_component" {
+  description = "Component name the source workload belongs to"
+  type        = string
 }
 
 variable "to_service" {
-  type = string
+  description = "Name of the target service (used as pod label selector)"
+  type        = string
+}
+
+variable "to_component" {
+  description = "Component name the target service belongs to"
+  type        = string
 }
 
 variable "port" {
-  type = string
+  description = "Port number to allow traffic on"
+  type        = number
 }
 
-resource "kubernetes_network_policy_v1" "allow" {
+# Allow ingress from the source workload to the target service on the specified port.
+# This policy is additive — Kubernetes merges all NetworkPolicies that select the
+# same pods, so each policy opens exactly one ingress path.
+resource "kubernetes_network_policy_v1" "allow_ingress" {
   metadata {
     name      = "allow-${var.from_workload}-to-${var.to_service}"
     namespace = var.namespace
+
+    labels = {
+      "app.kubernetes.io/managed-by" = "cldctl"
+      "cldctl/from-workload"         = var.from_workload
+      "cldctl/from-component"        = var.from_component
+      "cldctl/to-service"            = var.to_service
+      "cldctl/to-component"          = var.to_component
+    }
   }
 
   spec {
+    # Select the pods backing the target service
     pod_selector {
       match_labels = {
-        app = var.to_service
+        "app.kubernetes.io/name"      = var.to_service
+        "app.kubernetes.io/component" = var.to_component
       }
     }
 
+    # Allow ingress only from pods matching the source workload
     ingress {
       from {
         pod_selector {
           match_labels = {
-            app = var.from_workload
+            "app.kubernetes.io/name"      = var.from_workload
+            "app.kubernetes.io/component" = var.from_component
           }
         }
       }
+
       ports {
         port     = var.port
         protocol = "TCP"
@@ -175,15 +302,263 @@ resource "kubernetes_network_policy_v1" "allow" {
 }
 ```
 
+With this module, the component above produces two Kubernetes NetworkPolicy resources at deploy time:
+
+| NetworkPolicy | Allows | On Port |
+|---|---|---|
+| `allow-api-to-auth` | Pods labeled `api` → Pods labeled `auth` | 8080 |
+| `allow-api-to-cache` | Pods labeled `api` → Pods labeled `cache` | 6379 |
+
+No other ingress traffic is allowed to `auth` or `cache` (assuming a default-deny policy is in place — see below).
+
+## Default-Deny Pattern
+
+For true zero-trust networking, pair the per-relationship allow policies with a **default-deny ingress** policy that blocks all traffic not explicitly allowed. You can achieve this with a second module in the hook, or by provisioning the deny policy separately in your datacenter.
+
+### Option A: Separate Datacenter Module
+
+Create a default-deny policy at the datacenter level (outside of hooks) so it's applied once per namespace:
+
+```hcl
+# In datacenter.dc — top-level module applied once per environment
+module "default_deny" {
+  build = "./modules/k8s-default-deny"
+  inputs = {
+    namespace = environment.name
+  }
+}
+
+environment {
+  networkPolicy {
+    module "net-policy" {
+      build = "./modules/k8s-network-policy"
+      inputs = {
+        namespace      = environment.name
+        from_workload  = node.inputs.from
+        from_component = node.inputs.fromComponent
+        to_service     = node.inputs.to
+        to_component   = node.inputs.toComponent
+        port           = node.inputs.port
+      }
+    }
+  }
+}
+```
+
+The default-deny module:
+
+```hcl
+# modules/k8s-default-deny/main.tf
+
+terraform {
+  required_providers {
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.25"
+    }
+  }
+}
+
+variable "namespace" {
+  type = string
+}
+
+# Deny all ingress traffic to all pods in the namespace by default.
+# Individual NetworkPolicy resources created by the networkPolicy hook
+# then punch holes for each declared service dependency.
+resource "kubernetes_network_policy_v1" "default_deny_ingress" {
+  metadata {
+    name      = "default-deny-ingress"
+    namespace = var.namespace
+
+    labels = {
+      "app.kubernetes.io/managed-by" = "cldctl"
+    }
+  }
+
+  spec {
+    # Empty pod_selector selects ALL pods in the namespace
+    pod_selector {}
+
+    # No ingress rules = deny all ingress
+    policy_types = ["Ingress"]
+  }
+}
+```
+
+### Option B: Multi-Module Hook
+
+Alternatively, use a multi-module hook to provision both the default-deny and the allow policy together. This is simpler but creates one default-deny resource per networkPolicy node (Kubernetes deduplicates them, but it's noisier in state):
+
+```hcl
+networkPolicy {
+  module "deny" {
+    build = "./modules/k8s-default-deny"
+    inputs = {
+      namespace = environment.name
+    }
+  }
+
+  module "allow" {
+    build = "./modules/k8s-network-policy"
+    inputs = {
+      namespace      = environment.name
+      from_workload  = node.inputs.from
+      from_component = node.inputs.fromComponent
+      to_service     = node.inputs.to
+      to_component   = node.inputs.toComponent
+      port           = node.inputs.port
+    }
+  }
+}
+```
+
 ## Cross-Component Support
 
 NetworkPolicy nodes are also created for cross-component service references. When component A's workload references component B's service via `${{ dependencies.B.services.auth.url }}`, a networkPolicy node is created with `fromComponent` set to A and `toComponent` set to B.
 
+### Cross-Component Example
+
+Suppose you have two components — `frontend` depends on `backend`:
+
+```yaml
+# frontend/cloud.component.yml
+dependencies:
+  backend:
+    image: myorg/backend:latest
+
+deployments:
+  web:
+    image: ${{ builds.web.image }}
+    environment:
+      API_URL: ${{ dependencies.backend.services.api.url }}
+```
+
+```yaml
+# backend/cloud.component.yml
+deployments:
+  api:
+    image: ${{ builds.api.image }}
+
+services:
+  api:
+    deployment: api
+    port: 3000
+```
+
+This generates a `networkPolicy/web--api` node with:
+- `from`: `web`, `fromComponent`: `frontend`
+- `to`: `api`, `toComponent`: `backend`
+
+The conditional hooks from the earlier example handle this automatically — the cross-component hook matches because `fromComponent != toComponent`, and the module receives different namespace/component values to scope the policy correctly.
+
+## AWS Security Group Example
+
+Network policies aren't limited to Kubernetes. On AWS (ECS, EC2, etc.), the same hook can manage security group rules:
+
+```hcl
+networkPolicy {
+  module "sg-rule" {
+    build = "./modules/aws-sg-ingress"
+    inputs = {
+      from_workload  = node.inputs.from
+      from_component = node.inputs.fromComponent
+      to_service     = node.inputs.to
+      to_component   = node.inputs.toComponent
+      port           = node.inputs.port
+      vpc_id         = module.vpc.id
+    }
+  }
+}
+```
+
+```hcl
+# modules/aws-sg-ingress/main.tf
+
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+variable "from_workload" {
+  type = string
+}
+
+variable "from_component" {
+  type = string
+}
+
+variable "to_service" {
+  type = string
+}
+
+variable "to_component" {
+  type = string
+}
+
+variable "port" {
+  type = number
+}
+
+variable "vpc_id" {
+  type = string
+}
+
+# Look up the security group attached to the source workload
+data "aws_security_group" "source" {
+  filter {
+    name   = "tag:cldctl/workload"
+    values = ["${var.from_component}-${var.from_workload}"]
+  }
+
+  filter {
+    name   = "vpc-id"
+    values = [var.vpc_id]
+  }
+}
+
+# Look up the security group attached to the target service
+data "aws_security_group" "target" {
+  filter {
+    name   = "tag:cldctl/service"
+    values = ["${var.to_component}-${var.to_service}"]
+  }
+
+  filter {
+    name   = "vpc-id"
+    values = [var.vpc_id]
+  }
+}
+
+# Allow the source workload's security group to reach the target on the declared port
+resource "aws_vpc_security_group_ingress_rule" "allow" {
+  security_group_id            = data.aws_security_group.target.id
+  referenced_security_group_id = data.aws_security_group.source.id
+  from_port                    = var.port
+  to_port                      = var.port
+  ip_protocol                  = "tcp"
+  description                  = "Allow ${var.from_component}/${var.from_workload} -> ${var.to_component}/${var.to_service} on port ${var.port}"
+
+  tags = {
+    "cldctl/from-workload"  = var.from_workload
+    "cldctl/from-component" = var.from_component
+    "cldctl/to-service"     = var.to_service
+    "cldctl/to-component"   = var.to_component
+  }
+}
+```
+
+This demonstrates the power of the networkPolicy hook — the same component graph produces Kubernetes NetworkPolicies, AWS security group rules, or any other network access control mechanism depending on the datacenter.
+
 ## Design Notes
 
-- **Implicit creation**: networkPolicy nodes are generated automatically by the graph builder — component authors never declare them
+- **Opt-in creation**: networkPolicy nodes are only generated when the datacenter defines a `networkPolicy` hook — component authors never declare them
 - **Deterministic naming**: Node IDs use the format `{fromWorkload}--{toService}` (e.g., `api--auth`)
 - **No duplicates**: If a workload references the same service multiple times (e.g., `services.auth.url` and `services.auth.host`), only one networkPolicy node is created
-- **No-op default**: When no hook is defined, the node completes with no side effects
+- **Clean graph**: When no hook is defined, no networkPolicy nodes appear in the graph
 - **Fire-and-forget**: Nothing depends on networkPolicy nodes — they are silent leaf nodes
 - **Zero-trust networking**: By defining a networkPolicy hook, datacenter authors can lock down inter-service traffic to only the connections actually declared in components

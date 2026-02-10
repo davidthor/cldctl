@@ -66,8 +66,8 @@ Each hook handles a component resource type:
 | `dockerBuild` | Build images | `image` |
 | `cronjob` | Scheduled tasks | `id` |
 | `observability` | OpenTelemetry config | `endpoint`, `protocol`, `attributes`; optional: `query_type`, `query_endpoint`, `dashboard_url` |
-| `databaseUser` | Per-consumer DB credentials (implicit) | `host`, `port`, `url`; pass-through default when no hook defined |
-| `networkPolicy` | Inter-service traffic control (implicit) | none; no-op default when no hook defined |
+| `databaseUser` | Per-consumer DB credentials (implicit; only created when hook is defined) | `host`, `port`, `url` |
+| `networkPolicy` | Inter-service traffic control (implicit; only created when hook is defined) | none |
 
 ## Expression Context
 

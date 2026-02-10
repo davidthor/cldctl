@@ -245,6 +245,18 @@ func (e *Engine) Deploy(ctx context.Context, opts DeployOptions) (*DeployResult,
 	// Build dependency graph
 	builder := graph.NewBuilder(opts.Environment, opts.Datacenter)
 
+	// Enable implicit graph nodes only when the datacenter defines hooks for them.
+	// This avoids cluttering the graph with pass-through or no-op nodes that would
+	// add no value when the datacenter doesn't customize them.
+	if env := dc.Environment(); env != nil {
+		if hooks := env.Hooks(); hooks != nil {
+			builder.EnableImplicitNodes(
+				len(hooks.DatabaseUser()) > 0,
+				len(hooks.NetworkPolicy()) > 0,
+			)
+		}
+	}
+
 	for compName, compPath := range opts.Components {
 		// Load component
 		comp, err := e.compLoader.Load(compPath)

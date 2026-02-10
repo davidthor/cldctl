@@ -318,9 +318,9 @@ In this example:
 
 ## Relationship to databaseUser Hook
 
-When a workload references a database, cldctl automatically injects a `databaseUser` node between the database and the consumer. This allows datacenter authors to optionally provision per-consumer database users with scoped permissions via the [databaseUser hook](/datacenters/database-user-hook).
+When a datacenter defines a `databaseUser` hook and a workload references a database, cldctl automatically injects a `databaseUser` node between the database and the consumer. This allows datacenter authors to provision per-consumer database users with scoped permissions via the [databaseUser hook](/datacenters/database-user-hook).
 
-When no `databaseUser` hook is defined, the databaseUser node passes through all database outputs unchanged — existing datacenters work identically with zero changes required.
+When no `databaseUser` hook is defined, no databaseUser nodes are created — workloads depend directly on database nodes and expressions resolve from the database's outputs.
 
 ## Local Development
 
