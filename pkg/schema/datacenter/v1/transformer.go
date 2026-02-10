@@ -208,6 +208,7 @@ func (t *Transformer) transformEnvironment(env *EnvironmentBlockV1) internal.Int
 	ie.Hooks.DockerBuild = t.transformHooks(env.DockerBuildHooks)
 	ie.Hooks.Observability = t.transformHooks(env.ObservabilityHooks)
 	ie.Hooks.Port = t.transformHooks(env.PortHooks)
+	ie.Hooks.NetworkPolicy = t.transformHooks(env.NetworkPolicyHooks)
 
 	return ie
 }
@@ -431,8 +432,10 @@ func (t *Transformer) validateHookOutputs(hooks *internal.InternalHooks) []error
 		"cronjob":       hooks.Cronjob,
 		"secret":        hooks.Secret,
 		"dockerBuild":   hooks.DockerBuild,
-		"observability": hooks.Observability,
-		"port":          hooks.Port,
+		"observability":  hooks.Observability,
+		"port":           hooks.Port,
+		"databaseUser":   hooks.DatabaseUser,
+		"networkPolicy":  hooks.NetworkPolicy,
 	}
 
 	for hookType, hookList := range hookMap {

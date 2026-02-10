@@ -98,6 +98,7 @@ type InternalHooks struct {
 	DockerBuild       []InternalHook
 	Observability     []InternalHook
 	Port              []InternalHook
+	NetworkPolicy     []InternalHook
 }
 
 // InternalHook represents a resource hook.

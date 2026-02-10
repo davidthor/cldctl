@@ -21,8 +21,10 @@ const (
 	NodeTypeSecret        NodeType = "secret"
 	NodeTypeDockerBuild   NodeType = "dockerBuild"
 	NodeTypeTask          NodeType = "task"
-	NodeTypeObservability NodeType = "observability"
-	NodeTypePort          NodeType = "port"
+	NodeTypeObservability  NodeType = "observability"
+	NodeTypePort           NodeType = "port"
+	NodeTypeDatabaseUser   NodeType = "databaseUser"
+	NodeTypeNetworkPolicy  NodeType = "networkPolicy"
 )
 
 // NodeInstance holds instance context for per-instance nodes in progressive delivery.

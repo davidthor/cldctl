@@ -102,6 +102,7 @@ type Hooks interface {
 	DockerBuild() []Hook
 	Observability() []Hook
 	Port() []Hook
+	NetworkPolicy() []Hook
 }
 
 // Hook represents a resource hook.

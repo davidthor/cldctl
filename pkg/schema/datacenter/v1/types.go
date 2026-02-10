@@ -82,6 +82,7 @@ type EnvironmentBlockV1 struct {
 	DockerBuildHooks       []HookBlockV1   `hcl:"dockerBuild,block"`
 	ObservabilityHooks     []HookBlockV1   `hcl:"observability,block"`
 	PortHooks              []HookBlockV1   `hcl:"port,block"`
+	NetworkPolicyHooks     []HookBlockV1   `hcl:"networkPolicy,block"`
 	Remain                 hcl.Body        `hcl:",remain"`
 }
 
