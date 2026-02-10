@@ -544,7 +544,7 @@ func buildPortsArray(inspectPorts map[string]int) []interface{} {
 		containerPort := 0
 		parts := strings.SplitN(portProto, "/", 2)
 		if len(parts) > 0 {
-			fmt.Sscanf(parts[0], "%d", &containerPort)
+			_, _ = fmt.Sscanf(parts[0], "%d", &containerPort)
 		}
 		result = append(result, map[string]interface{}{
 			"container": containerPort,
