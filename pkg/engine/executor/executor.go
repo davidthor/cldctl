@@ -554,6 +554,22 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 		return e.executePortAllocation(ctx, change, envState)
 	}
 
+	// databaseUser nodes: if no hooks defined, pass through parent database outputs
+	if change.Node.Type == graph.NodeTypeDatabaseUser {
+		hooks := e.getHooksForType(graph.NodeTypeDatabaseUser)
+		if len(hooks) == 0 {
+			return e.executeDatabaseUserPassthrough(ctx, change, envState)
+		}
+	}
+
+	// networkPolicy nodes: if no hooks defined, complete with no outputs (no-op)
+	if change.Node.Type == graph.NodeTypeNetworkPolicy {
+		hooks := e.getHooksForType(graph.NodeTypeNetworkPolicy)
+		if len(hooks) == 0 {
+			return e.executeNetworkPolicyNoop(ctx, change, envState)
+		}
+	}
+
 	// Lock for state initialization
 	e.stateMu.Lock()
 
@@ -973,10 +989,12 @@ var requiredHookOutputs = map[graph.NodeType][]string{
 	graph.NodeTypeRoute:         {"url", "host", "port"},
 	graph.NodeTypeTask:          {"id", "status"},
 	graph.NodeTypeObservability: {"endpoint", "protocol"},
+	graph.NodeTypeDatabaseUser: {"host", "port", "url"},
 	// database: username and password are optional (not all engines require
 	// credentials, e.g., Redis).
 	// encryptionKey: outputs vary by algorithm (RSA vs symmetric) — validated separately if needed.
 	// port: hook is optional (engine has built-in fallback), so no required outputs here.
+	// networkPolicy: no outputs (fire-and-forget leaf node).
 }
 
 // validateHookOutputs checks that the hook outputs contain all required keys
@@ -1134,6 +1152,10 @@ func (e *Executor) getHooksForType(nodeType graph.NodeType) []datacenter.Hook {
 		return hooks.Observability()
 	case graph.NodeTypePort:
 		return hooks.Port()
+	case graph.NodeTypeDatabaseUser:
+		return hooks.DatabaseUser()
+	case graph.NodeTypeNetworkPolicy:
+		return hooks.NetworkPolicy()
 	default:
 		return nil
 	}
@@ -1963,6 +1985,100 @@ func (e *Executor) executePortAllocation(ctx context.Context, change *planner.Re
 	return result
 }
 
+// executeDatabaseUserPassthrough handles databaseUser nodes when no hooks are defined.
+// It copies the parent database node's outputs so that consumers receive the same
+// connection credentials. This is the zero-config default — existing datacenters
+// work identically without defining a databaseUser hook.
+func (e *Executor) executeDatabaseUserPassthrough(ctx context.Context, change *planner.ResourceChange, envState *types.EnvironmentState) *NodeResult {
+	result := &NodeResult{
+		NodeID: change.Node.ID,
+		Action: change.Action,
+	}
+
+	// Find the parent database node from the graph
+	outputs := make(map[string]interface{})
+	if e.graph != nil {
+		dbName, _ := change.Node.Inputs["database"].(string)
+		if dbName != "" {
+			dbNodeID := fmt.Sprintf("%s/%s/%s", change.Node.Component, graph.NodeTypeDatabase, dbName)
+			dbNode := e.graph.GetNode(dbNodeID)
+			if dbNode != nil && dbNode.Outputs != nil {
+				// Pass through all database outputs
+				for k, v := range dbNode.Outputs {
+					outputs[k] = v
+				}
+			}
+		}
+	}
+
+	// Save to state
+	e.stateMu.Lock()
+	if envState.Components == nil {
+		envState.Components = make(map[string]*types.ComponentState)
+	}
+	compState := envState.Components[change.Node.Component]
+	if compState == nil {
+		compState = e.newComponentState(change.Node.Component)
+		envState.Components[change.Node.Component] = compState
+	}
+	resMap := e.getResourceMap(compState, change.Node)
+	resMap[resourceKey(change.Node)] = &types.ResourceState{
+		Component: change.Node.Component,
+		Name:      change.Node.Name,
+		Type:      string(change.Node.Type),
+		Status:    types.ResourceStatusReady,
+		Inputs:    change.Node.Inputs,
+		Outputs:   outputs,
+		UpdatedAt: time.Now(),
+	}
+	e.saveStateLocked(envState)
+	e.stateMu.Unlock()
+
+	result.Success = true
+	result.Outputs = outputs
+	return result
+}
+
+// executeNetworkPolicyNoop handles networkPolicy nodes when no hooks are defined.
+// It completes the node immediately with no outputs. NetworkPolicy nodes are
+// fire-and-forget leaf nodes — datacenter authors opt-in to enforcement by
+// defining a networkPolicy hook.
+func (e *Executor) executeNetworkPolicyNoop(ctx context.Context, change *planner.ResourceChange, envState *types.EnvironmentState) *NodeResult {
+	result := &NodeResult{
+		NodeID: change.Node.ID,
+		Action: change.Action,
+	}
+
+	outputs := make(map[string]interface{})
+
+	// Save to state
+	e.stateMu.Lock()
+	if envState.Components == nil {
+		envState.Components = make(map[string]*types.ComponentState)
+	}
+	compState := envState.Components[change.Node.Component]
+	if compState == nil {
+		compState = e.newComponentState(change.Node.Component)
+		envState.Components[change.Node.Component] = compState
+	}
+	resMap := e.getResourceMap(compState, change.Node)
+	resMap[resourceKey(change.Node)] = &types.ResourceState{
+		Component: change.Node.Component,
+		Name:      change.Node.Name,
+		Type:      string(change.Node.Type),
+		Status:    types.ResourceStatusReady,
+		Inputs:    change.Node.Inputs,
+		Outputs:   outputs,
+		UpdatedAt: time.Now(),
+	}
+	e.saveStateLocked(envState)
+	e.stateMu.Unlock()
+
+	result.Success = true
+	result.Outputs = outputs
+	return result
+}
+
 // stablePortForNode produces a deterministic port from env/component/port names.
 // Uses the same hashCode helper already used for database port offsets.
 func stablePortForNode(envName, componentName, portName string) int {
@@ -2051,10 +2167,20 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 				if len(parts) < 3 {
 					return debugUnresolved("malformed databases expression (expected databases.<name>.<output>)")
 				}
-				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeDatabase, parts[1])
-				depNode, ok := e.graph.Nodes[nodeID]
-				if !ok || depNode.Outputs == nil {
-					return debugUnresolved(fmt.Sprintf("database %q not found or has no outputs", parts[1]))
+				dbName := parts[1]
+
+				// Try to resolve through the interposed databaseUser node first.
+				// The consumer's name is used to form the databaseUser ID: {dbName}--{consumerName}
+				dbUserNodeID := fmt.Sprintf("%s/%s/%s--%s", node.Component, graph.NodeTypeDatabaseUser, dbName, node.Name)
+				depNode, ok := e.graph.Nodes[dbUserNodeID]
+				if !ok || depNode == nil || depNode.Outputs == nil {
+					// Fallback to the database node directly (for non-workload consumers or
+					// when databaseUser interposition doesn't apply)
+					dbNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeDatabase, dbName)
+					depNode, ok = e.graph.Nodes[dbNodeID]
+					if !ok || depNode.Outputs == nil {
+						return debugUnresolved(fmt.Sprintf("database %q not found or has no outputs", dbName))
+					}
 				}
 				// Handle read/write sub-objects: databases.<name>.read.<prop> / databases.<name>.write.<prop>
 				if (parts[2] == "read" || parts[2] == "write") && len(parts) >= 4 {
@@ -2069,12 +2195,12 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 					if val, ok := depNode.Outputs[parts[3]]; ok {
 						return fmt.Sprintf("%v", val)
 					}
-					return debugUnresolved(fmt.Sprintf("database %q has no output %s.%s", parts[1], parts[2], parts[3]))
+					return debugUnresolved(fmt.Sprintf("database %q has no output %s.%s", dbName, parts[2], parts[3]))
 				}
 				if val, ok := depNode.Outputs[parts[2]]; ok {
 					return fmt.Sprintf("%v", val)
 				}
-				return debugUnresolved(fmt.Sprintf("database %q has no output %q", parts[1], parts[2]))
+				return debugUnresolved(fmt.Sprintf("database %q has no output %q", dbName, parts[2]))
 
 			case "services":
 				if len(parts) < 3 {
