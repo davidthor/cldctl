@@ -346,8 +346,9 @@ func TestMergeDatacenters_AllHookTypes(t *testing.T) {
 				Cronjob:       []internal.InternalHook{childHook},
 				Secret:        []internal.InternalHook{childHook},
 				DockerBuild:   []internal.InternalHook{childHook},
-				Observability: []internal.InternalHook{childHook},
-				Port:          []internal.InternalHook{childHook},
+				Observability:  []internal.InternalHook{childHook},
+				Port:           []internal.InternalHook{childHook},
+				NetworkPolicy:  []internal.InternalHook{childHook},
 			},
 		},
 	}
@@ -367,8 +368,9 @@ func TestMergeDatacenters_AllHookTypes(t *testing.T) {
 				Cronjob:       []internal.InternalHook{parentHook},
 				Secret:        []internal.InternalHook{parentHook},
 				DockerBuild:   []internal.InternalHook{parentHook},
-				Observability: []internal.InternalHook{parentHook},
-				Port:          []internal.InternalHook{parentHook},
+				Observability:  []internal.InternalHook{parentHook},
+				Port:           []internal.InternalHook{parentHook},
+				NetworkPolicy:  []internal.InternalHook{parentHook},
 			},
 		},
 	}
@@ -392,6 +394,7 @@ func TestMergeDatacenters_AllHookTypes(t *testing.T) {
 	assert.Len(t, h.DockerBuild, 2)
 	assert.Len(t, h.Observability, 2)
 	assert.Len(t, h.Port, 2)
+	assert.Len(t, h.NetworkPolicy, 2)
 
 	// Verify child is first for all types
 	assert.Equal(t, "child", h.Database[0].When)

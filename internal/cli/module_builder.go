@@ -119,6 +119,7 @@ func collectAllModules(dc datacenter.Datacenter, dcPath string) map[string]modul
 		collectHookModules(env.Hooks().Secret(), modules, dcPath)
 		collectHookModules(env.Hooks().DockerBuild(), modules, dcPath)
 		collectHookModules(env.Hooks().Observability(), modules, dcPath)
+		collectHookModules(env.Hooks().NetworkPolicy(), modules, dcPath)
 	}
 
 	return modules

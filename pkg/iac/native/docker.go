@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -139,6 +140,27 @@ func (d *DockerClient) RunContainer(ctx context.Context, opts ContainerOptions) 
 		ExposedPorts: exposedPorts,
 	}
 
+	// Apply healthcheck to container config if provided
+	if opts.Healthcheck != nil && len(opts.Healthcheck.Command) > 0 {
+		hc := &container.HealthConfig{
+			Test: append([]string{"CMD-SHELL"}, strings.Join(opts.Healthcheck.Command, " ")),
+		}
+		if opts.Healthcheck.Interval != "" {
+			if d, err := time.ParseDuration(opts.Healthcheck.Interval); err == nil {
+				hc.Interval = d
+			}
+		}
+		if opts.Healthcheck.Timeout != "" {
+			if d, err := time.ParseDuration(opts.Healthcheck.Timeout); err == nil {
+				hc.Timeout = d
+			}
+		}
+		if opts.Healthcheck.Retries > 0 {
+			hc.Retries = opts.Healthcheck.Retries
+		}
+		config.Healthcheck = hc
+	}
+
 	hostConfig := &container.HostConfig{
 		PortBindings: portBindings,
 		Binds:        binds,
@@ -174,7 +196,82 @@ func (d *DockerClient) RunContainer(ctx context.Context, opts ContainerOptions) 
 		return "", fmt.Errorf("failed to start container: %w", err)
 	}
 
+	// If a healthcheck is configured, wait for the container to become healthy
+	// before returning. This ensures downstream resources (e.g. databaseUser)
+	// can safely connect to the service inside the container.
+	if opts.Healthcheck != nil && len(opts.Healthcheck.Command) > 0 {
+		if err := d.waitForHealthy(ctx, resp.ID, opts.Healthcheck); err != nil {
+			_ = d.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+			return "", fmt.Errorf("container failed health check: %w", err)
+		}
+	}
+
 	return resp.ID, nil
+}
+
+// waitForHealthy polls the container's health status until it reports "healthy",
+// using the healthcheck's interval and retries to determine the polling cadence
+// and timeout. If the container exits or the context is cancelled, it returns
+// an error immediately.
+func (d *DockerClient) waitForHealthy(ctx context.Context, containerID string, hc *Healthcheck) error {
+	interval := 2 * time.Second
+	if hc.Interval != "" {
+		if parsed, err := time.ParseDuration(hc.Interval); err == nil {
+			interval = parsed
+		}
+	}
+
+	retries := 30 // default max retries
+	if hc.Retries > 0 {
+		retries = hc.Retries
+	}
+
+	// Give the container a brief moment to start up before the first check
+	select {
+	case <-time.After(500 * time.Millisecond):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	for i := 0; i < retries; i++ {
+		info, err := d.client.ContainerInspect(ctx, containerID)
+		if err != nil {
+			return fmt.Errorf("failed to inspect container: %w", err)
+		}
+
+		// If the container has stopped, there's no point waiting
+		if info.State != nil && !info.State.Running {
+			return fmt.Errorf("container exited while waiting for health check (exit code %d)", info.State.ExitCode)
+		}
+
+		// Check the health status reported by Docker
+		if info.State != nil && info.State.Health != nil {
+			switch info.State.Health.Status {
+			case "healthy":
+				return nil
+			case "unhealthy":
+				// Gather the last log entry for a useful error message
+				lastLog := ""
+				if len(info.State.Health.Log) > 0 {
+					last := info.State.Health.Log[len(info.State.Health.Log)-1]
+					lastLog = strings.TrimSpace(last.Output)
+				}
+				if lastLog != "" {
+					return fmt.Errorf("container reported unhealthy: %s", lastLog)
+				}
+				return fmt.Errorf("container reported unhealthy")
+			}
+			// "starting" — keep waiting
+		}
+
+		select {
+		case <-time.After(interval):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	return fmt.Errorf("timed out after %d health check attempts", retries)
 }
 
 // InspectContainer returns information about a container.
@@ -278,7 +375,7 @@ func (d *DockerClient) ContainerMatchesConfig(ctx context.Context, containerID s
 		}
 	}
 
-	// Note: We don't check ports here because auto-assigned ports would always differ.
+	// Note: We don't check ports here because dynamically-assigned host ports would always differ.
 	// The image and env check is usually sufficient for local development.
 
 	return true

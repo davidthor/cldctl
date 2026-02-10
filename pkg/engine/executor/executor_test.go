@@ -3,6 +3,8 @@ package executor
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -1048,5 +1050,215 @@ func TestBuildDependencyError(t *testing.T) {
 	// Should use singular "dependency" for single failure
 	if !contains(errStr, "dependency") {
 		t.Errorf("error should contain 'dependency': %s", errStr)
+	}
+}
+
+func TestHasMatchingHook_DatabaseUser_Matches(t *testing.T) {
+	// Datacenter has a postgres-only databaseUser hook.
+	// Write to a temp file so the HCL evaluator can read source text for
+	// complex when expressions (exprToString needs file-based loading).
+	dcContent := []byte(`
+environment {
+  databaseUser {
+    when = node.inputs.dbEngine == "postgres"
+    module "pg-user" {
+      plugin = "native"
+      build  = "./modules/pg-user"
+      inputs = {
+        name = "test"
+      }
+    }
+    outputs = {
+      host = "localhost"
+      port = "5432"
+      url  = "postgres://localhost/test"
+    }
+  }
+}
+`)
+	tmpFile := filepath.Join(t.TempDir(), "datacenter.dc")
+	if err := os.WriteFile(tmpFile, dcContent, 0644); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+
+	loader := datacenter.NewLoader()
+	dc, err := loader.Load(tmpFile)
+	if err != nil {
+		t.Fatalf("failed to load datacenter: %v", err)
+	}
+
+	exec := &Executor{
+		options: Options{Datacenter: dc},
+	}
+
+	// Postgres databaseUser should match
+	pgNode := graph.NewNode(graph.NodeTypeDatabaseUser, "my-app", "main--api")
+	pgNode.SetInput("dbEngine", "postgres")
+	if !exec.hasMatchingHook(pgNode) {
+		t.Error("expected postgres databaseUser to match hook")
+	}
+
+	// Redis databaseUser should NOT match (no redis hook defined)
+	redisNode := graph.NewNode(graph.NodeTypeDatabaseUser, "my-app", "cache--api")
+	redisNode.SetInput("dbEngine", "redis")
+	if exec.hasMatchingHook(redisNode) {
+		t.Error("expected redis databaseUser to NOT match any hook")
+	}
+}
+
+func TestExecuteDatabaseUserPassthrough(t *testing.T) {
+	sm := newMockStateManager()
+	registry := newTestRegistry()
+
+	g := graph.NewGraph("test-env", "test-dc")
+
+	// Create database node with outputs
+	dbNode := graph.NewNode(graph.NodeTypeDatabase, "my-app", "cache")
+	dbNode.Outputs = map[string]interface{}{
+		"host": "redis.example.com",
+		"port": "6379",
+		"url":  "redis://redis.example.com:6379",
+	}
+	dbNode.State = graph.NodeStateCompleted
+	_ = g.AddNode(dbNode)
+
+	// Create databaseUser node (Redis — no matching hook)
+	dbUserNode := graph.NewNode(graph.NodeTypeDatabaseUser, "my-app", "cache--api")
+	dbUserNode.SetInput("database", "cache")
+	dbUserNode.SetInput("type", "redis:^7")
+	dbUserNode.SetInput("consumer", "api")
+	dbUserNode.SetInput("consumerType", "deployment")
+	dbUserNode.SetInput("component", "my-app")
+	dbUserNode.AddDependency(dbNode.ID)
+	dbNode.AddDependent(dbUserNode.ID)
+	_ = g.AddNode(dbUserNode)
+
+	exec := NewExecutor(sm, registry, Options{Parallelism: 1, StopOnError: true})
+	exec.graph = g
+	exec.datacenterName = "test-dc"
+
+	envState := &types.EnvironmentState{
+		Name:       "test-env",
+		Components: make(map[string]*types.ComponentState),
+	}
+
+	change := &planner.ResourceChange{
+		Node:   dbUserNode,
+		Action: planner.ActionCreate,
+	}
+
+	result := exec.executeDatabaseUserPassthrough(context.Background(), change, envState)
+
+	if !result.Success {
+		t.Fatal("expected databaseUser pass-through to succeed")
+	}
+
+	// Outputs should match the parent database outputs
+	if result.Outputs["host"] != "redis.example.com" {
+		t.Errorf("expected host 'redis.example.com', got %v", result.Outputs["host"])
+	}
+	if result.Outputs["url"] != "redis://redis.example.com:6379" {
+		t.Errorf("expected correct url, got %v", result.Outputs["url"])
+	}
+
+	// State should be saved
+	compState := envState.Components["my-app"]
+	if compState == nil {
+		t.Fatal("expected component state to be created")
+	}
+	resState := compState.Resources["databaseUser.cache--api"]
+	if resState == nil {
+		t.Fatal("expected resource state to be created")
+	}
+	if resState.Status != types.ResourceStatusReady {
+		t.Errorf("expected status Ready, got %s", resState.Status)
+	}
+}
+
+func TestGetHooksForType_DatabaseUser(t *testing.T) {
+	// Load a datacenter with a databaseUser hook
+	loader := datacenter.NewLoader()
+	dc, err := loader.LoadFromBytes([]byte(`
+environment {
+  databaseUser {
+    module "db-user" {
+      plugin = "native"
+      build  = "./modules/db-user"
+      inputs = {
+        name = "test"
+      }
+    }
+    outputs = {
+      host = "localhost"
+      port = "5432"
+      url  = "postgres://localhost/test"
+    }
+  }
+}
+`), "test.dc")
+	if err != nil {
+		t.Fatalf("failed to load datacenter: %v", err)
+	}
+
+	exec := &Executor{
+		options: Options{Datacenter: dc},
+	}
+
+	hooks := exec.getHooksForType(graph.NodeTypeDatabaseUser)
+	if len(hooks) != 1 {
+		t.Errorf("expected 1 databaseUser hook, got %d", len(hooks))
+	}
+}
+
+func TestGetHooksForType_NetworkPolicy(t *testing.T) {
+	// Load a datacenter with a networkPolicy hook
+	loader := datacenter.NewLoader()
+	dc, err := loader.LoadFromBytes([]byte(`
+environment {
+  networkPolicy {
+    module "net-policy" {
+      plugin = "native"
+      build  = "./modules/net-policy"
+      inputs = {
+        from = "test"
+      }
+    }
+  }
+}
+`), "test.dc")
+	if err != nil {
+		t.Fatalf("failed to load datacenter: %v", err)
+	}
+
+	exec := &Executor{
+		options: Options{Datacenter: dc},
+	}
+
+	hooks := exec.getHooksForType(graph.NodeTypeNetworkPolicy)
+	if len(hooks) != 1 {
+		t.Errorf("expected 1 networkPolicy hook, got %d", len(hooks))
+	}
+}
+
+func TestGetHooksForType_NoHooksDefined(t *testing.T) {
+	// Load a datacenter with no hooks
+	loader := datacenter.NewLoader()
+	dc, err := loader.LoadFromBytes([]byte("environment {}"), "test.dc")
+	if err != nil {
+		t.Fatalf("failed to load datacenter: %v", err)
+	}
+
+	exec := &Executor{
+		options: Options{Datacenter: dc},
+	}
+
+	dbUserHooks := exec.getHooksForType(graph.NodeTypeDatabaseUser)
+	if len(dbUserHooks) != 0 {
+		t.Errorf("expected 0 databaseUser hooks, got %d", len(dbUserHooks))
+	}
+
+	npHooks := exec.getHooksForType(graph.NodeTypeNetworkPolicy)
+	if len(npHooks) != 0 {
+		t.Errorf("expected 0 networkPolicy hooks, got %d", len(npHooks))
 	}
 }

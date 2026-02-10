@@ -437,6 +437,7 @@ func (p *Parser) parseEnvironment(block *hcl.Block) (*EnvironmentBlockV1, hcl.Di
 			{Type: "dockerBuild"},
 			{Type: "observability"},
 			{Type: "port"},
+			{Type: "networkPolicy"},
 		},
 	}
 
@@ -473,6 +474,7 @@ func (p *Parser) parseEnvironment(block *hcl.Block) (*EnvironmentBlockV1, hcl.Di
 		"dockerBuild":       &env.DockerBuildHooks,
 		"observability":     &env.ObservabilityHooks,
 		"port":              &env.PortHooks,
+		"networkPolicy":     &env.NetworkPolicyHooks,
 	}
 
 	for hookType, hooks := range hookTypes {

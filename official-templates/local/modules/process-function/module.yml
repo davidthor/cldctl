@@ -22,6 +22,10 @@ inputs:
   framework:
     type: string
     description: Framework hint (nextjs, react, node, python, etc.)
+  port:
+    type: number
+    default: 0
+    description: Port the application listens on (resolved from service/port resources). When > 0, used for readiness check. When 0, readiness check is skipped.
 
 resources:
   process:
@@ -31,11 +35,11 @@ resources:
       working_dir: "${inputs.context}"
       # Determine command based on framework if not specified
       command: "${coalesce(inputs.command, framework_command(inputs.framework))}"
-      environment: "${merge(inputs.environment, { PORT: 'auto' })}"
-      # Readiness check for the dev server
+      environment: "${inputs.environment}"
+      # Readiness check against the service port (skipped when port is 0)
       readiness:
         type: http
-        endpoint: "http://localhost:${self.environment.PORT}"
+        endpoint: "http://localhost:${inputs.port}"
         interval: 2s
         timeout: 120s  # Dev servers can take a while to start
       # Graceful shutdown
@@ -48,8 +52,8 @@ outputs:
     value: "${resources.process.pid}"
     description: Process ID
   port:
-    value: "${resources.process.environment.PORT}"
-    description: Assigned port
+    value: "${inputs.port}"
+    description: Service port
   endpoint:
-    value: "http://localhost:${resources.process.environment.PORT}"
+    value: "http://localhost:${inputs.port}"
     description: Local endpoint URL

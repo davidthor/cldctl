@@ -21,8 +21,10 @@ const (
 	NodeTypeSecret        NodeType = "secret"
 	NodeTypeDockerBuild   NodeType = "dockerBuild"
 	NodeTypeTask          NodeType = "task"
-	NodeTypeObservability NodeType = "observability"
-	NodeTypePort          NodeType = "port"
+	NodeTypeObservability  NodeType = "observability"
+	NodeTypePort           NodeType = "port"
+	NodeTypeDatabaseUser   NodeType = "databaseUser"
+	NodeTypeNetworkPolicy  NodeType = "networkPolicy"
 )
 
 // NodeInstance holds instance context for per-instance nodes in progressive delivery.
@@ -119,6 +121,17 @@ func NewInstanceNode(nodeType NodeType, component, instanceName string, weight i
 func IsPerInstanceType(t NodeType) bool {
 	switch t {
 	case NodeTypeDeployment, NodeTypeFunction, NodeTypeService, NodeTypeCronjob, NodeTypeDockerBuild, NodeTypePort:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsWorkloadType returns true if the given node type is a workload that can consume
+// databases and services (deployment, function, cronjob, task).
+func IsWorkloadType(t NodeType) bool {
+	switch t {
+	case NodeTypeDeployment, NodeTypeFunction, NodeTypeCronjob, NodeTypeTask:
 		return true
 	default:
 		return false

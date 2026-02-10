@@ -18,7 +18,6 @@ A lightweight datacenter for local development using cldctl's native plugin. Opt
 |----------|------|---------|-------------|
 | `network_name` | string | `cldctl-local` | Docker network for container communication |
 | `host` | string | `localhost` | Host for service URLs |
-| `base_port` | number | `8000` | Base port for auto-assignment |
 
 ## Hooks Supported
 

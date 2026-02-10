@@ -31,6 +31,18 @@ type Resource struct {
 	Type       string                 `yaml:"type"`
 	Properties map[string]interface{} `yaml:"properties"`
 	DependsOn  []string               `yaml:"depends_on"`
+	Destroy    *DestroyCommand        `yaml:"destroy,omitempty"`
+}
+
+// DestroyCommand defines a command to run when a resource is destroyed.
+// The command is resolved at apply time (expressions like ${inputs.*} are
+// evaluated) and persisted in state so it's available during teardown.
+type DestroyCommand struct {
+	Command     []interface{}          `yaml:"command"`               // Command to execute
+	Image       string                 `yaml:"image,omitempty"`       // If set, run in a Docker container
+	Network     string                 `yaml:"network,omitempty"`     // Docker network (when using image)
+	WorkDir     string                 `yaml:"working_dir,omitempty"` // Working directory
+	Environment map[string]interface{} `yaml:"environment,omitempty"` // Environment variables
 }
 
 // OutputDef defines a module output.
@@ -54,6 +66,19 @@ type ResourceState struct {
 	ID         interface{}            `json:"id"`
 	Properties map[string]interface{} `json:"properties"`
 	Outputs    map[string]interface{} `json:"outputs"`
+	// DestroyCmd holds a resolved destroy command to execute during teardown.
+	// Nil if the resource has no custom destroy behaviour.
+	DestroyCmd *ResolvedDestroyCommand `json:"destroy_cmd,omitempty"`
+}
+
+// ResolvedDestroyCommand is the state-persisted form of a destroy command
+// with all expressions already evaluated.
+type ResolvedDestroyCommand struct {
+	Command     []string          `json:"command"`
+	Image       string            `json:"image,omitempty"`
+	Network     string            `json:"network,omitempty"`
+	WorkDir     string            `json:"working_dir,omitempty"`
+	Environment map[string]string `json:"environment,omitempty"`
 }
 
 // LoadModule loads a native module definition from a path.

@@ -15,12 +15,6 @@ variable "host" {
   default     = "localhost"
 }
 
-variable "base_port" {
-  description = "Base port for auto-assigned ports"
-  type        = number
-  default     = 8000
-}
-
 # Create a shared Docker network for all environments
 module "network" {
   plugin = "native"
@@ -398,19 +392,30 @@ environment {
   }
 
   
-  # Database user hook - grant additional database user access
+  # Database user hook - grant per-consumer credentials for PostgreSQL databases.
+  # Creates a dedicated role on the existing postgres container for each consumer
+  # (deployment, function, cronjob) that references the database. Redis uses
+  # shared AUTH and doesn't support per-user credentials, so this hook only
+  # matches postgres. Non-matching databases fall back to pass-through
+  # (consumers inherit the parent database's connection details).
   databaseUser {
+    when = element(split(":", node.inputs.type), 0) == "postgres"
+
     module "db_user" {
       plugin = "native"
-      build  = "./modules/docker-postgres"
+      build  = "./modules/docker-postgres-user"
       inputs = {
-        name     = "${environment.name}-${node.component}-${node.name}"
-        database = node.inputs.database
-        network  = variable.network_name
+        # The parent postgres container follows the naming convention from
+        # the database hook above: ${environment}-${component}-${dbName}
+        container_name = "${environment.name}-${node.component}-${node.inputs.database}"
+        database       = node.inputs.database
+        username       = node.inputs.consumer
       }
     }
     
     outputs = {
+      host     = module.db_user.host
+      port     = module.db_user.port
       username = module.db_user.username
       password = module.db_user.password
       url      = module.db_user.url

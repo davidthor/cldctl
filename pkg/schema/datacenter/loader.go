@@ -69,6 +69,9 @@ func (l *versionDetectingLoader) LoadFromBytes(data []byte, sourcePath string) (
 		return nil, errors.New(errors.ErrCodeParse, fmt.Sprintf("unsupported schema version: %s", version))
 	}
 
+	// Provide source bytes so the transformer can extract expression text
+	// even when the source was loaded from memory (not from a file on disk).
+	transformer.WithSourceBytes(data)
 	internalDC, err := transformer.Transform(schema)
 	if err != nil {
 		return nil, errors.Wrap(errors.ErrCodeParse, "failed to transform schema", err)
@@ -235,6 +238,7 @@ func (h *hooksWrapper) Secret() []Hook            { return wrapHooks(h.h.Secret)
 func (h *hooksWrapper) DockerBuild() []Hook       { return wrapHooks(h.h.DockerBuild) }
 func (h *hooksWrapper) Observability() []Hook     { return wrapHooks(h.h.Observability) }
 func (h *hooksWrapper) Port() []Hook              { return wrapHooks(h.h.Port) }
+func (h *hooksWrapper) NetworkPolicy() []Hook     { return wrapHooks(h.h.NetworkPolicy) }
 
 func wrapHooks(hooks []internal.InternalHook) []Hook {
 	result := make([]Hook, len(hooks))

@@ -217,7 +217,7 @@ resources:
         POSTGRES_PASSWORD: "${random_password(16)}"
       ports:
         - container: 5432
-          host: auto
+          host: 0
 
 outputs:
   port:

@@ -74,7 +74,7 @@ resources:
         POSTGRES_PASSWORD: "${random_password(16)}"
       ports:
         - container: 5432
-          host: auto
+          host: 0
 
 outputs:
   port:
@@ -202,7 +202,7 @@ environment {
 | MySQL | `mysql:8` Docker container |
 | Redis | `redis:7-alpine` Docker container |
 
-Databases get auto-assigned ports and persist data in Docker volumes.
+Databases get dynamically-assigned host ports and persist data in Docker volumes.
 
 ### Database Users
 
@@ -222,7 +222,7 @@ resources:
       command: ["server", "/data"]
       ports:
         - container: 9000
-          host: auto
+          host: 0
 ```
 
 ### Secrets
@@ -241,13 +241,13 @@ resources:
     properties:
       working_dir: "${inputs.context}"
       command: "${framework_command(inputs.framework)}"
-      environment:
-        PORT: auto
+      environment: "${inputs.environment}"
       readiness:
         type: http
-        endpoint: "http://localhost:${self.environment.PORT}"
+        endpoint: "http://localhost:${inputs.port}"
 ```
 
+The readiness check uses the port resolved from the component's service/port resources.
 File changes are immediately reflected - no container rebuilds needed.
 
 ## Usage
@@ -357,7 +357,7 @@ resources:
       name: "${inputs.name}"
       ports:
         - container: 27017
-          host: auto
+          host: 0
       volumes:
         - name: "${inputs.name}-data"
           path: /data/db

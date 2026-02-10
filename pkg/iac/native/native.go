@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -286,6 +285,62 @@ func (p *Plugin) resolveInputs(defs map[string]InputDef, provided map[string]int
 	return resolved, nil
 }
 
+// resolveDestroyCommand evaluates all expressions in a DestroyCommand using the
+// current eval context and returns a fully resolved command ready for state persistence.
+func resolveDestroyCommand(dc *DestroyCommand, evalCtx *EvalContext) (*ResolvedDestroyCommand, error) {
+	resolved := &ResolvedDestroyCommand{}
+
+	// Resolve command list
+	for _, item := range dc.Command {
+		val, err := resolveValue(item, evalCtx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve destroy command element: %w", err)
+		}
+		resolved.Command = append(resolved.Command, fmt.Sprintf("%v", val))
+	}
+
+	// Resolve image
+	if dc.Image != "" {
+		val, err := evaluateExpression(dc.Image, evalCtx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve destroy image: %w", err)
+		}
+		resolved.Image = fmt.Sprintf("%v", val)
+	}
+
+	// Resolve network
+	if dc.Network != "" {
+		val, err := evaluateExpression(dc.Network, evalCtx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve destroy network: %w", err)
+		}
+		resolved.Network = fmt.Sprintf("%v", val)
+	}
+
+	// Resolve working directory
+	if dc.WorkDir != "" {
+		val, err := evaluateExpression(dc.WorkDir, evalCtx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve destroy working_dir: %w", err)
+		}
+		resolved.WorkDir = fmt.Sprintf("%v", val)
+	}
+
+	// Resolve environment variables
+	if len(dc.Environment) > 0 {
+		resolved.Environment = make(map[string]string, len(dc.Environment))
+		for k, v := range dc.Environment {
+			val, err := resolveValue(v, evalCtx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve destroy env var %s: %w", k, err)
+			}
+			resolved.Environment[k] = fmt.Sprintf("%v", val)
+		}
+	}
+
+	return resolved, nil
+}
+
 func (p *Plugin) applyResource(ctx context.Context, name string, resource Resource, evalCtx *EvalContext, existing *State, stdout, stderr io.Writer) (*ResourceState, error) {
 	// Resolve properties with expressions
 	props, err := resolveProperties(resource.Properties, evalCtx)
@@ -293,25 +348,50 @@ func (p *Plugin) applyResource(ctx context.Context, name string, resource Resour
 		return nil, fmt.Errorf("failed to resolve properties: %w", err)
 	}
 
+	var rs *ResourceState
 	switch resource.Type {
 	case "docker:container":
-		return p.applyDockerContainer(ctx, name, props, existing)
+		rs, err = p.applyDockerContainer(ctx, name, props, existing)
 	case "docker:network":
-		return p.applyDockerNetwork(ctx, name, props, existing)
+		rs, err = p.applyDockerNetwork(ctx, name, props, existing)
 	case "docker:volume":
-		return p.applyDockerVolume(ctx, name, props, existing)
+		rs, err = p.applyDockerVolume(ctx, name, props, existing)
 	case "docker:build":
-		return p.applyDockerBuild(ctx, name, props, existing, stdout, stderr)
+		rs, err = p.applyDockerBuild(ctx, name, props, existing, stdout, stderr)
 	case "process":
-		return p.applyProcess(ctx, name, props, existing, stdout, stderr)
+		rs, err = p.applyProcess(ctx, name, props, existing, stdout, stderr)
 	case "exec":
-		return p.applyExec(ctx, name, props)
+		rs, err = p.applyExec(ctx, name, props)
 	default:
 		return nil, fmt.Errorf("unknown resource type: %s", resource.Type)
 	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	// If the resource defines a destroy command, resolve its expressions now
+	// and persist in state so it's available during teardown.
+	if resource.Destroy != nil {
+		resolved, resolveErr := resolveDestroyCommand(resource.Destroy, evalCtx)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("failed to resolve destroy command: %w", resolveErr)
+		}
+		rs.DestroyCmd = resolved
+	}
+
+	return rs, nil
 }
 
 func (p *Plugin) destroyResource(ctx context.Context, name string, rs *ResourceState) error {
+	// If the resource has a custom destroy command, execute it instead of
+	// (or in addition to) the default teardown for this resource type.
+	if rs.DestroyCmd != nil && len(rs.DestroyCmd.Command) > 0 {
+		if err := p.executeDestroyCommand(ctx, rs.DestroyCmd); err != nil {
+			return fmt.Errorf("destroy command failed: %w", err)
+		}
+	}
+
 	switch rs.Type {
 	case "docker:container":
 		if id, ok := rs.ID.(string); ok {
@@ -336,9 +416,27 @@ func (p *Plugin) destroyResource(ctx context.Context, name string, rs *ResourceS
 			return p.process.StopProcess(processName, 10*time.Second)
 		}
 	case "exec":
-		return nil // One-time execution, nothing to destroy
+		return nil // One-time execution, nothing to destroy (unless destroy cmd handled above)
 	}
 	return nil
+}
+
+// executeDestroyCommand runs a resolved destroy command, either on the host
+// or inside a Docker container (when Image is set).
+func (p *Plugin) executeDestroyCommand(ctx context.Context, cmd *ResolvedDestroyCommand) error {
+	if cmd.Image != "" {
+		_, err := p.docker.RunOneShot(ctx, RunOneShotOptions{
+			Image:       cmd.Image,
+			Command:     cmd.Command,
+			Environment: cmd.Environment,
+			Network:     cmd.Network,
+			WorkDir:     cmd.WorkDir,
+		})
+		return err
+	}
+
+	_, err := p.docker.Exec(ctx, cmd.Command, cmd.WorkDir, cmd.Environment)
+	return err
 }
 
 func (p *Plugin) rollback(ctx context.Context, state *State) {
@@ -364,6 +462,7 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 		Restart:     getString(props, "restart"),
 		LogDriver:   getString(props, "log_driver"),
 		LogOptions:  getStringMap(props, "log_options"),
+		Healthcheck: getHealthcheck(props, "healthcheck"),
 	}
 
 	// Check if container already exists and is running (from state)
@@ -399,7 +498,7 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 						Properties: props,
 						Outputs: map[string]interface{}{
 							"container_id": existingID,
-							"ports":        info.Ports,
+							"ports":        buildPortsArray(info.Ports),
 						},
 					}, nil
 				}
@@ -428,11 +527,31 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 		Properties: props,
 		Outputs: map[string]interface{}{
 			"container_id": containerID,
-			"ports":        info.Ports,
+			"ports":        buildPortsArray(info.Ports),
 			"environment":  opts.Environment, // Include environment for dependent resources
 			"name":         containerName,
 		},
 	}, nil
+}
+
+// buildPortsArray converts Docker inspect ports (map like {"80/tcp": 55123}) into an array
+// format [{"container": 80, "host": 55123}] that expressions like ${resources.proxy.ports[0].host}
+// can navigate.
+func buildPortsArray(inspectPorts map[string]int) []interface{} {
+	var result []interface{}
+	for portProto, hostPort := range inspectPorts {
+		// Parse container port from "80/tcp" format
+		containerPort := 0
+		parts := strings.SplitN(portProto, "/", 2)
+		if len(parts) > 0 {
+			_, _ = fmt.Sscanf(parts[0], "%d", &containerPort)
+		}
+		result = append(result, map[string]interface{}{
+			"container": containerPort,
+			"host":      hostPort,
+		})
+	}
+	return result
 }
 
 func (p *Plugin) applyDockerNetwork(ctx context.Context, name string, props map[string]interface{}, existing *State) (*ResourceState, error) {
@@ -663,24 +782,11 @@ func (p *Plugin) applyProcess(ctx context.Context, name string, props map[string
 	// Get environment variables first
 	env := getStringMap(props, "environment")
 
-	// Pre-assign PORT if set to "auto" (legacy compatibility)
-	if portVal, ok := env["PORT"]; ok && portVal == "auto" {
-		port, err := findAvailablePort()
-		if err != nil {
-			return nil, fmt.Errorf("failed to find available port: %w", err)
-		}
-		env["PORT"] = strconv.Itoa(port)
-	}
-
 	// Parse readiness check if present
 	// Skip readiness check entirely when the endpoint port is 0 (no service exposed)
 	var readiness *ReadinessCheck
 	if readinessMap, ok := props["readiness"].(map[string]interface{}); ok {
 		endpoint := getString(readinessMap, "endpoint")
-		// Substitute PORT if present (legacy compatibility)
-		if port, ok := env["PORT"]; ok {
-			endpoint = strings.ReplaceAll(endpoint, "${self.environment.PORT}", port)
-		}
 
 		// Guard: skip readiness check if the endpoint references port 0
 		if strings.Contains(endpoint, "localhost:0") || strings.Contains(endpoint, "localhost:0/") {
@@ -780,13 +886,13 @@ func getPortMappings(props map[string]interface{}, key string) []PortMapping {
 					if container, ok := m["container"].(int); ok {
 						pm.ContainerPort = container
 					}
-					if host, ok := m["host"]; ok {
-						if hostInt, ok := host.(int); ok {
-							pm.HostPort = hostInt
-						} else if hostStr, ok := host.(string); ok && hostStr == "auto" {
-							pm.HostPort = 0 // Auto-assign
-						}
+				if host, ok := m["host"]; ok {
+					if hostInt, ok := host.(int); ok {
+						pm.HostPort = hostInt
+					} else if hostFloat, ok := host.(float64); ok {
+						pm.HostPort = int(hostFloat)
 					}
+				}
 					result = append(result, pm)
 				}
 			}
@@ -814,6 +920,37 @@ func getVolumeMounts(props map[string]interface{}, key string) []VolumeMount {
 		}
 	}
 	return nil
+}
+
+func getHealthcheck(props map[string]interface{}, key string) *Healthcheck {
+	v, ok := props[key]
+	if !ok || v == nil {
+		return nil
+	}
+	m, ok := v.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	hc := &Healthcheck{
+		Command:  getStringSlice(m, "command"),
+		Interval: getString(m, "interval"),
+		Timeout:  getString(m, "timeout"),
+	}
+
+	if retries, ok := m["retries"]; ok {
+		switch r := retries.(type) {
+		case int:
+			hc.Retries = r
+		case float64:
+			hc.Retries = int(r)
+		}
+	}
+
+	if len(hc.Command) == 0 {
+		return nil
+	}
+	return hc
 }
 
 func getString2(m map[string]interface{}, key string) string {

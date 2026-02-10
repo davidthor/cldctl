@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -48,7 +49,6 @@ func newUpCmd() *cobra.Command {
 		variables     []string
 		varFile       string
 		detach        bool
-		noOpen        bool
 		port          int
 	)
 
@@ -273,9 +273,10 @@ Examples:
 
 			if err != nil {
 				cleanupEnvironment()
-				// Return a short message — full error details were already
-				// printed by PrintFinalSummary above.
-				return fmt.Errorf("deployment failed")
+				// Include the underlying error so the user can diagnose failures
+				// that occur before the execution plan is created (e.g., component
+				// loading or datacenter config errors).
+				return fmt.Errorf("deployment failed: %w", err)
 			}
 
 			if !result.Success {
@@ -293,16 +294,19 @@ Examples:
 			routeURLs := collectRouteURLs(ctx, mgr, dc, envName, componentsMap, loadedComps, port)
 
 			if len(routeURLs) > 0 {
-				var primaryURL string
-				for _, url := range routeURLs {
-					primaryURL = url
-					break
+				// Sort route names for deterministic output
+				routeNames := make([]string, 0, len(routeURLs))
+				for name := range routeURLs {
+					routeNames = append(routeNames, name)
 				}
-				fmt.Printf("\nApplication running at %s\n", primaryURL)
+				sort.Strings(routeNames)
 
-				if !noOpen && !detach {
-					openBrowserURL(primaryURL)
+				fmt.Println()
+				fmt.Println("Routes:")
+				for _, name := range routeNames {
+					fmt.Printf("  %-40s %s\n", name, routeURLs[name])
 				}
+
 			}
 
 			if detach {
@@ -370,7 +374,6 @@ Examples:
 	cmd.Flags().StringArrayVar(&variables, "var", nil, "Set a variable (key=value)")
 	cmd.Flags().StringVar(&varFile, "var-file", "", "Load variables from a file")
 	cmd.Flags().BoolVar(&detach, "detach", false, "Run in background (don't watch for changes)")
-	cmd.Flags().BoolVar(&noOpen, "no-open", false, "Don't open browser to application URL")
 	cmd.Flags().IntVar(&port, "port", 0, "Override the port for local access (default: 8080)")
 
 	return cmd
@@ -700,9 +703,6 @@ func collectRouteURLs(
 
 	return routeURLs
 }
-
-// openBrowser is an alias for the shared openBrowserURL utility (in browser.go)
-// kept here for backward compatibility within this file. New code should use openBrowserURL directly.
 
 // Helper functions for up command
 

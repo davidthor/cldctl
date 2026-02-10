@@ -11,6 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+
 	"github.com/davidthor/cldctl/pkg/engine/executor"
 	"github.com/davidthor/cldctl/pkg/engine/planner"
 	"github.com/davidthor/cldctl/pkg/graph"
@@ -19,6 +22,7 @@ import (
 	"github.com/davidthor/cldctl/pkg/registry"
 	"github.com/davidthor/cldctl/pkg/schema/component"
 	"github.com/davidthor/cldctl/pkg/schema/datacenter"
+	dcv1 "github.com/davidthor/cldctl/pkg/schema/datacenter/v1"
 	"github.com/davidthor/cldctl/pkg/schema/environment"
 	"github.com/davidthor/cldctl/pkg/state"
 	"github.com/davidthor/cldctl/pkg/state/types"
@@ -244,6 +248,22 @@ func (e *Engine) Deploy(ctx context.Context, opts DeployOptions) (*DeployResult,
 
 	// Build dependency graph
 	builder := graph.NewBuilder(opts.Environment, opts.Datacenter)
+
+	// Configure implicit graph nodes. Instead of simply toggling them on/off
+	// based on hook presence, we create filters that evaluate each hook's
+	// when-clause against the prospective node's inputs. This ensures nodes
+	// are only created when a matching hook exists — e.g. a databaseUser hook
+	// scoped to postgres won't generate nodes for redis databases.
+	if env := dc.Environment(); env != nil {
+		if hooks := env.Hooks(); hooks != nil {
+			if dbUserHooks := hooks.DatabaseUser(); len(dbUserHooks) > 0 {
+				builder.SetDatabaseUserFilter(makeHookFilter(dbUserHooks))
+			}
+			if npHooks := hooks.NetworkPolicy(); len(npHooks) > 0 {
+				builder.SetNetworkPolicyFilter(makeHookFilter(npHooks))
+			}
+		}
+	}
 
 	for compName, compPath := range opts.Components {
 		// Load component
@@ -1986,4 +2006,36 @@ func (e *Engine) ResolveDependencies(ctx context.Context, opts DeployOptions) ([
 		result = append(result, *resolved[name])
 	}
 	return result, nil
+}
+
+// makeHookFilter creates an ImplicitNodeFilter from a set of datacenter hooks.
+// The filter evaluates each hook's when-clause against the prospective node's
+// inputs and returns true if at least one hook would match. This allows the
+// graph builder to skip implicit nodes that no hook could handle (e.g. a redis
+// database when the databaseUser hook is scoped to postgres only).
+func makeHookFilter(hooks []datacenter.Hook) graph.ImplicitNodeFilter {
+	return func(inputs map[string]interface{}) bool {
+		for _, hook := range hooks {
+			when := hook.When()
+			if when == "" {
+				return true // catch-all hook — always matches
+			}
+
+			// Parse the when expression as HCL and evaluate against inputs.
+			expr, diags := hclsyntax.ParseExpression([]byte(when), "when.hcl", hcl.Pos{Line: 1, Column: 1})
+			if diags.HasErrors() {
+				// If we can't parse the expression, conservatively assume it matches
+				// so we don't accidentally drop nodes that should exist.
+				return true
+			}
+
+			eval := dcv1.NewEvaluator()
+			eval.SetNodeContext("", "", "", inputs)
+
+			if result, err := eval.EvaluateWhen(expr); err == nil && result {
+				return true
+			}
+		}
+		return false
+	}
 }

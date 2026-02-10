@@ -316,6 +316,12 @@ In this example:
 - Read traffic goes to the old database, write traffic goes through a dual-write proxy
 - Each module's IaC state is tracked separately for independent lifecycle management
 
+## Relationship to databaseUser Hook
+
+When a datacenter defines a `databaseUser` hook and a workload references a database, cldctl automatically injects a `databaseUser` node between the database and the consumer. This allows datacenter authors to provision per-consumer database users with scoped permissions via the [databaseUser hook](/datacenters/database-user-hook).
+
+When no `databaseUser` hook is defined, no databaseUser nodes are created — workloads depend directly on database nodes and expressions resolve from the database's outputs.
+
 ## Local Development
 
 For local development datacenters, you might use Docker-based databases:

@@ -27,7 +27,7 @@ func TestUpCmd_Flags(t *testing.T) {
 	cmd := newUpCmd()
 
 	// Check flags including required datacenter
-	flags := []string{"component", "environment", "datacenter", "name", "var", "var-file", "detach", "no-open", "port"}
+	flags := []string{"component", "environment", "datacenter", "name", "var", "var-file", "detach", "port"}
 	for _, flagName := range flags {
 		if cmd.Flags().Lookup(flagName) == nil {
 			t.Errorf("expected --%s flag", flagName)
@@ -73,11 +73,6 @@ func TestUpCmd_FlagDefaults(t *testing.T) {
 	detachFlag := cmd.Flags().Lookup("detach")
 	if detachFlag.DefValue != "false" {
 		t.Errorf("expected detach default 'false', got '%s'", detachFlag.DefValue)
-	}
-
-	noOpenFlag := cmd.Flags().Lookup("no-open")
-	if noOpenFlag.DefValue != "false" {
-		t.Errorf("expected no-open default 'false', got '%s'", noOpenFlag.DefValue)
 	}
 
 	portFlag := cmd.Flags().Lookup("port")

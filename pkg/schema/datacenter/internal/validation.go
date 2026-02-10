@@ -28,6 +28,7 @@ var RequiredHookOutputs = map[string][]string{
 	"route":         {"url", "host", "port"},
 	"task":          {"id", "status"},
 	"observability": {"endpoint", "protocol"},
+	"databaseUser":  {"url"},
 }
 
 // ValidateHookOutputs checks that every non-error hook for the given type

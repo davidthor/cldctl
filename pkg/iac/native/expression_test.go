@@ -674,3 +674,108 @@ func TestLookupPort_TooFewArgs(t *testing.T) {
 		t.Fatal("expected error for too few arguments")
 	}
 }
+
+func TestParseMapLiteral_SinglePair(t *testing.T) {
+	result, err := parseMapLiteral("{ HOST: 'localhost' }")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result["HOST"] != "localhost" {
+		t.Errorf("expected HOST='localhost', got %v", result["HOST"])
+	}
+}
+
+func TestParseMapLiteral_MultiplePairs(t *testing.T) {
+	result, err := parseMapLiteral("{ HOST: 'localhost', PORT: '8080' }")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result["HOST"] != "localhost" {
+		t.Errorf("expected HOST='localhost', got %v", result["HOST"])
+	}
+	if result["PORT"] != "8080" {
+		t.Errorf("expected PORT='8080', got %v", result["PORT"])
+	}
+}
+
+func TestParseMapLiteral_DoubleQuotes(t *testing.T) {
+	result, err := parseMapLiteral(`{ KEY: "value" }`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result["KEY"] != "value" {
+		t.Errorf("expected KEY='value', got %v", result["KEY"])
+	}
+}
+
+func TestParseMapLiteral_UnquotedValues(t *testing.T) {
+	result, err := parseMapLiteral("{ PORT: 3000 }")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result["PORT"] != "3000" {
+		t.Errorf("expected PORT='3000', got %v", result["PORT"])
+	}
+}
+
+func TestParseMapLiteral_Empty(t *testing.T) {
+	result, err := parseMapLiteral("{}")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected empty map, got %v", result)
+	}
+}
+
+func TestMerge_WithMapLiteral(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs: map[string]interface{}{
+			"environment": map[string]interface{}{
+				"DATABASE_URL": "postgres://localhost/db",
+			},
+		},
+		Resources: map[string]*ResourceState{},
+	}
+
+	result, err := evaluateExpression("${merge(inputs.environment, { NODE_ENV: 'development' })}", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map, got %T", result)
+	}
+
+	if resultMap["DATABASE_URL"] != "postgres://localhost/db" {
+		t.Errorf("expected DATABASE_URL preserved, got %v", resultMap["DATABASE_URL"])
+	}
+	if resultMap["NODE_ENV"] != "development" {
+		t.Errorf("expected NODE_ENV='development', got %v", resultMap["NODE_ENV"])
+	}
+}
+
+func TestResolveReference_MapLiteral(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs:    map[string]interface{}{},
+		Resources: map[string]*ResourceState{},
+	}
+
+	result, err := resolveReference("{ KEY: 'value', OTHER: 'test' }", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map, got %T", result)
+	}
+
+	if resultMap["KEY"] != "value" {
+		t.Errorf("expected KEY='value', got %v", resultMap["KEY"])
+	}
+	if resultMap["OTHER"] != "test" {
+		t.Errorf("expected OTHER='test', got %v", resultMap["OTHER"])
+	}
+}
