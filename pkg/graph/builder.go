@@ -9,18 +9,26 @@ import (
 	"github.com/davidthor/cldctl/pkg/schema/component"
 )
 
+// ImplicitNodeFilter is a predicate that decides whether an implicit node should
+// be created for a given set of node inputs. The builder calls this before
+// creating each databaseUser or networkPolicy node. Returning true means "create
+// the node"; false means "skip it".
+type ImplicitNodeFilter func(inputs map[string]interface{}) bool
+
 // Builder constructs a dependency graph from component specifications.
 type Builder struct {
 	graph *Graph
 
-	// hasDatabaseUserHook indicates whether the datacenter defines at least one
-	// databaseUser hook. When false, no databaseUser nodes are generated and
-	// workloads depend directly on database nodes.
-	hasDatabaseUserHook bool
+	// databaseUserFilter, when non-nil, is called to decide whether a
+	// databaseUser node should be created for a specific database+consumer pair.
+	// The inputs map contains "type", "database", "consumer", etc.
+	// If nil, no databaseUser nodes are created.
+	databaseUserFilter ImplicitNodeFilter
 
-	// hasNetworkPolicyHook indicates whether the datacenter defines at least one
-	// networkPolicy hook. When false, no networkPolicy leaf nodes are generated.
-	hasNetworkPolicyHook bool
+	// networkPolicyFilter, when non-nil, is called to decide whether a
+	// networkPolicy node should be created for a specific workload+service pair.
+	// If nil, no networkPolicy nodes are created.
+	networkPolicyFilter ImplicitNodeFilter
 }
 
 // NewBuilder creates a new graph builder.
@@ -32,10 +40,31 @@ func NewBuilder(environment, datacenter string) *Builder {
 
 // EnableImplicitNodes configures which implicit node types the builder should
 // generate. Pass true for each hook type that the datacenter defines.
-// By default both are false, meaning no implicit nodes are created.
+// This is a convenience wrapper that creates pass-all filters when true.
+// For fine-grained control over which nodes are created, use
+// SetDatabaseUserFilter / SetNetworkPolicyFilter instead.
 func (b *Builder) EnableImplicitNodes(databaseUser, networkPolicy bool) {
-	b.hasDatabaseUserHook = databaseUser
-	b.hasNetworkPolicyHook = networkPolicy
+	if databaseUser {
+		b.databaseUserFilter = func(_ map[string]interface{}) bool { return true }
+	}
+	if networkPolicy {
+		b.networkPolicyFilter = func(_ map[string]interface{}) bool { return true }
+	}
+}
+
+// SetDatabaseUserFilter sets a filter that determines whether a databaseUser
+// implicit node should be created for a given database+consumer pair. The filter
+// receives the prospective node's inputs (including "type" from the database).
+// If the filter returns false, no node is created and the workload depends
+// directly on the database.
+func (b *Builder) SetDatabaseUserFilter(fn ImplicitNodeFilter) {
+	b.databaseUserFilter = fn
+}
+
+// SetNetworkPolicyFilter sets a filter that determines whether a networkPolicy
+// implicit node should be created for a given workload+service pair.
+func (b *Builder) SetNetworkPolicyFilter(fn ImplicitNodeFilter) {
+	b.networkPolicyFilter = fn
 }
 
 // AddComponent adds a component's resources to the graph.
@@ -445,9 +474,11 @@ func (b *Builder) addEnvDependencies(componentName string, node *Node, value str
 		}
 
 		// Implicit databaseUser interposition: when a workload references a database
-		// and the datacenter defines a databaseUser hook, inject a databaseUser node
-		// between the database and the consumer. Otherwise, depend on the database directly.
-		if depNode.Type == NodeTypeDatabase && IsWorkloadType(node.Type) && b.hasDatabaseUserHook {
+		// and the datacenter defines a matching databaseUser hook, inject a
+		// databaseUser node between the database and the consumer. The filter
+		// checks hook when-clauses against the database type so that non-matching
+		// databases (e.g. redis when only a postgres hook exists) connect directly.
+		if depNode.Type == NodeTypeDatabase && IsWorkloadType(node.Type) && b.shouldCreateDatabaseUser(depNode, node) {
 			dbUserNode := b.getOrCreateDatabaseUserNode(componentName, depNode, node)
 			// Consumer depends on databaseUser instead of database directly
 			node.AddDependency(dbUserNode.ID)
@@ -469,9 +500,9 @@ func (b *Builder) addEnvDependencies(componentName string, node *Node, value str
 		depNode.AddDependent(node.ID)
 
 		// Implicit networkPolicy creation: when a workload references a service
-		// and the datacenter defines a networkPolicy hook, create a networkPolicy
-		// leaf node capturing the from/to relationship.
-		if depNode.Type == NodeTypeService && IsWorkloadType(node.Type) && b.hasNetworkPolicyHook {
+		// and the datacenter defines a matching networkPolicy hook, create a
+		// networkPolicy leaf node capturing the from/to relationship.
+		if depNode.Type == NodeTypeService && IsWorkloadType(node.Type) && b.shouldCreateNetworkPolicy(node, depNode) {
 			b.getOrCreateNetworkPolicyNode(componentName, node, depNode)
 		}
 
@@ -488,10 +519,44 @@ func (b *Builder) addEnvDependencies(componentName string, node *Node, value str
 	}
 }
 
+// shouldCreateDatabaseUser checks whether a databaseUser implicit node should be
+// created for the given database→consumer pair. It builds the prospective node
+// inputs and passes them to the databaseUserFilter. Returns false when no filter
+// is set (no hooks) or when the filter rejects the inputs (no matching hook).
+func (b *Builder) shouldCreateDatabaseUser(dbNode, consumerNode *Node) bool {
+	if b.databaseUserFilter == nil {
+		return false
+	}
+	// Build the same inputs that getOrCreateDatabaseUserNode would set,
+	// so the filter can evaluate when-clauses against the database type.
+	inputs := map[string]interface{}{
+		"database":     dbNode.Name,
+		"type":         dbNode.Inputs["type"],
+		"consumer":     consumerNode.Name,
+		"consumerType": string(consumerNode.Type),
+	}
+	return b.databaseUserFilter(inputs)
+}
+
+// shouldCreateNetworkPolicy checks whether a networkPolicy implicit node should
+// be created for the given workload→service pair.
+func (b *Builder) shouldCreateNetworkPolicy(fromNode, toServiceNode *Node) bool {
+	if b.networkPolicyFilter == nil {
+		return false
+	}
+	inputs := map[string]interface{}{
+		"from":     fromNode.Name,
+		"fromType": string(fromNode.Type),
+		"to":       toServiceNode.Name,
+		"toType":   string(toServiceNode.Type),
+	}
+	return b.networkPolicyFilter(inputs)
+}
+
 // getOrCreateDatabaseUserNode returns (or creates) a databaseUser node for the given
 // database-consumer pair. The databaseUser node depends on the database. The datacenter's
 // databaseUser hook provisions per-consumer credentials for each node.
-// Only called when hasDatabaseUserHook is true.
+// Only called when shouldCreateDatabaseUser returns true.
 // Naming convention: {dbName}--{consumerName}
 func (b *Builder) getOrCreateDatabaseUserNode(componentName string, dbNode, consumerNode *Node) *Node {
 	dbUserName := dbNode.Name + "--" + consumerNode.Name
@@ -948,7 +1013,7 @@ func (b *Builder) addInstanceEnvDependencies(componentName, instanceName string,
 		}
 
 		// Implicit databaseUser interposition for multi-instance mode
-		if depNode.Type == NodeTypeDatabase && IsWorkloadType(node.Type) && b.hasDatabaseUserHook {
+		if depNode.Type == NodeTypeDatabase && IsWorkloadType(node.Type) && b.shouldCreateDatabaseUser(depNode, node) {
 			dbUserNode := b.getOrCreateDatabaseUserNode(componentName, depNode, node)
 			node.AddDependency(dbUserNode.ID)
 			dbUserNode.AddDependent(node.ID)
@@ -967,7 +1032,7 @@ func (b *Builder) addInstanceEnvDependencies(componentName, instanceName string,
 		depNode.AddDependent(node.ID)
 
 		// Implicit networkPolicy creation for multi-instance mode
-		if depNode.Type == NodeTypeService && IsWorkloadType(node.Type) && b.hasNetworkPolicyHook {
+		if depNode.Type == NodeTypeService && IsWorkloadType(node.Type) && b.shouldCreateNetworkPolicy(node, depNode) {
 			b.getOrCreateNetworkPolicyNode(componentName, node, depNode)
 		}
 

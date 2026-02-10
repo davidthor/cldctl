@@ -12,11 +12,23 @@ import (
 )
 
 // Transformer converts v1 schema to internal representation.
-type Transformer struct{}
+type Transformer struct {
+	// sourceBytes holds the raw HCL source that was parsed, allowing
+	// exprToString to extract expression text using byte-offset ranges
+	// even when the source was loaded from memory (not from a file on disk).
+	sourceBytes []byte
+}
 
 // NewTransformer creates a new v1 transformer.
 func NewTransformer() *Transformer {
 	return &Transformer{}
+}
+
+// WithSourceBytes sets the raw source bytes for expression text extraction.
+// Call this before Transform() when the source was loaded from memory.
+func (t *Transformer) WithSourceBytes(data []byte) *Transformer {
+	t.sourceBytes = data
+	return t
 }
 
 // Transform converts a v1 schema to the internal representation.
@@ -117,7 +129,7 @@ func (t *Transformer) transformComponent(c ComponentBlockV1) internal.InternalDa
 				if keyDiags.HasErrors() {
 					continue
 				}
-				ic.Variables[key.AsString()] = exprToString(item.ValueExpr)
+				ic.Variables[key.AsString()] = exprToString(item.ValueExpr, t.sourceBytes)
 			}
 		}
 	}
@@ -158,7 +170,7 @@ func (t *Transformer) transformModule(m ModuleBlockV1) internal.InternalModule {
 				if keyDiags.HasErrors() {
 					continue
 				}
-				im.Inputs[key.AsString()] = exprToString(item.ValueExpr)
+				im.Inputs[key.AsString()] = exprToString(item.ValueExpr, t.sourceBytes)
 			}
 		} else if m.InputsEvaluated != nil {
 			// Fallback: use values that were evaluated during parsing with context
@@ -222,7 +234,7 @@ func (t *Transformer) transformHooks(hooks []HookBlockV1) []internal.InternalHoo
 		// references node.inputs which are only available at deploy time), fall
 		// back to the raw expression source text so the executor can evaluate it.
 		if when == "" && h.WhenExpr != nil {
-			when = exprToString(h.WhenExpr)
+			when = exprToString(h.WhenExpr, t.sourceBytes)
 		}
 
 		ih := internal.InternalHook{
@@ -274,20 +286,20 @@ func (t *Transformer) transformHooks(hooks []HookBlockV1) []internal.InternalHoo
 							if nkDiags.HasErrors() {
 								continue
 							}
-							nestedMap[nkVal.AsString()] = exprToString(ni.ValueExpr)
-						}
-						if len(nestedMap) > 0 {
-							ih.NestedOutputs[key] = nestedMap
-						}
-					} else {
-						ih.Outputs[key] = exprToString(item.ValueExpr)
+						nestedMap[nkVal.AsString()] = exprToString(ni.ValueExpr, t.sourceBytes)
+					}
+					if len(nestedMap) > 0 {
+						ih.NestedOutputs[key] = nestedMap
+					}
+				} else {
+					ih.Outputs[key] = exprToString(item.ValueExpr, t.sourceBytes)
 					}
 				}
 			}
 		} else if h.OutputsAttrs != nil {
 			// Block syntax: outputs { ... }
 			for name, attr := range h.OutputsAttrs {
-				ih.Outputs[name] = exprToString(attr.Expr)
+				ih.Outputs[name] = exprToString(attr.Expr, t.sourceBytes)
 			}
 		}
 
@@ -309,7 +321,7 @@ func (t *Transformer) transformHooks(hooks []HookBlockV1) []internal.InternalHoo
 						if keyDiags.HasErrors() {
 							continue
 						}
-						nested[key.AsString()] = exprToString(item.ValueExpr)
+						nested[key.AsString()] = exprToString(item.ValueExpr, t.sourceBytes)
 					}
 				}
 				if len(nested) > 0 {
@@ -327,15 +339,30 @@ func (t *Transformer) transformHooks(hooks []HookBlockV1) []internal.InternalHoo
 // exprToString converts an HCL expression to its string representation.
 // For simple literals it returns the evaluated value. For complex expressions
 // (e.g. module.postgres.url) it reads the original source text from the file.
-func exprToString(expr hcl.Expression) string {
+// An optional sourceBytes parameter allows extraction when the source was loaded
+// from memory (e.g. LoadFromBytes) and the file doesn't exist on disk.
+func exprToString(expr hcl.Expression, sourceBytes ...[]byte) string {
 	// Try to evaluate as a simple value first (covers literals)
 	val, diags := expr.Value(nil)
 	if !diags.HasErrors() {
 		return ctyValueToString(val)
 	}
 
-	// For complex expressions, read the original source text from the file
 	rng := expr.Range()
+
+	// Try in-memory source bytes first (available when loaded via LoadFromBytes)
+	if len(sourceBytes) > 0 && sourceBytes[0] != nil {
+		data := sourceBytes[0]
+		if rng.Start.Byte < len(data) && rng.End.Byte <= len(data) {
+			source := string(data[rng.Start.Byte:rng.End.Byte])
+			if len(source) >= 2 && source[0] == '"' && source[len(source)-1] == '"' {
+				source = source[1 : len(source)-1]
+			}
+			return source
+		}
+	}
+
+	// For complex expressions, read the original source text from the file
 	if rng.Filename != "" {
 		data, err := os.ReadFile(rng.Filename)
 		if err == nil && rng.Start.Byte < len(data) && rng.End.Byte <= len(data) {
@@ -350,8 +377,7 @@ func exprToString(expr hcl.Expression) string {
 		}
 	}
 
-	// Last resort: try to get source text from the expression's native range
-	// (works for in-memory parsed expressions using hclsyntax)
+	// Last resort
 	return "<expression>"
 }
 

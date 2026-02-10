@@ -1,6 +1,7 @@
 package native
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,7 +34,7 @@ resources:
       image: ${inputs.image}
       ports:
         - container: ${inputs.port}
-          host: auto
+          host: 0
 outputs:
   container_id:
     value: ${resources.container.outputs.container_id}
@@ -578,5 +579,332 @@ func TestResourceState_Struct(t *testing.T) {
 	}
 	if rs.Outputs["container_id"] != "container-id" {
 		t.Errorf("expected output container_id 'container-id', got %v", rs.Outputs["container_id"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Destroy command tests
+// ---------------------------------------------------------------------------
+
+func TestLoadModule_WithDestroyCommand(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "module-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	moduleContent := `
+plugin: native
+type: docker
+inputs:
+  container_name:
+    type: string
+    required: true
+  username:
+    type: string
+    required: true
+resources:
+  create_user:
+    type: exec
+    properties:
+      command:
+        - "docker"
+        - "exec"
+        - "${inputs.container_name}"
+        - "psql"
+        - "-c"
+        - "CREATE ROLE ${inputs.username}"
+    destroy:
+      command:
+        - "docker"
+        - "exec"
+        - "${inputs.container_name}"
+        - "psql"
+        - "-c"
+        - "DROP ROLE IF EXISTS ${inputs.username}"
+outputs:
+  username:
+    value: "${inputs.username}"
+`
+
+	moduleFile := filepath.Join(tmpDir, "module.yml")
+	if err := os.WriteFile(moduleFile, []byte(moduleContent), 0644); err != nil {
+		t.Fatalf("failed to write module file: %v", err)
+	}
+
+	module, err := LoadModule(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to load module: %v", err)
+	}
+
+	resource := module.Resources["create_user"]
+	if resource.Destroy == nil {
+		t.Fatal("expected destroy command to be parsed")
+	}
+	if len(resource.Destroy.Command) != 6 {
+		t.Errorf("expected 6 command elements, got %d", len(resource.Destroy.Command))
+	}
+}
+
+func TestLoadModule_WithDestroyCommandImageMode(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "module-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	moduleContent := `
+plugin: native
+type: docker
+inputs:
+  database:
+    type: string
+    required: true
+resources:
+  setup:
+    type: exec
+    properties:
+      command: ["echo", "setup"]
+    destroy:
+      image: "postgres:16"
+      network: "my-network"
+      command: ["psql", "-c", "DROP DATABASE ${inputs.database}"]
+      environment:
+        PGHOST: "db-container"
+outputs: {}
+`
+
+	moduleFile := filepath.Join(tmpDir, "module.yml")
+	if err := os.WriteFile(moduleFile, []byte(moduleContent), 0644); err != nil {
+		t.Fatalf("failed to write module file: %v", err)
+	}
+
+	module, err := LoadModule(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to load module: %v", err)
+	}
+
+	resource := module.Resources["setup"]
+	if resource.Destroy == nil {
+		t.Fatal("expected destroy command to be parsed")
+	}
+	if resource.Destroy.Image != "postgres:16" {
+		t.Errorf("expected destroy image 'postgres:16', got %q", resource.Destroy.Image)
+	}
+	if resource.Destroy.Network != "my-network" {
+		t.Errorf("expected destroy network 'my-network', got %q", resource.Destroy.Network)
+	}
+}
+
+func TestLoadModule_WithoutDestroyCommand(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "module-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	moduleContent := `
+plugin: native
+type: docker
+resources:
+  run:
+    type: exec
+    properties:
+      command: ["echo", "hello"]
+outputs: {}
+`
+
+	moduleFile := filepath.Join(tmpDir, "module.yml")
+	if err := os.WriteFile(moduleFile, []byte(moduleContent), 0644); err != nil {
+		t.Fatalf("failed to write module file: %v", err)
+	}
+
+	module, err := LoadModule(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to load module: %v", err)
+	}
+
+	resource := module.Resources["run"]
+	if resource.Destroy != nil {
+		t.Error("expected destroy to be nil when not specified")
+	}
+}
+
+func TestResolveDestroyCommand(t *testing.T) {
+	evalCtx := &EvalContext{
+		Inputs: map[string]interface{}{
+			"container_name": "my-postgres",
+			"database":       "mydb",
+			"username":       "api",
+		},
+		Resources: map[string]*ResourceState{},
+	}
+
+	dc := &DestroyCommand{
+		Command: []interface{}{
+			"docker", "exec", "${inputs.container_name}",
+			"psql", "-d", "${inputs.database}",
+			"-c", "DROP ROLE IF EXISTS \"${inputs.username}\"",
+		},
+	}
+
+	resolved, err := resolveDestroyCommand(dc, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := []string{
+		"docker", "exec", "my-postgres",
+		"psql", "-d", "mydb",
+		"-c", `DROP ROLE IF EXISTS "api"`,
+	}
+
+	if len(resolved.Command) != len(expected) {
+		t.Fatalf("expected %d command elements, got %d", len(expected), len(resolved.Command))
+	}
+	for i, exp := range expected {
+		if resolved.Command[i] != exp {
+			t.Errorf("command[%d]: expected %q, got %q", i, exp, resolved.Command[i])
+		}
+	}
+}
+
+func TestResolveDestroyCommand_WithImageAndEnv(t *testing.T) {
+	evalCtx := &EvalContext{
+		Inputs: map[string]interface{}{
+			"host":     "db-server",
+			"database": "mydb",
+		},
+		Resources: map[string]*ResourceState{},
+	}
+
+	dc := &DestroyCommand{
+		Command: []interface{}{"psql", "-c", "DROP DATABASE ${inputs.database}"},
+		Image:   "postgres:${inputs.host}",
+		Network: "my-network",
+		Environment: map[string]interface{}{
+			"PGHOST": "${inputs.host}",
+		},
+	}
+
+	resolved, err := resolveDestroyCommand(dc, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if resolved.Image != "postgres:db-server" {
+		t.Errorf("expected image 'postgres:db-server', got %q", resolved.Image)
+	}
+	if resolved.Network != "my-network" {
+		t.Errorf("expected network 'my-network', got %q", resolved.Network)
+	}
+	if resolved.Environment["PGHOST"] != "db-server" {
+		t.Errorf("expected env PGHOST 'db-server', got %q", resolved.Environment["PGHOST"])
+	}
+	if resolved.Command[2] != "DROP DATABASE mydb" {
+		t.Errorf("expected resolved command, got %q", resolved.Command[2])
+	}
+}
+
+func TestResolvedDestroyCommand_JSONRoundTrip(t *testing.T) {
+	// Verify the destroy command survives JSON serialization (state persistence)
+	original := &ResourceState{
+		Type:       "exec",
+		ID:         "create_user",
+		Properties: map[string]interface{}{"command": []string{"echo", "hello"}},
+		Outputs:    map[string]interface{}{"output": "done"},
+		DestroyCmd: &ResolvedDestroyCommand{
+			Command:     []string{"docker", "exec", "pg", "psql", "-c", "DROP ROLE api"},
+			Environment: map[string]string{"PGUSER": "admin"},
+		},
+	}
+
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var restored ResourceState
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if restored.DestroyCmd == nil {
+		t.Fatal("expected destroy_cmd to survive JSON round-trip")
+	}
+	if len(restored.DestroyCmd.Command) != 6 {
+		t.Errorf("expected 6 command elements, got %d", len(restored.DestroyCmd.Command))
+	}
+	if restored.DestroyCmd.Command[5] != "DROP ROLE api" {
+		t.Errorf("expected last command element 'DROP ROLE api', got %q", restored.DestroyCmd.Command[5])
+	}
+	if restored.DestroyCmd.Environment["PGUSER"] != "admin" {
+		t.Errorf("expected env PGUSER 'admin', got %q", restored.DestroyCmd.Environment["PGUSER"])
+	}
+}
+
+func TestResolvedDestroyCommand_NilSurvivesRoundTrip(t *testing.T) {
+	// Verify that nil DestroyCmd is omitted from JSON (omitempty)
+	original := &ResourceState{
+		Type:       "exec",
+		ID:         "run",
+		Properties: map[string]interface{}{},
+		Outputs:    map[string]interface{}{},
+	}
+
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	// Verify "destroy_cmd" key is not present
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if _, exists := raw["destroy_cmd"]; exists {
+		t.Error("expected destroy_cmd to be omitted from JSON when nil")
+	}
+}
+
+func TestDestroyCommand_Struct(t *testing.T) {
+	dc := DestroyCommand{
+		Command:     []interface{}{"docker", "exec", "pg", "psql", "-c", "DROP ROLE test"},
+		Image:       "postgres:16",
+		Network:     "my-network",
+		WorkDir:     "/tmp",
+		Environment: map[string]interface{}{"PGUSER": "admin"},
+	}
+
+	if len(dc.Command) != 6 {
+		t.Errorf("expected 6 command elements, got %d", len(dc.Command))
+	}
+	if dc.Image != "postgres:16" {
+		t.Errorf("expected image 'postgres:16', got %q", dc.Image)
+	}
+	if dc.Network != "my-network" {
+		t.Errorf("expected network 'my-network', got %q", dc.Network)
+	}
+	if dc.WorkDir != "/tmp" {
+		t.Errorf("expected working_dir '/tmp', got %q", dc.WorkDir)
+	}
+}
+
+func TestResource_WithDestroy(t *testing.T) {
+	resource := Resource{
+		Type: "exec",
+		Properties: map[string]interface{}{
+			"command": []string{"echo", "create"},
+		},
+		Destroy: &DestroyCommand{
+			Command: []interface{}{"echo", "destroy"},
+		},
+	}
+
+	if resource.Destroy == nil {
+		t.Fatal("expected destroy to be set")
+	}
+	if len(resource.Destroy.Command) != 2 {
+		t.Errorf("expected 2 destroy command elements, got %d", len(resource.Destroy.Command))
 	}
 }

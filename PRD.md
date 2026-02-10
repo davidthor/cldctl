@@ -978,7 +978,7 @@ resources:
         POSTGRES_PASSWORD: "${random_password(16)}"
       ports:
         - container: 5432
-          host: auto
+          host: 0
       volumes:
         - name: "${inputs.name}-data"
           path: /var/lib/postgresql/data
@@ -1023,7 +1023,7 @@ outputs:
 | `command`     | list   | Override container command                            |
 | `entrypoint`  | list   | Override container entrypoint                         |
 | `environment` | map    | Environment variables                                 |
-| `ports`       | list   | Port mappings with `container` and `host` (or `auto`) |
+| `ports`       | list   | Port mappings with `container` and `host` (0 = let Docker assign) |
 | `volumes`     | list   | Volume mounts with `name`/`source` and `path`         |
 | `network`     | string | Docker network to join                                |
 | `healthcheck` | object | Health check configuration                            |

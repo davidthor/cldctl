@@ -131,7 +131,7 @@ func TestGetPortMappings(t *testing.T) {
 			},
 			map[string]interface{}{
 				"container": 443,
-				"host":      "auto",
+				"host":      0, // 0 = let Docker assign a host port
 			},
 		},
 		"empty":    []interface{}{},
@@ -449,6 +449,119 @@ func TestContainerInfo_Struct(t *testing.T) {
 	}
 	if info.Ports["80/tcp"] != 8080 {
 		t.Errorf("expected port 80/tcp=8080, got %d", info.Ports["80/tcp"])
+	}
+}
+
+func TestGetHealthcheck_FromProps(t *testing.T) {
+	tests := []struct {
+		name    string
+		props   map[string]interface{}
+		wantNil bool
+		check   func(t *testing.T, hc *Healthcheck)
+	}{
+		{
+			name:    "nil when key missing",
+			props:   map[string]interface{}{},
+			wantNil: true,
+		},
+		{
+			name:    "nil when value is nil",
+			props:   map[string]interface{}{"healthcheck": nil},
+			wantNil: true,
+		},
+		{
+			name:    "nil when value is wrong type",
+			props:   map[string]interface{}{"healthcheck": "not-a-map"},
+			wantNil: true,
+		},
+		{
+			name: "nil when command is empty",
+			props: map[string]interface{}{
+				"healthcheck": map[string]interface{}{
+					"interval": "5s",
+					"retries":  3,
+				},
+			},
+			wantNil: true,
+		},
+		{
+			name: "parses full healthcheck",
+			props: map[string]interface{}{
+				"healthcheck": map[string]interface{}{
+					"command":  []interface{}{"pg_isready", "-U", "app"},
+					"interval": "5s",
+					"timeout":  "3s",
+					"retries":  10,
+				},
+			},
+			check: func(t *testing.T, hc *Healthcheck) {
+				if len(hc.Command) != 3 || hc.Command[0] != "pg_isready" {
+					t.Errorf("expected command [pg_isready -U app], got %v", hc.Command)
+				}
+				if hc.Interval != "5s" {
+					t.Errorf("expected interval '5s', got %q", hc.Interval)
+				}
+				if hc.Timeout != "3s" {
+					t.Errorf("expected timeout '3s', got %q", hc.Timeout)
+				}
+				if hc.Retries != 10 {
+					t.Errorf("expected retries 10, got %d", hc.Retries)
+				}
+			},
+		},
+		{
+			name: "parses retries as float64 (JSON deserialization)",
+			props: map[string]interface{}{
+				"healthcheck": map[string]interface{}{
+					"command":  []interface{}{"curl", "-f", "http://localhost/"},
+					"interval": "10s",
+					"timeout":  "5s",
+					"retries":  float64(5),
+				},
+			},
+			check: func(t *testing.T, hc *Healthcheck) {
+				if hc.Retries != 5 {
+					t.Errorf("expected retries 5 (from float64), got %d", hc.Retries)
+				}
+			},
+		},
+		{
+			name: "parses minimal healthcheck (command only)",
+			props: map[string]interface{}{
+				"healthcheck": map[string]interface{}{
+					"command": []interface{}{"true"},
+				},
+			},
+			check: func(t *testing.T, hc *Healthcheck) {
+				if len(hc.Command) != 1 || hc.Command[0] != "true" {
+					t.Errorf("expected command [true], got %v", hc.Command)
+				}
+				if hc.Interval != "" {
+					t.Errorf("expected empty interval, got %q", hc.Interval)
+				}
+				if hc.Retries != 0 {
+					t.Errorf("expected retries 0, got %d", hc.Retries)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hc := getHealthcheck(tt.props, "healthcheck")
+			if tt.wantNil {
+				if hc != nil {
+					t.Errorf("expected nil healthcheck, got %+v", hc)
+				}
+				return
+			}
+			if hc == nil {
+				t.Fatal("expected non-nil healthcheck")
+			}
+			if tt.check != nil {
+				tt.check(t, hc)
+			}
+		})
 	}
 }
 

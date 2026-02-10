@@ -676,12 +676,12 @@ func TestLookupPort_TooFewArgs(t *testing.T) {
 }
 
 func TestParseMapLiteral_SinglePair(t *testing.T) {
-	result, err := parseMapLiteral("{ PORT: 'auto' }")
+	result, err := parseMapLiteral("{ HOST: 'localhost' }")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result["PORT"] != "auto" {
-		t.Errorf("expected PORT='auto', got %v", result["PORT"])
+	if result["HOST"] != "localhost" {
+		t.Errorf("expected HOST='localhost', got %v", result["HOST"])
 	}
 }
 
@@ -738,7 +738,7 @@ func TestMerge_WithMapLiteral(t *testing.T) {
 		Resources: map[string]*ResourceState{},
 	}
 
-	result, err := evaluateExpression("${merge(inputs.environment, { PORT: 'auto' })}", ctx)
+	result, err := evaluateExpression("${merge(inputs.environment, { NODE_ENV: 'development' })}", ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -751,8 +751,8 @@ func TestMerge_WithMapLiteral(t *testing.T) {
 	if resultMap["DATABASE_URL"] != "postgres://localhost/db" {
 		t.Errorf("expected DATABASE_URL preserved, got %v", resultMap["DATABASE_URL"])
 	}
-	if resultMap["PORT"] != "auto" {
-		t.Errorf("expected PORT='auto', got %v", resultMap["PORT"])
+	if resultMap["NODE_ENV"] != "development" {
+		t.Errorf("expected NODE_ENV='development', got %v", resultMap["NODE_ENV"])
 	}
 }
 

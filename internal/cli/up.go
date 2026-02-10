@@ -266,9 +266,10 @@ Examples:
 
 			if err != nil {
 				cleanupEnvironment()
-				// Return a short message — full error details were already
-				// printed by PrintFinalSummary above.
-				return fmt.Errorf("deployment failed")
+				// Include the underlying error so the user can diagnose failures
+				// that occur before the execution plan is created (e.g., component
+				// loading or datacenter config errors).
+				return fmt.Errorf("deployment failed: %w", err)
 			}
 
 			if !result.Success {

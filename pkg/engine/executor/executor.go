@@ -2176,17 +2176,20 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 				}
 				dbName := parts[1]
 
+				// Resolve the parent database node (always needed as a fallback source).
+				dbNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeDatabase, dbName)
+				dbNode, dbOK := e.graph.Nodes[dbNodeID]
+
 				// If the datacenter defines a databaseUser hook, resolve through the
-				// interposed databaseUser node. Otherwise, fall back to the database directly.
+				// interposed databaseUser node first for per-consumer credentials.
 				dbUserNodeID := fmt.Sprintf("%s/%s/%s--%s", node.Component, graph.NodeTypeDatabaseUser, dbName, node.Name)
 				depNode, ok := e.graph.Nodes[dbUserNodeID]
 				if !ok || depNode == nil || depNode.Outputs == nil {
 					// No databaseUser node — resolve directly from the database node
-					dbNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeDatabase, dbName)
-					depNode, ok = e.graph.Nodes[dbNodeID]
-					if !ok || depNode.Outputs == nil {
+					if !dbOK || dbNode.Outputs == nil {
 						return debugUnresolved(fmt.Sprintf("database %q not found or has no outputs", dbName))
 					}
+					depNode = dbNode
 				}
 				// Handle read/write sub-objects: databases.<name>.read.<prop> / databases.<name>.write.<prop>
 				if (parts[2] == "read" || parts[2] == "write") && len(parts) >= 4 {
@@ -2201,10 +2204,32 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 					if val, ok := depNode.Outputs[parts[3]]; ok {
 						return fmt.Sprintf("%v", val)
 					}
+					// Per-field fallback: if the databaseUser node doesn't have this field,
+					// try the parent database node (e.g., host/port come from the database).
+					if depNode.Type == graph.NodeTypeDatabaseUser && dbOK && dbNode.Outputs != nil {
+						if nested, ok := dbNode.Outputs[parts[2]]; ok {
+							if nestedMap, ok := nested.(map[string]interface{}); ok {
+								if val, ok := nestedMap[parts[3]]; ok {
+									return fmt.Sprintf("%v", val)
+								}
+							}
+						}
+						if val, ok := dbNode.Outputs[parts[3]]; ok {
+							return fmt.Sprintf("%v", val)
+						}
+					}
 					return debugUnresolved(fmt.Sprintf("database %q has no output %s.%s", dbName, parts[2], parts[3]))
 				}
 				if val, ok := depNode.Outputs[parts[2]]; ok {
 					return fmt.Sprintf("%v", val)
+				}
+				// Per-field fallback: if the databaseUser node doesn't have this field,
+				// try the parent database node (e.g., host/port come from the database
+				// while username/password/url come from the databaseUser hook).
+				if depNode.Type == graph.NodeTypeDatabaseUser && dbOK && dbNode.Outputs != nil {
+					if val, ok := dbNode.Outputs[parts[2]]; ok {
+						return fmt.Sprintf("%v", val)
+					}
 				}
 				return debugUnresolved(fmt.Sprintf("database %q has no output %q", dbName, parts[2]))
 
@@ -2543,8 +2568,6 @@ func (e *Executor) evaluateInputExpression(expr string, node *graph.Node, envNam
 			return "cldctl-local"
 		case "host":
 			return "localhost"
-		case "base_port":
-			return 8000
 		}
 		return nil
 	}

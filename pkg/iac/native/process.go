@@ -164,7 +164,7 @@ func (pm *ProcessManager) StartProcess(ctx context.Context, opts ProcessOptions)
 
 	// Wait for readiness if configured
 	if opts.Readiness != nil {
-		if err := pm.waitForReady(ctx, opts.Readiness); err != nil {
+		if err := pm.waitForReady(ctx, opts.Readiness, done); err != nil {
 			// Re-acquire lock for cleanup
 			_ = pm.StopProcess(opts.Name, 5*time.Second)
 			return nil, fmt.Errorf("process failed readiness check: %w", err)
@@ -285,19 +285,21 @@ func (pm *ProcessManager) StopAll(timeout time.Duration) {
 }
 
 // waitForReady waits for the process to become ready.
-func (pm *ProcessManager) waitForReady(ctx context.Context, readiness *ReadinessCheck) error {
+// The done channel is monitored so that if the process exits before becoming
+// ready, the check fails immediately instead of waiting for the full timeout.
+func (pm *ProcessManager) waitForReady(ctx context.Context, readiness *ReadinessCheck, done <-chan error) error {
 	switch readiness.Type {
 	case "http":
-		return pm.waitForReadyHTTP(ctx, readiness)
+		return pm.waitForReadyHTTP(ctx, readiness, done)
 	case "tcp":
-		return pm.waitForReadyTCP(ctx, readiness)
+		return pm.waitForReadyTCP(ctx, readiness, done)
 	default:
 		return fmt.Errorf("unsupported readiness check type: %q (supported: http, tcp)", readiness.Type)
 	}
 }
 
 // waitForReadyHTTP waits for an HTTP endpoint to return a 2xx/3xx status.
-func (pm *ProcessManager) waitForReadyHTTP(ctx context.Context, readiness *ReadinessCheck) error {
+func (pm *ProcessManager) waitForReadyHTTP(ctx context.Context, readiness *ReadinessCheck, done <-chan error) error {
 	deadline := time.Now().Add(readiness.Timeout)
 	ticker := time.NewTicker(readiness.Interval)
 	defer ticker.Stop()
@@ -310,6 +312,11 @@ func (pm *ProcessManager) waitForReadyHTTP(ctx context.Context, readiness *Readi
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case exitErr := <-done:
+			if exitErr != nil {
+				return fmt.Errorf("process exited unexpectedly during readiness check: %w", exitErr)
+			}
+			return fmt.Errorf("process exited unexpectedly during readiness check (exit code 0)")
 		case <-ticker.C:
 			resp, err := client.Get(readiness.Endpoint)
 			if err == nil {
@@ -325,7 +332,7 @@ func (pm *ProcessManager) waitForReadyHTTP(ctx context.Context, readiness *Readi
 }
 
 // waitForReadyTCP waits for a TCP endpoint to accept connections.
-func (pm *ProcessManager) waitForReadyTCP(ctx context.Context, readiness *ReadinessCheck) error {
+func (pm *ProcessManager) waitForReadyTCP(ctx context.Context, readiness *ReadinessCheck, done <-chan error) error {
 	deadline := time.Now().Add(readiness.Timeout)
 	ticker := time.NewTicker(readiness.Interval)
 	defer ticker.Stop()
@@ -334,6 +341,11 @@ func (pm *ProcessManager) waitForReadyTCP(ctx context.Context, readiness *Readin
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case exitErr := <-done:
+			if exitErr != nil {
+				return fmt.Errorf("process exited unexpectedly during readiness check: %w", exitErr)
+			}
+			return fmt.Errorf("process exited unexpectedly during readiness check (exit code 0)")
 		case <-ticker.C:
 			conn, err := net.DialTimeout("tcp", readiness.Endpoint, 2*time.Second)
 			if err == nil {
@@ -354,19 +366,6 @@ func streamOutput(r io.Reader, prefix string, w io.Writer) {
 	}
 }
 
-// findAvailablePort finds an available port to use.
-func findAvailablePort() (int, error) {
-	// Try to bind to port 0 to let the OS assign an available port
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, fmt.Errorf("failed to find available port: %w", err)
-	}
-	defer listener.Close()
-
-	// Get the assigned port
-	addr := listener.Addr().(*net.TCPAddr)
-	return addr.Port, nil
-}
 
 // ParseDockerfileCmd parses a Dockerfile and extracts the CMD instruction.
 func ParseDockerfileCmd(dockerfilePath string) ([]string, error) {

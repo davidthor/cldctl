@@ -1,0 +1,112 @@
+# Native module for creating a PostgreSQL user on an existing Docker container.
+#
+# This module provisions per-consumer database credentials by running
+# CREATE ROLE inside the parent PostgreSQL container via `docker exec`.
+# It grants the new user full access to the specified database.
+#
+# Concurrency-safe: uses pg_advisory_lock to serialize concurrent user
+# creation against the same database (e.g. main--api and main--worker
+# both launching after database/main completes).
+#
+# Idempotent: if the role already exists, the password is updated instead.
+#
+# On destroy, the module runs DROP ROLE to remove the user from the
+# database. If the parent container is already gone, the destroy command
+# fails gracefully (the executor logs a warning but continues).
+plugin: native
+type: docker
+
+inputs:
+  container_name:
+    type: string
+    required: true
+    description: Name of the parent PostgreSQL Docker container
+  database:
+    type: string
+    required: true
+    description: Database name to grant access to
+  username:
+    type: string
+    required: true
+    description: Username for the new database role
+  admin_user:
+    type: string
+    default: "app"
+    description: Admin user on the PostgreSQL container (used to run CREATE ROLE)
+  host:
+    type: string
+    default: "localhost"
+    description: Database host (for output URLs)
+  port:
+    type: number
+    default: 5432
+    description: Database host port (for output URLs)
+
+resources:
+  create_user:
+    type: exec
+    properties:
+      command:
+        - "docker"
+        - "exec"
+        - "${inputs.container_name}"
+        - "psql"
+        - "-U"
+        - "${inputs.admin_user}"
+        - "-d"
+        - "${inputs.database}"
+        - "-c"
+        # Everything runs inside a single DO block with an advisory lock so that
+        # concurrent databaseUser nodes (e.g. main--api and main--worker) don't
+        # race on PostgreSQL system catalog updates ("tuple concurrently updated").
+        - >-
+          DO $$ BEGIN
+            PERFORM pg_advisory_lock(hashtext('cldctl_create_role'));
+            BEGIN
+              CREATE ROLE "${inputs.username}" LOGIN PASSWORD 'localdev_${inputs.username}';
+            EXCEPTION WHEN duplicate_object THEN
+              ALTER ROLE "${inputs.username}" WITH PASSWORD 'localdev_${inputs.username}';
+            END;
+            EXECUTE format('GRANT ALL PRIVILEGES ON DATABASE %I TO %I', current_database(), '${inputs.username}');
+            EXECUTE format('GRANT ALL ON SCHEMA public TO %I', '${inputs.username}');
+            PERFORM pg_advisory_unlock(hashtext('cldctl_create_role'));
+          END $$;
+    destroy:
+      command:
+        - "docker"
+        - "exec"
+        - "${inputs.container_name}"
+        - "psql"
+        - "-U"
+        - "${inputs.admin_user}"
+        - "-d"
+        - "${inputs.database}"
+        - "-c"
+        # Advisory lock on destroy too, to avoid races during teardown.
+        - >-
+          DO $$ BEGIN
+            PERFORM pg_advisory_lock(hashtext('cldctl_create_role'));
+            REASSIGN OWNED BY "${inputs.username}" TO ${inputs.admin_user};
+            DROP OWNED BY "${inputs.username}";
+            DROP ROLE IF EXISTS "${inputs.username}";
+            PERFORM pg_advisory_unlock(hashtext('cldctl_create_role'));
+          END $$;
+
+outputs:
+  host:
+    value: "${inputs.host}"
+    description: Database host
+  port:
+    value: "${inputs.port}"
+    description: Database port
+  username:
+    value: "${inputs.username}"
+    description: Database username
+  password:
+    value: "localdev_${inputs.username}"
+    sensitive: true
+    description: Database password
+  url:
+    value: "postgresql://${inputs.username}:localdev_${inputs.username}@${inputs.host}:${inputs.port}/${inputs.database}"
+    sensitive: true
+    description: Full connection URL with per-consumer credentials

@@ -23,10 +23,10 @@ resources:
       ports:
         # SMTP port
         - container: 1025
-          host: auto
+          host: 0
         # Web UI port
         - container: 8025
-          host: auto
+          host: 0
       restart: unless-stopped
 
 outputs:

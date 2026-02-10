@@ -39,9 +39,9 @@ resources:
         MINIO_ROOT_PASSWORD: "${random_password(20)}"
       ports:
         - container: 9000
-          host: auto
+          host: 0
         - container: 9001
-          host: auto
+          host: 0
       volumes:
         - name: "${inputs.name}-data"
           path: /data

@@ -34,7 +34,7 @@ resources:
       name: "${inputs.name}"
       ports:
         - container: 80
-          host: auto
+          host: 0
       # Generate nginx config from rules
       volumes:
         - name: "${inputs.name}-config"

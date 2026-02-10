@@ -69,6 +69,9 @@ func (l *versionDetectingLoader) LoadFromBytes(data []byte, sourcePath string) (
 		return nil, errors.New(errors.ErrCodeParse, fmt.Sprintf("unsupported schema version: %s", version))
 	}
 
+	// Provide source bytes so the transformer can extract expression text
+	// even when the source was loaded from memory (not from a file on disk).
+	transformer.WithSourceBytes(data)
 	internalDC, err := transformer.Transform(schema)
 	if err != nil {
 		return nil, errors.Wrap(errors.ErrCodeParse, "failed to transform schema", err)

@@ -40,7 +40,7 @@ resources:
         MYSQL_ROOT_PASSWORD: "${random_password(20)}"
       ports:
         - container: 3306
-          host: auto
+          host: 0
       volumes:
         - name: "${inputs.name}-data"
           path: /var/lib/mysql

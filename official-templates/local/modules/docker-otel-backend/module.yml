@@ -39,7 +39,7 @@ resources:
       ports:
         # Grafana UI
         - container: 3000
-          host: auto
+          host: 0
         # OTLP gRPC
         - container: 4317
           host: 4317
@@ -48,7 +48,7 @@ resources:
           host: 4318
         # Loki query API
         - container: 3100
-          host: auto
+          host: 0
         # Fluentd receiver (for Docker log forwarding)
         - container: 24224
           host: 24224

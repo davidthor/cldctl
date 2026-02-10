@@ -2,6 +2,7 @@ package native
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -173,6 +174,11 @@ func newTestProcessManager() *ProcessManager {
 	}
 }
 
+// aliveProcess returns a done channel that never fires, simulating a running process.
+func aliveProcess() <-chan error {
+	return make(chan error, 1)
+}
+
 func TestWaitForReady_TCPSuccess(t *testing.T) {
 	// Start a TCP listener
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -187,7 +193,7 @@ func TestWaitForReady_TCPSuccess(t *testing.T) {
 		Timeout:  2 * time.Second,
 	}
 
-	err = pm.waitForReady(context.Background(), readiness)
+	err = pm.waitForReady(context.Background(), readiness, aliveProcess())
 	assert.NoError(t, err)
 }
 
@@ -201,7 +207,7 @@ func TestWaitForReady_TCPTimeout(t *testing.T) {
 		Timeout:  200 * time.Millisecond,
 	}
 
-	err := pm.waitForReady(context.Background(), readiness)
+	err := pm.waitForReady(context.Background(), readiness, aliveProcess())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "did not become ready")
 }
@@ -218,9 +224,28 @@ func TestWaitForReady_TCPContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	err := pm.waitForReady(ctx, readiness)
+	err := pm.waitForReady(ctx, readiness, aliveProcess())
 	assert.Error(t, err)
 	assert.Equal(t, context.Canceled, err)
+}
+
+func TestWaitForReady_TCPProcessExited(t *testing.T) {
+	pm := newTestProcessManager()
+	readiness := &ReadinessCheck{
+		Type:     "tcp",
+		Endpoint: "127.0.0.1:1",
+		Interval: 50 * time.Millisecond,
+		Timeout:  10 * time.Second,
+	}
+
+	// Simulate a process that exits immediately with an error
+	done := make(chan error, 1)
+	done <- fmt.Errorf("exit status 1")
+
+	err := pm.waitForReady(context.Background(), readiness, done)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "process exited unexpectedly")
+	assert.Contains(t, err.Error(), "exit status 1")
 }
 
 func TestWaitForReady_HTTPSuccess(t *testing.T) {
@@ -237,7 +262,7 @@ func TestWaitForReady_HTTPSuccess(t *testing.T) {
 		Timeout:  2 * time.Second,
 	}
 
-	err := pm.waitForReady(context.Background(), readiness)
+	err := pm.waitForReady(context.Background(), readiness, aliveProcess())
 	assert.NoError(t, err)
 }
 
@@ -255,9 +280,33 @@ func TestWaitForReady_HTTPTimeout(t *testing.T) {
 		Timeout:  200 * time.Millisecond,
 	}
 
-	err := pm.waitForReady(context.Background(), readiness)
+	err := pm.waitForReady(context.Background(), readiness, aliveProcess())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "did not become ready")
+}
+
+func TestWaitForReady_HTTPProcessExited(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	pm := newTestProcessManager()
+	readiness := &ReadinessCheck{
+		Type:     "http",
+		Endpoint: server.URL,
+		Interval: 50 * time.Millisecond,
+		Timeout:  10 * time.Second,
+	}
+
+	// Simulate a process that exits immediately with an error
+	done := make(chan error, 1)
+	done <- fmt.Errorf("signal: terminated")
+
+	err := pm.waitForReady(context.Background(), readiness, done)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "process exited unexpectedly")
+	assert.Contains(t, err.Error(), "signal: terminated")
 }
 
 func TestWaitForReady_UnsupportedType(t *testing.T) {
@@ -269,7 +318,7 @@ func TestWaitForReady_UnsupportedType(t *testing.T) {
 		Timeout:  200 * time.Millisecond,
 	}
 
-	err := pm.waitForReady(context.Background(), readiness)
+	err := pm.waitForReady(context.Background(), readiness, aliveProcess())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported readiness check type")
 }

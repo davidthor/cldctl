@@ -23,7 +23,7 @@ func evaluateExpression(expr string, ctx *EvalContext) (interface{}, error) {
 
 	// Find all ${...} spans using brace-depth tracking (the simple regex
 	// \$\{[^}]+\} breaks when expressions contain nested braces such as
-	// inline map literals like { PORT: 'auto' }).
+	// inline map literals like { KEY: 'value' }).
 	spans := findExpressionSpans(expr)
 
 	if len(spans) == 0 {
@@ -107,7 +107,7 @@ func resolveReference(ref string, ctx *EvalContext) (interface{}, error) {
 		return nil, fmt.Errorf("empty reference")
 	}
 
-	// Handle inline map literals like { PORT: 'auto', KEY: 'value' }
+	// Handle inline map literals like { KEY: 'value', OTHER: 'data' }
 	trimmedRef := strings.TrimSpace(ref)
 	if strings.HasPrefix(trimmedRef, "{") && strings.HasSuffix(trimmedRef, "}") {
 		return parseMapLiteral(trimmedRef)
