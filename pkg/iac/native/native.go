@@ -498,7 +498,7 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 						Properties: props,
 						Outputs: map[string]interface{}{
 							"container_id": existingID,
-							"ports":        info.Ports,
+							"ports":        buildPortsArray(info.Ports),
 						},
 					}, nil
 				}
@@ -527,11 +527,31 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 		Properties: props,
 		Outputs: map[string]interface{}{
 			"container_id": containerID,
-			"ports":        info.Ports,
+			"ports":        buildPortsArray(info.Ports),
 			"environment":  opts.Environment, // Include environment for dependent resources
 			"name":         containerName,
 		},
 	}, nil
+}
+
+// buildPortsArray converts Docker inspect ports (map like {"80/tcp": 55123}) into an array
+// format [{"container": 80, "host": 55123}] that expressions like ${resources.proxy.ports[0].host}
+// can navigate.
+func buildPortsArray(inspectPorts map[string]int) []interface{} {
+	var result []interface{}
+	for portProto, hostPort := range inspectPorts {
+		// Parse container port from "80/tcp" format
+		containerPort := 0
+		parts := strings.SplitN(portProto, "/", 2)
+		if len(parts) > 0 {
+			fmt.Sscanf(parts[0], "%d", &containerPort)
+		}
+		result = append(result, map[string]interface{}{
+			"container": containerPort,
+			"host":      hostPort,
+		})
+	}
+	return result
 }
 
 func (p *Plugin) applyDockerNetwork(ctx context.Context, name string, props map[string]interface{}, existing *State) (*ResourceState, error) {

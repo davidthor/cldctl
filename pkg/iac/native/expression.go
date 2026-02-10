@@ -558,10 +558,21 @@ func stripQuotes(s string) string {
 	return s
 }
 
-// lookupPortMapping finds a host port in a port mapping (map[string]interface{} or map[string]int).
-// Tries exact match first, then appends "/tcp" suffix.
+// lookupPortMapping finds a host port in a port mapping.
+// Supports array format [{container: 80, host: 55123}] and legacy map format {"80/tcp": 55123}.
+// Tries exact match first, then appends "/tcp" suffix for map formats.
 func lookupPortMapping(ports interface{}, portSpec string) interface{} {
 	switch portMap := ports.(type) {
+	case []interface{}:
+		// Array format: [{container: 80, host: 55123}, ...]
+		for _, item := range portMap {
+			if m, ok := item.(map[string]interface{}); ok {
+				containerPort := fmt.Sprintf("%v", m["container"])
+				if containerPort == portSpec {
+					return m["host"]
+				}
+			}
+		}
 	case map[string]interface{}:
 		if hostPort, ok := portMap[portSpec]; ok {
 			return hostPort
