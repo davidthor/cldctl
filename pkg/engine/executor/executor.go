@@ -1618,6 +1618,31 @@ func (e *Executor) buildModuleInputs(module datacenter.Module, node *graph.Node,
 		setIfMissing(inputs, "internal", node.Inputs["internal"])
 		setIfMissing(inputs, "host", host)
 
+		// Resolve upstream port for the route's target service/function.
+		// This allows datacenter route hooks to know the upstream endpoint
+		// without needing to reference other node outputs.
+		if target, ok := node.Inputs["target"].(string); ok && target != "" {
+			var upstreamPort int
+			targetType, _ := node.Inputs["targetType"].(string)
+			switch targetType {
+			case "service":
+				// Look up the service node's declared port from the component schema
+				svcNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeService, target)
+				if svcNode, ok := e.graph.Nodes[svcNodeID]; ok {
+					upstreamPort = toIntSafe(svcNode.Inputs["port"])
+				}
+			case "function":
+				// Look up the function node and resolve its port (from schema or associated service)
+				fnNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeFunction, target)
+				if fnNode, ok := e.graph.Nodes[fnNodeID]; ok {
+					upstreamPort = e.resolvePortForWorkload(fnNode)
+				}
+			}
+			if upstreamPort > 0 {
+				setIfMissing(inputs, "upstream_port", upstreamPort)
+			}
+		}
+
 	case "build":
 		setIfMissing(inputs, "context", node.Inputs["context"])
 		setIfMissing(inputs, "dockerfile", node.Inputs["dockerfile"])
@@ -1728,6 +1753,24 @@ func setIfMissing(m map[string]interface{}, key string, value interface{}) {
 	if _, exists := m[key]; !exists && value != nil {
 		m[key] = value
 	}
+}
+
+// toIntSafe converts an interface{} to int, handling int, float64, and string types.
+// Returns 0 if the value is nil or cannot be converted.
+func toIntSafe(v interface{}) int {
+	switch val := v.(type) {
+	case int:
+		return val
+	case float64:
+		return int(val)
+	case int64:
+		return int(val)
+	case string:
+		if n, err := strconv.Atoi(val); err == nil {
+			return n
+		}
+	}
+	return 0
 }
 
 // getEnvironmentMap extracts an environment map from node inputs, handling various types.
