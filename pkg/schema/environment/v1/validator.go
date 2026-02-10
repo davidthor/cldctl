@@ -284,8 +284,32 @@ func (v *Validator) validateFunction(prefix string, funcConfig FunctionConfigV1)
 	return errors
 }
 
+// subdomainPattern matches valid subdomains: lowercase alphanumeric and hyphens,
+// no leading/trailing hyphens.
+var subdomainPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
 func (v *Validator) validateRoute(prefix string, routeConfig RouteConfigV1) []ValidationError {
 	var errors []ValidationError
+
+	// Validate subdomain format
+	if routeConfig.Subdomain != "" {
+		if !subdomainPattern.MatchString(routeConfig.Subdomain) {
+			errors = append(errors, ValidationError{
+				Field:   prefix + ".subdomain",
+				Message: "subdomain must be lowercase alphanumeric with hyphens, no leading/trailing hyphens",
+			})
+		}
+	}
+
+	// Validate pathPrefix format
+	if routeConfig.PathPrefix != "" {
+		if !strings.HasPrefix(routeConfig.PathPrefix, "/") {
+			errors = append(errors, ValidationError{
+				Field:   prefix + ".pathPrefix",
+				Message: "pathPrefix must start with /",
+			})
+		}
+	}
 
 	// Each hostname must have either subdomain or host, but not both
 	for i, hostname := range routeConfig.Hostnames {

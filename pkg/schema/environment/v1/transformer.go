@@ -111,7 +111,9 @@ func (t *Transformer) transformFunction(v1 FunctionConfigV1) internal.InternalFu
 
 func (t *Transformer) transformRoute(v1 RouteConfigV1) internal.InternalRouteConfig {
 	route := internal.InternalRouteConfig{
-		Hostnames: make([]internal.InternalHostname, len(v1.Hostnames)),
+		Subdomain:  v1.Subdomain,
+		PathPrefix: v1.PathPrefix,
+		Hostnames:  make([]internal.InternalHostname, len(v1.Hostnames)),
 	}
 
 	for i, hostname := range v1.Hostnames {
