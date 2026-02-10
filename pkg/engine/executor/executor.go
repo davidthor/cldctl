@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -382,17 +383,21 @@ func (e *Executor) Execute(ctx context.Context, plan *planner.Plan, g *graph.Gra
 			}
 		}
 
-		// Update node in graph with outputs
-		if nodeResult.Success && change.Node != nil && nodeResult.Outputs != nil {
-			change.Node.Outputs = nodeResult.Outputs
-			change.Node.State = graph.NodeStateCompleted
+		// Update node in graph with outputs and state
+		if change.Node != nil {
+			if nodeResult.Success {
+				if nodeResult.Outputs != nil {
+					change.Node.Outputs = nodeResult.Outputs
+				}
+				change.Node.State = graph.NodeStateCompleted
 
-			// For observability nodes, enrich outputs with merged attributes
-			if change.Node.Type == graph.NodeTypeObservability {
-				e.enrichObservabilityOutputs(change.Node)
+				// For observability nodes, enrich outputs with merged attributes
+				if change.Node.Type == graph.NodeTypeObservability {
+					e.enrichObservabilityOutputs(change.Node)
+				}
+			} else {
+				change.Node.State = graph.NodeStateFailed
 			}
-		} else if change.Node != nil {
-			change.Node.State = graph.NodeStateFailed
 		}
 	}
 
@@ -485,6 +490,10 @@ func (e *Executor) executeChange(ctx context.Context, change *planner.ResourceCh
 		result = e.executeDestroy(ctx, change, envState)
 	case planner.ActionNoop:
 		result.Success = true
+		// Load existing outputs from state so downstream expression resolution works.
+		if change.CurrentState != nil && change.CurrentState.Outputs != nil {
+			result.Outputs = change.CurrentState.Outputs
+		}
 	}
 
 	result.Duration = time.Since(startTime)
@@ -532,6 +541,13 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 	// ${{ dependencies.*.outputs.* }}, ${{ variables.* }}) BEFORE saving state so that
 	// inspect shows resolved values even while the resource is still provisioning.
 	e.resolveComponentExpressions(change.Node, envState)
+
+	// Dump the resolved node configuration when debug mode is active so
+	// operators can inspect resource inputs even if the environment is
+	// auto-cleaned after a failure (where `inspect` would not be available).
+	if os.Getenv("CLDCTL_DEBUG") != "" {
+		debugDumpNodeConfig(change)
+	}
 
 	// Port nodes use a special allocation flow: env override > datacenter hook > built-in fallback
 	if change.Node.Type == graph.NodeTypePort {
@@ -774,6 +790,13 @@ func (e *Executor) executeHookModules(ctx context.Context, node *graph.Node, env
 		e.autoPopulateDatabaseEndpoints(outputs, matchedHook)
 	}
 
+	// Validate that the hook produced all required outputs for this resource type.
+	// Missing outputs lead to unresolved ${{ }} expressions downstream which are
+	// very difficult to diagnose, so we fail early with a clear message.
+	if err := validateHookOutputs(node.Type, outputs); err != nil {
+		return nil, fmt.Errorf("datacenter hook for %s/%s produced incomplete outputs: %w", node.Type, node.Name, err)
+	}
+
 	return &hookExecutionResult{
 		Outputs:      outputs,
 		ModuleStates: moduleStates,
@@ -930,6 +953,69 @@ func (e *Executor) autoPopulateDatabaseEndpoints(outputs map[string]interface{},
 			outputs["write"] = writeCopy
 		}
 	}
+}
+
+// requiredHookOutputs maps each resource type to the output keys that the
+// datacenter hook MUST produce at deploy time. Missing outputs cause unresolved
+// ${{ }} expressions downstream, so we validate eagerly and fail with a clear
+// message.
+//
+// This mirrors internal.RequiredHookOutputs but uses graph.NodeType keys and
+// operates on resolved map[string]interface{} values (vs expression strings at
+// build time).
+var requiredHookOutputs = map[graph.NodeType][]string{
+	graph.NodeTypeDatabase:      {"host", "port", "url"},
+	graph.NodeTypeBucket:        {"endpoint", "bucket", "accessKeyId", "secretAccessKey"},
+	graph.NodeTypeSMTP:          {"host", "port", "username", "password"},
+	graph.NodeTypeDeployment:    {"id"},
+	graph.NodeTypeFunction:      {"id", "endpoint"},
+	graph.NodeTypeService:       {"host", "port", "url"},
+	graph.NodeTypeRoute:         {"url", "host", "port"},
+	graph.NodeTypeTask:          {"id", "status"},
+	graph.NodeTypeObservability: {"endpoint", "protocol"},
+	// database: username and password are optional (not all engines require
+	// credentials, e.g., Redis).
+	// encryptionKey: outputs vary by algorithm (RSA vs symmetric) — validated separately if needed.
+	// port: hook is optional (engine has built-in fallback), so no required outputs here.
+}
+
+// validateHookOutputs checks that the hook outputs contain all required keys
+// for the given resource type. Returns a descriptive error listing the missing
+// keys, or nil if all required outputs are present.
+func validateHookOutputs(nodeType graph.NodeType, outputs map[string]interface{}) error {
+	required, ok := requiredHookOutputs[nodeType]
+	if !ok {
+		return nil // No required outputs defined for this type
+	}
+
+	var missing []string
+	for _, key := range required {
+		if _, exists := outputs[key]; !exists {
+			missing = append(missing, key)
+		}
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf(
+			"hook for %s is missing required outputs: %s (have: %s). "+
+				"Check the datacenter template's outputs block for this hook",
+			nodeType,
+			strings.Join(missing, ", "),
+			func() string {
+				keys := make([]string, 0, len(outputs))
+				for k := range outputs {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				if len(keys) == 0 {
+					return "none"
+				}
+				return strings.Join(keys, ", ")
+			}(),
+		)
+	}
+
+	return nil
 }
 
 // findMatchingHook finds the matching datacenter hook for a node and returns the module path, inputs, and plugin name.
@@ -1676,6 +1762,62 @@ func otelSetIfMissing(env map[string]string, key, value string) {
 	}
 }
 
+// debugDumpNodeConfig writes a human-readable dump of the node's resolved
+// configuration to stderr. This is only called when CLDCTL_DEBUG is set.
+func debugDumpNodeConfig(change *planner.ResourceChange) {
+	node := change.Node
+	fmt.Fprintf(os.Stderr, "\n[debug] ─── %s %s/%s/%s ───\n", change.Action, node.Component, node.Type, node.Name)
+
+	if len(node.Inputs) == 0 {
+		fmt.Fprintf(os.Stderr, "[debug]   (no inputs)\n")
+		return
+	}
+
+	// Sort keys for deterministic output.
+	keys := make([]string, 0, len(node.Inputs))
+	for k := range node.Inputs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		v := node.Inputs[k]
+		switch val := v.(type) {
+		case map[string]string:
+			if len(val) == 0 {
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "[debug]   %s:\n", k)
+			subKeys := make([]string, 0, len(val))
+			for sk := range val {
+				subKeys = append(subKeys, sk)
+			}
+			sort.Strings(subKeys)
+			for _, sk := range subKeys {
+				fmt.Fprintf(os.Stderr, "[debug]     %s: %s\n", sk, val[sk])
+			}
+		case map[string]interface{}:
+			if len(val) == 0 {
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "[debug]   %s:\n", k)
+			subKeys := make([]string, 0, len(val))
+			for sk := range val {
+				subKeys = append(subKeys, sk)
+			}
+			sort.Strings(subKeys)
+			for _, sk := range subKeys {
+				fmt.Fprintf(os.Stderr, "[debug]     %s: %v\n", sk, val[sk])
+			}
+		default:
+			if v == nil {
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "[debug]   %s: %v\n", k, v)
+		}
+	}
+}
+
 // extractVersionFromType extracts the version part from a "type:version" string.
 // For example, "postgres:^16" returns "^16", and "postgres" returns "".
 func extractVersionFromType(typeInput interface{}) string {
@@ -1875,32 +2017,44 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 			parts := strings.Split(inner, ".")
 
 			if len(parts) < 2 {
-				return match
+				return match // Malformed expression — preserve as-is
+			}
+
+			// debugUnresolved emits a debug-level warning when an expression cannot
+			// be resolved. The expression resolves to "" so applications receive an
+			// empty string instead of a literal "${{ ... }}" value.
+			debugUnresolved := func(reason string) string {
+				if os.Getenv("CLDCTL_DEBUG") != "" {
+					fmt.Fprintf(os.Stderr, "[debug] unresolved expression %s in %s/%s: %s\n",
+						inner, node.Type, node.Name, reason)
+				}
+				return ""
 			}
 
 			resourceType := parts[0]
 			switch resourceType {
 			case "builds":
 				if len(parts) < 3 {
-					return match
+					return debugUnresolved("malformed builds expression (expected builds.<name>.<output>)")
 				}
 				buildNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeDockerBuild, parts[1])
 				buildNode, ok := e.graph.Nodes[buildNodeID]
 				if !ok || buildNode.Outputs == nil {
-					return match
+					return debugUnresolved(fmt.Sprintf("build %q not found or has no outputs", parts[1]))
 				}
 				if val, ok := buildNode.Outputs[parts[2]]; ok {
 					return fmt.Sprintf("%v", val)
 				}
+				return debugUnresolved(fmt.Sprintf("build %q has no output %q", parts[1], parts[2]))
 
 			case "databases":
 				if len(parts) < 3 {
-					return match
+					return debugUnresolved("malformed databases expression (expected databases.<name>.<output>)")
 				}
 				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeDatabase, parts[1])
 				depNode, ok := e.graph.Nodes[nodeID]
 				if !ok || depNode.Outputs == nil {
-					return match
+					return debugUnresolved(fmt.Sprintf("database %q not found or has no outputs", parts[1]))
 				}
 				// Handle read/write sub-objects: databases.<name>.read.<prop> / databases.<name>.write.<prop>
 				if (parts[2] == "read" || parts[2] == "write") && len(parts) >= 4 {
@@ -1915,81 +2069,86 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 					if val, ok := depNode.Outputs[parts[3]]; ok {
 						return fmt.Sprintf("%v", val)
 					}
-					return match
+					return debugUnresolved(fmt.Sprintf("database %q has no output %s.%s", parts[1], parts[2], parts[3]))
 				}
 				if val, ok := depNode.Outputs[parts[2]]; ok {
 					return fmt.Sprintf("%v", val)
 				}
+				return debugUnresolved(fmt.Sprintf("database %q has no output %q", parts[1], parts[2]))
 
 			case "services":
 				if len(parts) < 3 {
-					return match
+					return debugUnresolved("malformed services expression (expected services.<name>.<output>)")
 				}
 				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeService, parts[1])
 				depNode, ok := e.graph.Nodes[nodeID]
 				if !ok || depNode.Outputs == nil {
-					return match
+					return debugUnresolved(fmt.Sprintf("service %q not found or has no outputs", parts[1]))
 				}
 				if val, ok := depNode.Outputs[parts[2]]; ok {
 					return fmt.Sprintf("%v", val)
 				}
+				return debugUnresolved(fmt.Sprintf("service %q has no output %q", parts[1], parts[2]))
 
 			case "buckets":
 				if len(parts) < 3 {
-					return match
+					return debugUnresolved("malformed buckets expression (expected buckets.<name>.<output>)")
 				}
 				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeBucket, parts[1])
 				depNode, ok := e.graph.Nodes[nodeID]
 				if !ok || depNode.Outputs == nil {
-					return match
+					return debugUnresolved(fmt.Sprintf("bucket %q not found or has no outputs", parts[1]))
 				}
 				if val, ok := depNode.Outputs[parts[2]]; ok {
 					return fmt.Sprintf("%v", val)
 				}
+				return debugUnresolved(fmt.Sprintf("bucket %q has no output %q", parts[1], parts[2]))
 
 			case "routes":
 				if len(parts) < 3 {
-					return match
+					return debugUnresolved("malformed routes expression (expected routes.<name>.<output>)")
 				}
 				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeRoute, parts[1])
 				depNode, ok := e.graph.Nodes[nodeID]
 				if !ok || depNode.Outputs == nil {
-					return match
+					return debugUnresolved(fmt.Sprintf("route %q not found or has no outputs", parts[1]))
 				}
 				if val, ok := depNode.Outputs[parts[2]]; ok {
 					return fmt.Sprintf("%v", val)
 				}
+				return debugUnresolved(fmt.Sprintf("route %q has no output %q", parts[1], parts[2]))
 
 			case "ports":
 				if len(parts) < 3 {
-					return match
+					return debugUnresolved("malformed ports expression (expected ports.<name>.<output>)")
 				}
 				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypePort, parts[1])
 				depNode, ok := e.graph.Nodes[nodeID]
 				if !ok || depNode.Outputs == nil {
-					return match
+					return debugUnresolved(fmt.Sprintf("port %q not found or has no outputs", parts[1]))
 				}
 				if val, ok := depNode.Outputs[parts[2]]; ok {
 					return fmt.Sprintf("%v", val)
 				}
+				return debugUnresolved(fmt.Sprintf("port %q has no output %q", parts[1], parts[2]))
 
 			case "observability":
 				// observability is a singleton per component
 				obsNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeObservability, "observability")
 				obsNode, ok := e.graph.Nodes[obsNodeID]
 				if !ok || obsNode.Outputs == nil {
-					return "" // Resolve to empty string if no observability hook
+					return "" // No observability hook — resolve silently
 				}
 				prop := parts[1]
 				if val, ok := obsNode.Outputs[prop]; ok {
 					return fmt.Sprintf("%v", val)
 				}
-				return "" // Unknown property resolves to empty
+				return "" // Unknown observability property — resolve silently
 
 			case "variables":
 				// Resolve from component deployment variables
 				if len(parts) < 2 {
-					return match
+					return debugUnresolved("malformed variables expression (expected variables.<name>)")
 				}
 				varName := parts[1]
 				if val, ok := compVars[varName]; ok {
@@ -1999,13 +2158,14 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 				if val, ok := node.Inputs["variables_"+varName]; ok {
 					return fmt.Sprintf("%v", val)
 				}
+				return debugUnresolved(fmt.Sprintf("variable %q not provided", varName))
 
 			case "dependencies":
 				// Resolve cross-component dependency outputs.
 				// Format: dependencies.<depName>.outputs.<outputKey>
 				// or:     dependencies.<depName>.<outputKey>
 				if len(parts) < 3 {
-					return match
+					return debugUnresolved("malformed dependencies expression (expected dependencies.<name>.outputs.<key>)")
 				}
 				depName := parts[1]
 
@@ -2040,9 +2200,14 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 						}
 					}
 				}
-			}
 
-			return match
+				// Dependency not found or doesn't expose this output key.
+				// This is normal for optional dependencies that aren't deployed.
+				return debugUnresolved(fmt.Sprintf("dependency %q output %q not available (dependency may not be deployed)", depName, outputKey))
+
+			default:
+				return debugUnresolved(fmt.Sprintf("unknown expression prefix %q", resourceType))
+			}
 		})
 	}
 
@@ -2840,7 +3005,9 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 
 					if nodeResult.Success {
 						completed[c.Node.ID] = true
-						c.Node.Outputs = nodeResult.Outputs
+						if nodeResult.Outputs != nil {
+							c.Node.Outputs = nodeResult.Outputs
+						}
 						c.Node.State = graph.NodeStateCompleted
 
 						// For observability nodes, enrich outputs with merged attributes

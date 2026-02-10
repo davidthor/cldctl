@@ -19,6 +19,11 @@ type Graph struct {
 	// ComponentDependencies maps component names to the list of other component
 	// names they depend on. Populated by the graph builder from component schemas.
 	ComponentDependencies map[string][]string
+
+	// OptionalDependencies maps component names to the set of optional dependency
+	// names. Used by the expression resolver to silently resolve references to
+	// optional dependencies that aren't deployed (instead of emitting warnings).
+	OptionalDependencies map[string]map[string]bool
 }
 
 // NewGraph creates a new empty graph.

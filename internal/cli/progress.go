@@ -73,11 +73,21 @@ type ProgressTable struct {
 }
 
 // NewProgressTable creates a new progress table.
-// If the writer is a terminal, the table will render dynamically.
+// If the writer is a terminal, the table will render dynamically using ANSI
+// escape codes. Dynamic mode is disabled when debug mode is active
+// (CLDCTL_DEBUG) or a CI environment is detected, because interleaved debug
+// output or non-interactive terminals break the in-place redraw.
 func NewProgressTable(w io.Writer) *ProgressTable {
 	dynamic := false
 	if f, ok := w.(*os.File); ok {
 		dynamic = term.IsTerminal(int(f.Fd()))
+	}
+
+	// Disable dynamic rendering when debug output or CI would interfere.
+	if dynamic {
+		if os.Getenv("CLDCTL_DEBUG") != "" || os.Getenv("CI") != "" {
+			dynamic = false
+		}
 	}
 
 	return &ProgressTable{

@@ -512,7 +512,7 @@ component "myorg/stripe" {
 ### Hook Types & Required Outputs
 | Hook | Required Outputs |
 |------|-----------------|
-| `database` | `host`, `port`, `url`, `username`, `password`; optional nested: `read` { `host`, `port`, `url`, `username`, `password` }, `write` { `host`, `port`, `url`, `username`, `password` } (auto-populated from top-level if omitted) |
+| `database` | `host`, `port`, `url`; optional: `username`, `password`, `database`; optional nested: `read` { `host`, `port`, `url`, `username`, `password` }, `write` { `host`, `port`, `url`, `username`, `password` } (auto-populated from top-level if omitted) |
 | `bucket` | `endpoint`, `bucket`, `accessKeyId`, `secretAccessKey` |
 | `encryptionKey` | RSA/ECDSA: `privateKey`, `publicKey`, `privateKeyBase64`, `publicKeyBase64`; Symmetric: `key`, `keyBase64` |
 | `smtp` | `host`, `port`, `username`, `password` |

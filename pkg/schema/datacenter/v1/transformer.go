@@ -1,7 +1,9 @@
 package v1
 
 import (
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/davidthor/cldctl/pkg/schema/datacenter/internal"
 	"github.com/hashicorp/hcl/v2"
@@ -52,6 +54,17 @@ func (t *Transformer) Transform(v1 *SchemaV1) (*internal.InternalDatacenter, err
 	// Transform environment
 	if v1.Environment != nil {
 		dc.Environment = t.transformEnvironment(v1.Environment)
+	}
+
+	// Validate that all hooks declare the required outputs. This catches
+	// misconfigured hooks at build/validate time rather than at deploy time,
+	// where missing outputs surface as cryptic unresolved expressions.
+	if errs := t.validateHookOutputs(&dc.Environment.Hooks); len(errs) > 0 {
+		msgs := make([]string, len(errs))
+		for i, e := range errs {
+			msgs[i] = e.Error()
+		}
+		return nil, fmt.Errorf("datacenter hook output validation failed:\n  - %s", strings.Join(msgs, "\n  - "))
 	}
 
 	return dc, nil
@@ -240,6 +253,35 @@ func (t *Transformer) transformHooks(hooks []HookBlockV1) []internal.InternalHoo
 						ih.Outputs[k] = ctyValueToString(v)
 					}
 				}
+			} else if objExpr, ok := h.OutputsExpr.(*hclsyntax.ObjectConsExpr); ok {
+				// Evaluation failed (e.g., expressions reference module outputs not
+				// available at parse time). Fall back to extracting individual
+				// key-value expression strings from the object literal so they can
+				// be resolved at runtime.
+				for _, item := range objExpr.Items {
+					keyVal, keyDiags := item.KeyExpr.Value(nil)
+					if keyDiags.HasErrors() {
+						continue
+					}
+					key := keyVal.AsString()
+
+					// Check if the value is a nested object (e.g., read = { ... })
+					if nested, ok := item.ValueExpr.(*hclsyntax.ObjectConsExpr); ok {
+						nestedMap := make(map[string]string)
+						for _, ni := range nested.Items {
+							nkVal, nkDiags := ni.KeyExpr.Value(nil)
+							if nkDiags.HasErrors() {
+								continue
+							}
+							nestedMap[nkVal.AsString()] = exprToString(ni.ValueExpr)
+						}
+						if len(nestedMap) > 0 {
+							ih.NestedOutputs[key] = nestedMap
+						}
+					} else {
+						ih.Outputs[key] = exprToString(item.ValueExpr)
+					}
+				}
 			}
 		} else if h.OutputsAttrs != nil {
 			// Block syntax: outputs { ... }
@@ -369,4 +411,35 @@ func ctyValueToGo(val cty.Value) interface{} {
 	default:
 		return nil
 	}
+}
+
+// validateHookOutputs validates that each hook type in the environment block
+// declares all required outputs. Returns any validation errors found.
+func (t *Transformer) validateHookOutputs(hooks *internal.InternalHooks) []error {
+	var errs []error
+
+	hookMap := map[string][]internal.InternalHook{
+		"database":      hooks.Database,
+		"task":          hooks.Task,
+		"bucket":        hooks.Bucket,
+		"encryptionKey": hooks.EncryptionKey,
+		"smtp":          hooks.SMTP,
+		"deployment":    hooks.Deployment,
+		"function":      hooks.Function,
+		"service":       hooks.Service,
+		"route":         hooks.Route,
+		"cronjob":       hooks.Cronjob,
+		"secret":        hooks.Secret,
+		"dockerBuild":   hooks.DockerBuild,
+		"observability": hooks.Observability,
+		"port":          hooks.Port,
+	}
+
+	for hookType, hookList := range hookMap {
+		if hookErrs := internal.ValidateHookOutputs(hookType, hookList); len(hookErrs) > 0 {
+			errs = append(errs, hookErrs...)
+		}
+	}
+
+	return errs
 }

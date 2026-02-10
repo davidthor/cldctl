@@ -79,24 +79,11 @@ func (l *versionDetectingLoader) LoadFromBytes(data []byte, sourcePath string) (
 	return &datacenterWrapper{dc: internalDC}, nil
 }
 
-// Validate validates a datacenter without fully parsing.
+// Validate validates a datacenter by parsing and transforming it. This catches
+// both syntax errors and semantic issues like missing required hook outputs.
 func (l *versionDetectingLoader) Validate(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return errors.Wrap(errors.ErrCodeParse, fmt.Sprintf("failed to read %s", path), err)
-	}
-
-	parser := l.parsers["v1"]
-	_, diags, err := parser.ParseBytes(data, path)
-	if err != nil {
-		return errors.ParseError(path, err)
-	}
-
-	if diags.HasErrors() {
-		return errors.ParseError(path, fmt.Errorf("%s", diags.Error()))
-	}
-
-	return nil
+	_, err := l.Load(path)
+	return err
 }
 
 // NewFromInternal creates a Datacenter from an InternalDatacenter.

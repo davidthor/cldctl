@@ -49,17 +49,19 @@ The following inputs are available via `node.inputs`:
 |-------|------|-------------|
 | `host` | string | Database hostname |
 | `port` | number | Database port |
-| `database` | string | Database name |
 | `url` | string | Full connection URL |
 
-Optional outputs:
+These outputs are validated at both build time (`cldctl build datacenter`, `cldctl validate datacenter`) and deploy time. Missing required outputs produce a clear error message.
+
+## Optional Outputs
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `username` | string | Database username |
+| `database` | string | Database name |
+| `username` | string | Database username (not all engines require credentials, e.g., Redis) |
 | `password` | string | Database password |
-| `read` | object | Optional read endpoint (nested object with `host`, `port`, `url`, `username`, `password`) |
-| `write` | object | Optional write endpoint (nested object with `host`, `port`, `url`, `username`, `password`) |
+| `read` | object | Read endpoint (nested object with `host`, `port`, `url`, `username`, `password`) |
+| `write` | object | Write endpoint (nested object with `host`, `port`, `url`, `username`, `password`) |
 
 ### Read/Write Endpoint Separation
 
