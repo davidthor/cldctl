@@ -24,13 +24,22 @@ func NewBuilder(environment, datacenter string) *Builder {
 // AddComponent adds a component's resources to the graph.
 // The componentName is provided externally since component specs no longer contain names.
 func (b *Builder) AddComponent(componentName string, comp component.Component) error {
-	// Record inter-component dependencies (only required, non-optional ones).
-	// Optional dependencies do not create hard edges for destroy protection
-	// or execution ordering.
+	// Record inter-component dependencies.
+	// Required (non-optional) dependencies create hard edges for destroy protection
+	// and execution ordering. Optional dependencies are tracked separately so the
+	// expression resolver can silently return empty strings for them.
 	if deps := comp.Dependencies(); len(deps) > 0 {
 		var depNames []string
 		for _, dep := range deps {
-			if !dep.Optional() {
+			if dep.Optional() {
+				if b.graph.OptionalDependencies == nil {
+					b.graph.OptionalDependencies = make(map[string]map[string]bool)
+				}
+				if b.graph.OptionalDependencies[componentName] == nil {
+					b.graph.OptionalDependencies[componentName] = make(map[string]bool)
+				}
+				b.graph.OptionalDependencies[componentName][dep.Name()] = true
+			} else {
 				depNames = append(depNames, dep.Name())
 			}
 		}
@@ -455,11 +464,19 @@ func (b *Builder) AddComponentWithInstances(componentName string, comp component
 		return distinctSet[key]
 	}
 
-	// Record inter-component dependencies (same as single-instance)
+	// Record inter-component dependencies (same as single-instance).
 	if deps := comp.Dependencies(); len(deps) > 0 {
 		var depNames []string
 		for _, dep := range deps {
-			if !dep.Optional() {
+			if dep.Optional() {
+				if b.graph.OptionalDependencies == nil {
+					b.graph.OptionalDependencies = make(map[string]map[string]bool)
+				}
+				if b.graph.OptionalDependencies[componentName] == nil {
+					b.graph.OptionalDependencies[componentName] = make(map[string]bool)
+				}
+				b.graph.OptionalDependencies[componentName][dep.Name()] = true
+			} else {
 				depNames = append(depNames, dep.Name())
 			}
 		}

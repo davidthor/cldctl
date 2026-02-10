@@ -2202,8 +2202,15 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 				}
 
 				// Dependency not found or doesn't expose this output key.
-				// This is normal for optional dependencies that aren't deployed.
-				return debugUnresolved(fmt.Sprintf("dependency %q output %q not available (dependency may not be deployed)", depName, outputKey))
+				// For optional dependencies this is expected — resolve silently to "".
+				// For required dependencies emit a debug warning.
+				isOptional := e.graph.OptionalDependencies != nil &&
+					e.graph.OptionalDependencies[node.Component] != nil &&
+					e.graph.OptionalDependencies[node.Component][depName]
+				if isOptional {
+					return "" // Silently resolve optional dep to empty string
+				}
+				return debugUnresolved(fmt.Sprintf("dependency %q output %q not available", depName, outputKey))
 
 			default:
 				return debugUnresolved(fmt.Sprintf("unknown expression prefix %q", resourceType))
