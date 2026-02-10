@@ -57,7 +57,9 @@
                   "datacenters/docker-build-hook",
                   "datacenters/cronjob-hook",
                   "datacenters/observability-hook",
-                  "datacenters/port-hook"
+                  "datacenters/port-hook",
+                  "datacenters/database-user-hook",
+                  "datacenters/network-policy-hook"
                 ]
               },
               "datacenters/extends",

@@ -1,0 +1,196 @@
+---
+title: "Database User Hook"
+description: "Provision per-consumer database credentials"
+---
+
+# Database User Hook
+
+The database user hook provisions per-consumer database users with scoped permissions. It is triggered by **implicit databaseUser nodes** that are automatically generated when workloads (deployments, functions, cronjobs, or migration tasks) reference a database via `${{ databases.<name>.* }}` expressions.
+
+## How It Works
+
+When a component declares a database and one or more workloads reference it, cldctl automatically injects a `databaseUser` node **between** the database and each consumer. The consumer then depends on the `databaseUser` node instead of the database directly.
+
+```
+database/main → databaseUser/main--api → deployment/api
+              → databaseUser/main--admin → deployment/admin
+```
+
+### Default Behavior (No Hook Defined)
+
+When no `databaseUser` hook is defined in the datacenter, the databaseUser node **passes through** all outputs from the parent database node unchanged. This means existing datacenters work identically without any changes — zero breaking changes.
+
+### Custom Behavior (Hook Defined)
+
+When a datacenter defines a `databaseUser` hook, the hook can provision per-consumer database users with scoped permissions, returning customized connection strings with per-consumer credentials.
+
+## Basic Usage
+
+```hcl
+databaseUser {
+  module "db-user" {
+    build = "./modules/postgres-user"
+    inputs = {
+      database_name = node.inputs.database
+      username      = "${node.inputs.component}-${node.inputs.consumer}"
+      db_type       = node.inputs.type
+    }
+  }
+
+  outputs = {
+    host     = module.db-user.host
+    port     = module.db-user.port
+    database = module.db-user.database
+    username = module.db-user.username
+    password = module.db-user.password
+    url      = module.db-user.url
+  }
+}
+```
+
+## Inputs
+
+The following inputs are available via `node.inputs`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `database` | string | Name of the parent database resource |
+| `type` | string | Database type and version (e.g., `postgres:^16`) — copied from the parent database |
+| `consumer` | string | Name of the consuming workload (e.g., `api`, `admin`) |
+| `consumerType` | string | Type of the consumer (`deployment`, `function`, `cronjob`, `task`) |
+| `component` | string | Component name the consumer belongs to |
+
+## Required Outputs
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `host` | string | Database hostname |
+| `port` | number | Database port |
+| `url` | string | Full connection URL with per-consumer credentials |
+
+These outputs are validated at both build time and deploy time. Missing required outputs produce a clear error message.
+
+## Optional Outputs
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `database` | string | Database name |
+| `username` | string | Per-consumer username |
+| `password` | string | Per-consumer password |
+| `read` | object | Read endpoint (nested object with `host`, `port`, `url`, `username`, `password`) |
+| `write` | object | Write endpoint (nested object with `host`, `port`, `url`, `username`, `password`) |
+
+## Component Example
+
+This component produces two `databaseUser` nodes automatically (`main--api` and `main--admin`):
+
+```yaml
+# cloud.component.yml
+databases:
+  main:
+    type: postgres:16
+
+deployments:
+  api:
+    image: my-app-api:latest
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+  admin:
+    image: my-app-admin:latest
+    environment:
+      DATABASE_URL: ${{ databases.main.url }}
+```
+
+## Conditional Hooks
+
+You can use `when` conditions to handle different database types:
+
+```hcl
+databaseUser {
+  when = element(split(":", node.inputs.type), 0) == "postgres"
+
+  module "pg-user" {
+    build = "./modules/postgres-user"
+    inputs = {
+      database = node.inputs.database
+      username = "${node.inputs.component}-${node.inputs.consumer}"
+    }
+  }
+
+  outputs = {
+    host     = module.pg-user.host
+    port     = module.pg-user.port
+    url      = module.pg-user.url
+    username = module.pg-user.username
+    password = module.pg-user.password
+  }
+}
+
+# Redis doesn't need per-user credentials — pass through
+databaseUser {
+  when = element(split(":", node.inputs.type), 0) == "redis"
+  # No module needed — databaseUser passes through parent DB outputs by default
+}
+```
+
+## Example OpenTofu Module
+
+```hcl
+# modules/postgres-user/main.tf
+variable "database" {
+  type = string
+}
+
+variable "username" {
+  type = string
+}
+
+resource "postgresql_role" "user" {
+  name     = var.username
+  password = random_password.user_password.result
+  login    = true
+}
+
+resource "postgresql_grant" "user_access" {
+  role        = postgresql_role.user.name
+  database    = var.database
+  schema      = "public"
+  object_type = "table"
+  privileges  = ["SELECT", "INSERT", "UPDATE", "DELETE"]
+}
+
+resource "random_password" "user_password" {
+  length  = 32
+  special = false
+}
+
+output "host" {
+  value = var.host
+}
+
+output "port" {
+  value = var.port
+}
+
+output "username" {
+  value = postgresql_role.user.name
+}
+
+output "password" {
+  value     = random_password.user_password.result
+  sensitive = true
+}
+
+output "url" {
+  value     = "postgresql://${postgresql_role.user.name}:${random_password.user_password.result}@${var.host}:${var.port}/${var.database}"
+  sensitive = true
+}
+```
+
+## Design Notes
+
+- **Implicit creation**: databaseUser nodes are generated automatically by the graph builder — component authors never declare them
+- **Deterministic naming**: Node IDs use the format `{dbName}--{consumerName}` (e.g., `main--api`)
+- **No duplicates**: If a workload references the same database multiple times (e.g., `databases.main.url` and `databases.main.host`), only one databaseUser node is created
+- **Pass-through default**: When no hook is defined, all parent database outputs are copied unchanged
+- **Expression resolution**: `${{ databases.main.url }}` expressions resolve through the databaseUser node's outputs (not the database directly)

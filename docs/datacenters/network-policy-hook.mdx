@@ -1,0 +1,189 @@
+---
+title: "Network Policy Hook"
+description: "Control inter-service traffic based on declared communication patterns"
+---
+
+# Network Policy Hook
+
+The network policy hook provisions network policies (e.g., Kubernetes NetworkPolicies, security group rules) based on the actual communication patterns declared in components. It is triggered by **implicit networkPolicy nodes** that are automatically generated when workloads reference services via `${{ services.<name>.* }}` expressions.
+
+## How It Works
+
+When a workload (deployment, function, cronjob, or migration task) references a service, cldctl automatically creates a `networkPolicy` node capturing the from/to relationship. The networkPolicy node depends on both the source workload and the target service, but **nothing depends on the networkPolicy** — it is a fire-and-forget leaf node with no outputs.
+
+```
+deployment/api ──┐
+                 ├──→ networkPolicy/api--auth
+service/auth ────┘
+```
+
+### Default Behavior (No Hook Defined)
+
+When no `networkPolicy` hook is defined in the datacenter, the networkPolicy node completes immediately with no side effects (no-op). Datacenter authors **opt-in** to network policy enforcement by defining a hook.
+
+### Custom Behavior (Hook Defined)
+
+When a datacenter defines a `networkPolicy` hook, the hook can provision network policies (Kubernetes NetworkPolicies, security group rules, firewall rules, etc.) to enforce zero-trust networking based on declared communication patterns.
+
+## Basic Usage
+
+```hcl
+networkPolicy {
+  module "net-policy" {
+    build = "./modules/k8s-network-policy"
+    inputs = {
+      from_workload  = node.inputs.from
+      from_type      = node.inputs.fromType
+      from_component = node.inputs.fromComponent
+      to_service     = node.inputs.to
+      to_component   = node.inputs.toComponent
+      port           = node.inputs.port
+      namespace      = environment.name
+    }
+  }
+}
+```
+
+## Inputs
+
+The following inputs are available via `node.inputs`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `from` | string | Name of the source workload (e.g., `api`) |
+| `fromType` | string | Type of the source workload (`deployment`, `function`, `cronjob`, `task`) |
+| `fromComponent` | string | Component name the source workload belongs to |
+| `to` | string | Name of the target service (e.g., `auth`) |
+| `toComponent` | string | Component name the target service belongs to |
+| `port` | string | Port number of the target service |
+
+## Outputs
+
+The networkPolicy hook has **no required outputs**. It is a fire-and-forget resource — nothing depends on its outputs. The hook can optionally produce outputs for observability or auditing purposes, but they are not consumed by other nodes.
+
+## Component Example
+
+This component automatically generates a `networkPolicy/api--auth` node:
+
+```yaml
+# cloud.component.yml
+deployments:
+  auth:
+    image: auth-service:latest
+  api:
+    image: api-service:latest
+    environment:
+      AUTH_URL: ${{ services.auth.url }}
+
+services:
+  auth:
+    deployment: auth
+    port: 8080
+  api:
+    deployment: api
+    port: 3001
+```
+
+The graph result includes `networkPolicy/api--auth` with inputs:
+- `from`: `api`
+- `fromType`: `deployment`
+- `to`: `auth`
+- `port`: `8080`
+
+## Conditional Hooks
+
+You can use `when` conditions to apply different policy types:
+
+```hcl
+# Allow cross-component traffic with stricter rules
+networkPolicy {
+  when = node.inputs.fromComponent != node.inputs.toComponent
+
+  module "cross-component-policy" {
+    build = "./modules/k8s-strict-network-policy"
+    inputs = {
+      from_namespace = node.inputs.fromComponent
+      to_namespace   = node.inputs.toComponent
+      port           = node.inputs.port
+    }
+  }
+}
+
+# Intra-component traffic — standard policy
+networkPolicy {
+  module "intra-component-policy" {
+    build = "./modules/k8s-network-policy"
+    inputs = {
+      namespace = "${environment.name}-${node.inputs.fromComponent}"
+      from_pod  = node.inputs.from
+      to_pod    = node.inputs.to
+      port      = node.inputs.port
+    }
+  }
+}
+```
+
+## Example Kubernetes Module
+
+```hcl
+# modules/k8s-network-policy/main.tf
+variable "namespace" {
+  type = string
+}
+
+variable "from_workload" {
+  type = string
+}
+
+variable "to_service" {
+  type = string
+}
+
+variable "port" {
+  type = string
+}
+
+resource "kubernetes_network_policy_v1" "allow" {
+  metadata {
+    name      = "allow-${var.from_workload}-to-${var.to_service}"
+    namespace = var.namespace
+  }
+
+  spec {
+    pod_selector {
+      match_labels = {
+        app = var.to_service
+      }
+    }
+
+    ingress {
+      from {
+        pod_selector {
+          match_labels = {
+            app = var.from_workload
+          }
+        }
+      }
+      ports {
+        port     = var.port
+        protocol = "TCP"
+      }
+    }
+
+    policy_types = ["Ingress"]
+  }
+}
+```
+
+## Cross-Component Support
+
+NetworkPolicy nodes are also created for cross-component service references. When component A's workload references component B's service via `${{ dependencies.B.services.auth.url }}`, a networkPolicy node is created with `fromComponent` set to A and `toComponent` set to B.
+
+## Design Notes
+
+- **Implicit creation**: networkPolicy nodes are generated automatically by the graph builder — component authors never declare them
+- **Deterministic naming**: Node IDs use the format `{fromWorkload}--{toService}` (e.g., `api--auth`)
+- **No duplicates**: If a workload references the same service multiple times (e.g., `services.auth.url` and `services.auth.host`), only one networkPolicy node is created
+- **No-op default**: When no hook is defined, the node completes with no side effects
+- **Fire-and-forget**: Nothing depends on networkPolicy nodes — they are silent leaf nodes
+- **Zero-trust networking**: By defining a networkPolicy hook, datacenter authors can lock down inter-service traffic to only the connections actually declared in components

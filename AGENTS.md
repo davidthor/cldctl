@@ -523,6 +523,20 @@ component "myorg/stripe" {
 | `task` | `id`, `status` |
 | `observability` | `endpoint`, `protocol`, `attributes`; optional: `query_type`, `query_endpoint`, `dashboard_url` |
 | `port` | `port` (optional hook — engine has built-in deterministic fallback) |
+| `databaseUser` | `host`, `port`, `url` (implicit node — pass-through default when no hook defined) |
+| `networkPolicy` | none (implicit node — no-op default when no hook defined; fire-and-forget leaf node) |
+
+### Implicit Graph Nodes
+
+The engine automatically generates two types of implicit nodes based on expression references:
+
+**databaseUser**: When a workload (deployment, function, cronjob, or migration task) references a database via `${{ databases.<name>.* }}`, a `databaseUser` node is interposed between the database and the consumer. The consumer depends on the databaseUser node instead of the database directly. When no `databaseUser` hook is defined, the node passes through all parent database outputs unchanged (zero breaking changes). Datacenter authors can define a `databaseUser` hook to provision per-consumer credentials.
+
+**networkPolicy**: When a workload references a service via `${{ services.<name>.* }}`, a `networkPolicy` node is created as a fire-and-forget leaf node. It depends on both the workload and the service, but nothing depends on it. When no `networkPolicy` hook is defined, the node completes with no side effects. Datacenter authors can define a `networkPolicy` hook to enforce zero-trust networking.
+
+Naming conventions:
+- databaseUser: `{dbName}--{consumerName}` (e.g., `main--api`)
+- networkPolicy: `{fromWorkload}--{toService}` (e.g., `api--auth`)
 
 ### Error Hooks
 
