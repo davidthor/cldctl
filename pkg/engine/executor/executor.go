@@ -19,6 +19,7 @@ import (
 	"github.com/davidthor/cldctl/pkg/engine/planner"
 	"github.com/davidthor/cldctl/pkg/graph"
 	"github.com/davidthor/cldctl/pkg/iac"
+	"github.com/davidthor/cldctl/pkg/names"
 	"github.com/davidthor/cldctl/pkg/schema/datacenter"
 	v1 "github.com/davidthor/cldctl/pkg/schema/datacenter/v1"
 	"github.com/davidthor/cldctl/pkg/state"
@@ -100,6 +101,17 @@ type Options struct {
 	// Environment-level port overrides take priority over datacenter hooks and
 	// the built-in deterministic port allocator.
 	ComponentPorts map[string]map[string]int
+
+	// ComponentRoutes maps component name to route name to route override.
+	// Environment-level route overrides (subdomain, pathPrefix) are injected
+	// into route node inputs by buildModuleInputs.
+	ComponentRoutes map[string]map[string]RouteOverride
+}
+
+// RouteOverride holds environment-level overrides for a single route.
+type RouteOverride struct {
+	Subdomain  string
+	PathPrefix string
 }
 
 // DefaultOptions returns default executor options.
@@ -1618,6 +1630,52 @@ func (e *Executor) buildModuleInputs(module datacenter.Module, node *graph.Node,
 		setIfMissing(inputs, "internal", node.Inputs["internal"])
 		setIfMissing(inputs, "host", host)
 
+		// Inject subdomain and path_prefix from environment route config or generate defaults.
+		// Priority: environment-level override > deterministic default.
+		subdomain := ""
+		pathPrefix := "/"
+		if e.options.ComponentRoutes != nil {
+			if compRoutes, ok := e.options.ComponentRoutes[node.Component]; ok {
+				if ro, ok := compRoutes[node.Name]; ok {
+					subdomain = ro.Subdomain
+					pathPrefix = ro.PathPrefix
+				}
+			}
+		}
+		if subdomain == "" {
+			subdomain = names.Generate(envName, node.Component, node.Name)
+		}
+		if pathPrefix == "" {
+			pathPrefix = "/"
+		}
+		setIfMissing(inputs, "subdomain", subdomain)
+		setIfMissing(inputs, "path_prefix", pathPrefix)
+
+		// Resolve upstream port for the route's target service/function.
+		// This allows datacenter route hooks to know the upstream endpoint
+		// without needing to reference other node outputs.
+		if target, ok := node.Inputs["target"].(string); ok && target != "" {
+			var upstreamPort int
+			targetType, _ := node.Inputs["targetType"].(string)
+			switch targetType {
+			case "service":
+				// Look up the service node's declared port from the component schema
+				svcNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeService, target)
+				if svcNode, ok := e.graph.Nodes[svcNodeID]; ok {
+					upstreamPort = toIntSafe(svcNode.Inputs["port"])
+				}
+			case "function":
+				// Look up the function node and resolve its port (from schema or associated service)
+				fnNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeFunction, target)
+				if fnNode, ok := e.graph.Nodes[fnNodeID]; ok {
+					upstreamPort = e.resolvePortForWorkload(fnNode)
+				}
+			}
+			if upstreamPort > 0 {
+				setIfMissing(inputs, "upstream_port", upstreamPort)
+			}
+		}
+
 	case "build":
 		setIfMissing(inputs, "context", node.Inputs["context"])
 		setIfMissing(inputs, "dockerfile", node.Inputs["dockerfile"])
@@ -1728,6 +1786,24 @@ func setIfMissing(m map[string]interface{}, key string, value interface{}) {
 	if _, exists := m[key]; !exists && value != nil {
 		m[key] = value
 	}
+}
+
+// toIntSafe converts an interface{} to int, handling int, float64, and string types.
+// Returns 0 if the value is nil or cannot be converted.
+func toIntSafe(v interface{}) int {
+	switch val := v.(type) {
+	case int:
+		return val
+	case float64:
+		return int(val)
+	case int64:
+		return int(val)
+	case string:
+		if n, err := strconv.Atoi(val); err == nil {
+			return n
+		}
+	}
+	return 0
 }
 
 // getEnvironmentMap extracts an environment map from node inputs, handling various types.

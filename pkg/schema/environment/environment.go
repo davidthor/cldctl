@@ -119,6 +119,12 @@ type FunctionConfig interface {
 
 // RouteConfig represents route configuration.
 type RouteConfig interface {
+	// Subdomain returns the route subdomain override, or empty string for deterministic default.
+	Subdomain() string
+
+	// PathPrefix returns the route path prefix override, or empty string for default "/".
+	PathPrefix() string
+
 	Hostnames() []Hostname
 	TLS() TLSConfig
 }

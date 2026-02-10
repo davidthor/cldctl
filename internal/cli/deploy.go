@@ -40,17 +40,19 @@ func newDeployCmd() *cobra.Command {
 
 func newDeployComponentCmd() *cobra.Command {
 	var (
-		environment   string
-		datacenter    string
-		variables     []string
-		varFile       string
-		autoApprove   bool
-		importFile    string
-		targets       []string
-		backendType   string
-		backendConfig []string
-		instanceName  string
-		instanceWeight int
+		environment      string
+		datacenter       string
+		variables        []string
+		varFile          string
+		autoApprove      bool
+		importFile       string
+		targets          []string
+		backendType      string
+		backendConfig    []string
+		instanceName     string
+		instanceWeight   int
+		routeSubdomains  []string
+		routePathPrefixes []string
 	)
 
 	cmd := &cobra.Command{
@@ -505,12 +507,25 @@ Examples:
 				fmt.Println()
 			}
 
+			// Parse route flags into route overrides
+			routeOverrides, err := parseRouteFlags(routeSubdomains, routePathPrefixes)
+			if err != nil {
+				return err
+			}
+			var routesMap map[string]map[string]engine.RouteOverride
+			if len(routeOverrides) > 0 {
+				routesMap = map[string]map[string]engine.RouteOverride{
+					componentName: routeOverrides,
+				}
+			}
+
 			// Execute deployment using the engine
 			deployOpts := engine.DeployOptions{
 				Environment: environment,
 				Datacenter:  dc,
 				Components:  componentsMap,
 				Variables:   variablesMap,
+				Routes:      routesMap,
 				Output:      os.Stdout,
 				DryRun:      false,
 				AutoApprove: autoApprove,
@@ -552,8 +567,41 @@ Examples:
 	cmd.Flags().StringArrayVar(&backendConfig, "backend-config", nil, "Backend configuration (key=value)")
 	cmd.Flags().StringVar(&instanceName, "instance", "", "Deploy as a named instance (for progressive delivery)")
 	cmd.Flags().IntVar(&instanceWeight, "weight", 10, "Traffic weight for the instance (0-100, used with --instance)")
+	cmd.Flags().StringArrayVar(&routeSubdomains, "route-subdomain", nil, "Set route subdomain (route=subdomain, repeatable)")
+	cmd.Flags().StringArrayVar(&routePathPrefixes, "route-path-prefix", nil, "Set route path prefix (route=/path, repeatable)")
 
 	return cmd
+}
+
+// parseRouteFlags parses --route-subdomain and --route-path-prefix flags into a
+// map[string]engine.RouteOverride keyed by route name.
+func parseRouteFlags(subdomains, pathPrefixes []string) (map[string]engine.RouteOverride, error) {
+	routes := make(map[string]engine.RouteOverride)
+
+	for _, s := range subdomains {
+		parts := strings.SplitN(s, "=", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return nil, fmt.Errorf("invalid --route-subdomain %q: expected route=subdomain", s)
+		}
+		ro := routes[parts[0]]
+		ro.Subdomain = parts[1]
+		routes[parts[0]] = ro
+	}
+
+	for _, s := range pathPrefixes {
+		parts := strings.SplitN(s, "=", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return nil, fmt.Errorf("invalid --route-path-prefix %q: expected route=/path", s)
+		}
+		if !strings.HasPrefix(parts[1], "/") {
+			return nil, fmt.Errorf("invalid --route-path-prefix %q: path must start with /", s)
+		}
+		ro := routes[parts[0]]
+		ro.PathPrefix = parts[1]
+		routes[parts[0]] = ro
+	}
+
+	return routes, nil
 }
 
 // deployDatacenterComponent registers a component declaration at the datacenter level.

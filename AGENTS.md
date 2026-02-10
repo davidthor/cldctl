@@ -32,6 +32,8 @@ cldctl build datacenter ./dc                              # digest-only
 
 # Deploy commands
 cldctl deploy component myorg/myapp:v1 -e production -d my-datacenter
+cldctl deploy component myorg/myapp:v1 -e staging --route-subdomain main=my-app  # custom route subdomain
+cldctl deploy component myorg/myapp:v1 -e staging --route-path-prefix main=/api  # custom route path prefix
 cldctl deploy component myorg/stripe:latest -d my-dc --var key=secret  # datacenter-level component (no -e)
 cldctl deploy datacenter local davidthor/local-datacenter
 cldctl deploy datacenter prod-dc ghcr.io/myorg/dc:v1.0.0
@@ -99,6 +101,7 @@ cldctl up                                         # Auto-detect cloud.component.
 cldctl up -c ./my-app -d local                    # Component mode: deploy single component
 cldctl up -e cloud.environment.yml -d local       # Environment mode: deploy all components from env file
 cldctl up -c ./my-app --name my-feature -d local  # Named environment
+cldctl up -c ./my-app -d local --route-subdomain main=cool  # Custom route subdomain (component mode only)
 cldctl up -e ./envs/dev.yml --var key=secret      # Environment mode with variable overrides
 cldctl up --detach                                # Run in background
 
@@ -519,7 +522,7 @@ component "myorg/stripe" {
 | `deployment` | `id` |
 | `function` | `id`, `endpoint` |
 | `service` | `host`, `port`, `url` |
-| `route` | `url`, `host`, `port` |
+| `route` | `url`, `host`, `port` (inputs include `subdomain` and `path_prefix` — always present, with deterministic defaults) |
 | `task` | `id`, `status` |
 | `observability` | `endpoint`, `protocol`, `attributes`; optional: `query_type`, `query_endpoint`, `dashboard_url` |
 | `port` | `port` (optional hook — engine has built-in deterministic fallback) |
@@ -613,6 +616,24 @@ By default, `clerk_secret_key` looks up env var `CLERK_SECRET_KEY` (uppercased).
 ### Expression Resolution
 
 Environment files support `${{ variables.* }}` and `${{ locals.* }}` expressions in component variable values. These are resolved before passing to the engine.
+
+### Route Subdomain and Path Prefix
+
+Components can set `subdomain` and `pathPrefix` per route at the environment level. These are passed through the engine to datacenter hooks as `node.inputs.subdomain` and `node.inputs.path_prefix`.
+
+When not explicitly set, `subdomain` is generated deterministically from a hash of (environment, component, route name) — e.g., `salty-aardvark`. The `pathPrefix` defaults to `"/"`.
+
+```yaml
+components:
+  my-app:
+    image: ghcr.io/org/my-app:v1.0.0
+    routes:
+      main:
+        subdomain: custom-name     # optional, deterministic default
+        pathPrefix: /api           # optional, defaults to "/"
+```
+
+Routes are shared resources in the multi-instance model — the subdomain/pathPrefix is the same across all instances, with traffic splitting handled by instance weights.
 
 ### Weighted Instances (Progressive Delivery)
 

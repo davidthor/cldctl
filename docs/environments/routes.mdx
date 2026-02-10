@@ -1,11 +1,11 @@
 ---
 title: "Routes"
-description: "Configure hostnames and TLS for component routes"
+description: "Configure subdomains, path prefixes, hostnames, and TLS for component routes"
 ---
 
 # Routes
 
-Configure hostnames and TLS certificates for component routes at the environment level.
+Configure subdomains, path prefixes, hostnames, and TLS certificates for component routes at the environment level.
 
 ## Basic Usage
 
@@ -14,16 +14,18 @@ components:
   my-app:
     image: ghcr.io/org/my-app:v1.0.0
     routes:
-      main:                       # Route name from component
-        hostnames:
-          - subdomain: app        # Results in app.<env-domain>
+      main:
+        subdomain: custom-name     # optional, deterministic default
+        pathPrefix: /api           # optional, defaults to "/"
 ```
 
 ## Properties
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `hostnames` | array | List of hostname configurations |
+| `subdomain` | string | Route subdomain. Passed to datacenter hooks as `node.inputs.subdomain`. When omitted, a deterministic human-readable default is generated (e.g., `salty-aardvark`). Must be lowercase alphanumeric with hyphens, no leading/trailing hyphens. |
+| `pathPrefix` | string | Route path prefix. Passed to datacenter hooks as `node.inputs.path_prefix`. Defaults to `"/"`. Must start with `/`. |
+| `hostnames` | array | List of hostname configurations (advanced use) |
 | `tls` | object | TLS/HTTPS configuration |
 
 ### Hostname Properties
@@ -39,6 +41,46 @@ components:
 |----------|------|-------------|
 | `enabled` | boolean | Enable HTTPS |
 | `secretName` | string | Custom TLS secret name (optional) |
+
+## Subdomain and Path Prefix
+
+The `subdomain` and `pathPrefix` fields give environment operators control over how routes are exposed, ensuring deterministic URLs and preventing collisions between applications.
+
+### Deterministic Defaults
+
+When `subdomain` is not explicitly set, a deterministic human-readable default is generated using a hash of the environment name, component name, and route name. For example, deploying `my-app` to `staging` might generate `salty-aardvark` as the subdomain. The same inputs always produce the same name.
+
+### Explicit Overrides
+
+```yaml
+components:
+  my-app:
+    image: ghcr.io/org/my-app:v1.0.0
+    routes:
+      main:
+        subdomain: my-custom-name
+        pathPrefix: /api
+      admin:
+        subdomain: admin-panel
+```
+
+### CLI Overrides
+
+You can also set subdomain and pathPrefix from the CLI without modifying the environment file:
+
+```bash
+cldctl deploy component myapp:v1 -e staging \
+  --route-subdomain main=my-custom-name \
+  --route-path-prefix main=/api
+
+cldctl up -c ./my-app -d local \
+  --route-subdomain main=cool-prefix \
+  --route-path-prefix api=/v2
+```
+
+### How It Works
+
+The subdomain and pathPrefix values are passed through to datacenter hooks as `node.inputs.subdomain` and `node.inputs.path_prefix`. Datacenter authors use these values to configure DNS records, load balancer rules, or nginx proxy configurations.
 
 ## Hostname Configuration
 

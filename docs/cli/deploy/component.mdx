@@ -36,6 +36,8 @@ cldctl deploy component <image> -e <environment> [options]
 | `--target <resource>` | Target specific resource (repeatable) |
 | `--instance <name>` | Deploy as a named instance for progressive delivery (canary/blue-green) |
 | `--weight <0-100>` | Traffic weight for the instance (default: 10, used with `--instance`) |
+| `--route-subdomain <route=subdomain>` | Set route subdomain (repeatable). Overrides the deterministic default for the named route. |
+| `--route-path-prefix <route=/path>` | Set route path prefix (repeatable). Must start with `/`. |
 | `--backend <type>` | State backend type |
 | `--backend-config <key=value>` | Backend configuration |
 
@@ -168,6 +170,30 @@ Dependencies that are already deployed in the environment are skipped -- they ar
 <Card title="Automatic Dependency Deployment Guide" icon="diagram-project" href="/guides/components/dependency-deployment">
   In-depth guide on recursive dependency deployment, ephemeral environments, pass-through components, and CI/CD patterns
 </Card>
+
+## Route Subdomain and Path Prefix
+
+Control how routes are exposed with `--route-subdomain` and `--route-path-prefix`:
+
+```bash
+# Set a custom subdomain for the "main" route
+cldctl deploy component myapp:v1 -e staging --route-subdomain main=my-custom-name
+
+# Set both subdomain and path prefix
+cldctl deploy component myapp:v1 -e staging \
+  --route-subdomain main=api-gateway \
+  --route-path-prefix main=/v2
+
+# Multiple routes
+cldctl deploy component myapp:v1 -e staging \
+  --route-subdomain main=app \
+  --route-subdomain admin=admin-panel \
+  --route-path-prefix admin=/dashboard
+```
+
+When not specified, each route gets a deterministic subdomain generated from a hash of the environment, component, and route names (e.g., `salty-aardvark`). The path prefix defaults to `/`.
+
+These values are passed to datacenter hooks as `node.inputs.subdomain` and `node.inputs.path_prefix`.
 
 ## CI/CD Usage
 

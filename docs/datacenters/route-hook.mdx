@@ -49,6 +49,8 @@ The following inputs are available via `node.inputs`:
 | `rules` | array | Routing rules |
 | `service` | string | Target service (shorthand) |
 | `port` | number | Target port (shorthand) |
+| `subdomain` | string | Route subdomain. Set from environment config or generated deterministically (e.g., `salty-aardvark`). Always present. |
+| `path_prefix` | string | Route path prefix. Set from environment config or defaults to `"/"`. Always present. |
 
 ## Required Outputs
 
