@@ -127,6 +127,17 @@ func IsPerInstanceType(t NodeType) bool {
 	}
 }
 
+// IsWorkloadType returns true if the given node type is a workload that can consume
+// databases and services (deployment, function, cronjob, task).
+func IsWorkloadType(t NodeType) bool {
+	switch t {
+	case NodeTypeDeployment, NodeTypeFunction, NodeTypeCronjob, NodeTypeTask:
+		return true
+	default:
+		return false
+	}
+}
+
 // IsSharedType returns true if the given node type is shared by default.
 func IsSharedType(t NodeType) bool {
 	return !IsPerInstanceType(t)

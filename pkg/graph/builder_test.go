@@ -104,8 +104,15 @@ functions:
 	deployNode := g.GetNode("my-app/deployment/api")
 	fnNode := g.GetNode("my-app/function/web")
 
+	// databaseUser nodes should be interposed
+	dbUserAPI := g.GetNode("my-app/databaseUser/main--api")
+	dbUserWeb := g.GetNode("my-app/databaseUser/main--web")
+
 	if dbNode == nil || taskNode == nil || deployNode == nil || fnNode == nil {
 		t.Fatal("expected all nodes to exist")
+	}
+	if dbUserAPI == nil || dbUserWeb == nil {
+		t.Fatal("expected databaseUser nodes to exist")
 	}
 
 	// Deployment should depend on task (not just database)
@@ -132,16 +139,28 @@ functions:
 		t.Error("expected function to depend on task node")
 	}
 
-	// Deployment should also depend on database directly
-	deployDependsOnDB := false
+	// Deployment should depend on databaseUser (not database directly)
+	deployDependsOnDBUser := false
 	for _, dep := range deployNode.DependsOn {
-		if dep == dbNode.ID {
-			deployDependsOnDB = true
+		if dep == dbUserAPI.ID {
+			deployDependsOnDBUser = true
 			break
 		}
 	}
-	if !deployDependsOnDB {
-		t.Error("expected deployment to also depend on database node")
+	if !deployDependsOnDBUser {
+		t.Error("expected deployment to depend on databaseUser node")
+	}
+
+	// databaseUser should depend on database
+	dbUserDependsOnDB := false
+	for _, dep := range dbUserAPI.DependsOn {
+		if dep == dbNode.ID {
+			dbUserDependsOnDB = true
+			break
+		}
+	}
+	if !dbUserDependsOnDB {
+		t.Error("expected databaseUser to depend on database node")
 	}
 
 	// Task should depend on database
@@ -156,7 +175,7 @@ functions:
 		t.Error("expected task to depend on database node")
 	}
 
-	// Verify topological sort produces correct order: database -> task -> deployment/function
+	// Verify topological sort produces correct order: database -> task/databaseUser -> deployment/function
 	sorted, err := g.TopologicalSort()
 	if err != nil {
 		t.Fatalf("unexpected topological sort error: %v", err)
@@ -175,6 +194,12 @@ functions:
 	}
 	if nodeIndex[taskNode.ID] >= nodeIndex[fnNode.ID] {
 		t.Error("task should come before function in topological order")
+	}
+	if nodeIndex[dbNode.ID] >= nodeIndex[dbUserAPI.ID] {
+		t.Error("database should come before databaseUser in topological order")
+	}
+	if nodeIndex[dbUserAPI.ID] >= nodeIndex[deployNode.ID] {
+		t.Error("databaseUser should come before deployment in topological order")
 	}
 }
 
@@ -207,21 +232,38 @@ deployments:
 		t.Errorf("expected 0 task nodes, got %d", len(taskNodes))
 	}
 
-	// Deployment should depend directly on database
+	// Deployment should depend on databaseUser (not database directly)
 	deployNode := g.GetNode("my-app/deployment/api")
 	if deployNode == nil {
 		t.Fatal("expected deployment node to exist")
 	}
 
-	deployDependsOnDB := false
+	dbUserNode := g.GetNode("my-app/databaseUser/main--api")
+	if dbUserNode == nil {
+		t.Fatal("expected databaseUser node to exist")
+	}
+
+	deployDependsOnDBUser := false
 	for _, dep := range deployNode.DependsOn {
-		if dep == "my-app/database/main" {
-			deployDependsOnDB = true
+		if dep == dbUserNode.ID {
+			deployDependsOnDBUser = true
 			break
 		}
 	}
-	if !deployDependsOnDB {
-		t.Error("expected deployment to depend on database node")
+	if !deployDependsOnDBUser {
+		t.Error("expected deployment to depend on databaseUser node")
+	}
+
+	// databaseUser should depend on database
+	dbUserDependsOnDB := false
+	for _, dep := range dbUserNode.DependsOn {
+		if dep == "my-app/database/main" {
+			dbUserDependsOnDB = true
+			break
+		}
+	}
+	if !dbUserDependsOnDB {
+		t.Error("expected databaseUser to depend on database node")
 	}
 }
 

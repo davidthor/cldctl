@@ -412,6 +412,8 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 
 // addEnvDependencies parses an environment variable value and adds dependencies
 // with proper bidirectional relationships.
+// When a workload references a database, a databaseUser node is interposed.
+// When a workload references a service, a networkPolicy leaf node is created.
 func (b *Builder) addEnvDependencies(componentName string, node *Node, value string) {
 	deps := extractDependencies(value)
 	for _, dep := range deps {
@@ -424,9 +426,35 @@ func (b *Builder) addEnvDependencies(componentName string, node *Node, value str
 		if depNode == nil {
 			continue
 		}
+
+		// Implicit databaseUser interposition: when a workload references a database,
+		// inject a databaseUser node between the database and the consumer.
+		if depNode.Type == NodeTypeDatabase && IsWorkloadType(node.Type) {
+			dbUserNode := b.getOrCreateDatabaseUserNode(componentName, depNode, node)
+			// Consumer depends on databaseUser instead of database directly
+			node.AddDependency(dbUserNode.ID)
+			dbUserNode.AddDependent(node.ID)
+
+			// Also depend on any task nodes that depend on the database.
+			for _, dependentID := range depNode.DependedOnBy {
+				taskNode := b.graph.GetNode(dependentID)
+				if taskNode != nil && taskNode.Type == NodeTypeTask {
+					node.AddDependency(dependentID)
+					taskNode.AddDependent(node.ID)
+				}
+			}
+			continue
+		}
+
 		// Add bidirectional relationship
 		node.AddDependency(depNodeID)
 		depNode.AddDependent(node.ID)
+
+		// Implicit networkPolicy creation: when a workload references a service,
+		// create a networkPolicy leaf node capturing the from/to relationship.
+		if depNode.Type == NodeTypeService && IsWorkloadType(node.Type) {
+			b.getOrCreateNetworkPolicyNode(componentName, node, depNode)
+		}
 
 		// Also depend on any task nodes that depend on this resource.
 		// This ensures tasks (e.g., database migrations) complete before
@@ -439,6 +467,69 @@ func (b *Builder) addEnvDependencies(componentName string, node *Node, value str
 			}
 		}
 	}
+}
+
+// getOrCreateDatabaseUserNode returns (or creates) a databaseUser node for the given
+// database-consumer pair. The databaseUser node depends on the database and passes
+// through its outputs unless a datacenter hook customizes them.
+// Naming convention: {dbName}--{consumerName}
+func (b *Builder) getOrCreateDatabaseUserNode(componentName string, dbNode, consumerNode *Node) *Node {
+	dbUserName := dbNode.Name + "--" + consumerNode.Name
+	dbUserID := fmt.Sprintf("%s/%s/%s", componentName, NodeTypeDatabaseUser, dbUserName)
+
+	existing := b.graph.GetNode(dbUserID)
+	if existing != nil {
+		return existing
+	}
+
+	dbUserNode := NewNode(NodeTypeDatabaseUser, componentName, dbUserName)
+	dbUserNode.SetInput("database", dbNode.Name)
+	dbUserNode.SetInput("type", dbNode.Inputs["type"])
+	dbUserNode.SetInput("consumer", consumerNode.Name)
+	dbUserNode.SetInput("consumerType", string(consumerNode.Type))
+	dbUserNode.SetInput("component", componentName)
+
+	// databaseUser depends on the database
+	dbUserNode.AddDependency(dbNode.ID)
+	dbNode.AddDependent(dbUserNode.ID)
+
+	_ = b.graph.AddNode(dbUserNode)
+	return dbUserNode
+}
+
+// getOrCreateNetworkPolicyNode returns (or creates) a networkPolicy leaf node for the
+// given workload-to-service relationship. The networkPolicy depends on both the workload
+// and the service. Nothing depends on it — it is a fire-and-forget side-effect node.
+// Naming convention: {fromWorkload}--{toService}
+func (b *Builder) getOrCreateNetworkPolicyNode(componentName string, fromNode, toServiceNode *Node) *Node {
+	npName := fromNode.Name + "--" + toServiceNode.Name
+	npID := fmt.Sprintf("%s/%s/%s", componentName, NodeTypeNetworkPolicy, npName)
+
+	existing := b.graph.GetNode(npID)
+	if existing != nil {
+		return existing
+	}
+
+	npNode := NewNode(NodeTypeNetworkPolicy, componentName, npName)
+	npNode.SetInput("from", fromNode.Name)
+	npNode.SetInput("fromType", string(fromNode.Type))
+	npNode.SetInput("fromComponent", componentName)
+	npNode.SetInput("to", toServiceNode.Name)
+	npNode.SetInput("toComponent", toServiceNode.Component)
+
+	// Extract port from the service node inputs
+	if port, ok := toServiceNode.Inputs["port"]; ok {
+		npNode.SetInput("port", port)
+	}
+
+	// networkPolicy depends on both the workload and the service
+	npNode.AddDependency(fromNode.ID)
+	fromNode.AddDependent(npNode.ID)
+	npNode.AddDependency(toServiceNode.ID)
+	toServiceNode.AddDependent(npNode.ID)
+
+	_ = b.graph.AddNode(npNode)
+	return npNode
 }
 
 // InstanceInfo describes a component instance for multi-instance graph building.
@@ -814,6 +905,7 @@ func (b *Builder) AddComponentWithInstances(componentName string, comp component
 // addInstanceEnvDependencies resolves dependencies for instance-qualified nodes.
 // It first looks for per-instance dependencies (instance-qualified IDs),
 // then falls back to shared resources (non-instance-qualified IDs).
+// Also injects databaseUser and networkPolicy implicit nodes.
 func (b *Builder) addInstanceEnvDependencies(componentName, instanceName string, node *Node, value string) {
 	deps := extractDependencies(value)
 	for _, dep := range deps {
@@ -835,8 +927,29 @@ func (b *Builder) addInstanceEnvDependencies(componentName, instanceName string,
 			}
 		}
 
+		// Implicit databaseUser interposition for multi-instance mode
+		if depNode.Type == NodeTypeDatabase && IsWorkloadType(node.Type) {
+			dbUserNode := b.getOrCreateDatabaseUserNode(componentName, depNode, node)
+			node.AddDependency(dbUserNode.ID)
+			dbUserNode.AddDependent(node.ID)
+
+			for _, dependentID := range depNode.DependedOnBy {
+				taskNode := b.graph.GetNode(dependentID)
+				if taskNode != nil && taskNode.Type == NodeTypeTask {
+					node.AddDependency(dependentID)
+					taskNode.AddDependent(node.ID)
+				}
+			}
+			continue
+		}
+
 		node.AddDependency(depNodeID)
 		depNode.AddDependent(node.ID)
+
+		// Implicit networkPolicy creation for multi-instance mode
+		if depNode.Type == NodeTypeService && IsWorkloadType(node.Type) {
+			b.getOrCreateNetworkPolicyNode(componentName, node, depNode)
+		}
 
 		// Also depend on tasks
 		for _, dependentID := range depNode.DependedOnBy {
