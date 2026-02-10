@@ -24,6 +24,20 @@ type Graph struct {
 	// names. Used by the expression resolver to silently resolve references to
 	// optional dependencies that aren't deployed (instead of emitting warnings).
 	OptionalDependencies map[string]map[string]bool
+
+	// ComponentOutputExprs maps component names to their declared output
+	// expressions (e.g., {"secret_key": "${{ variables.secret_key }}"}).
+	// These are raw expressions from the component schema that are resolved
+	// at deploy time by the executor after all resources are deployed.
+	ComponentOutputExprs map[string]map[string]string
+
+	// DependencyTargets maps (component name, dependency alias) to the target
+	// component name. For example, if questra/app declares a dependency named
+	// "clerk" with source "questra/clerk", this stores:
+	//   DependencyTargets["questra/app"]["clerk"] = "questra/clerk"
+	// Used by the expression resolver to map ${{ dependencies.clerk.* }} to
+	// the actual component name in the graph.
+	DependencyTargets map[string]map[string]string
 }
 
 // NewGraph creates a new empty graph.

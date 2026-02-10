@@ -74,9 +74,25 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 	// Required (non-optional) dependencies create hard edges for destroy protection
 	// and execution ordering. Optional dependencies are tracked separately so the
 	// expression resolver can silently return empty strings for them.
+	// DependencyTargets maps dep alias → target component name for expression resolution.
 	if deps := comp.Dependencies(); len(deps) > 0 {
 		var depNames []string
 		for _, dep := range deps {
+			// Record the dep alias → target component name mapping.
+			// dep.Component() is the OCI reference (e.g., "questra/clerk:latest");
+			// strip the tag to get the component name used in the environment.
+			targetComp := dep.Component()
+			if idx := strings.LastIndex(targetComp, ":"); idx > 0 {
+				targetComp = targetComp[:idx]
+			}
+			if b.graph.DependencyTargets == nil {
+				b.graph.DependencyTargets = make(map[string]map[string]string)
+			}
+			if b.graph.DependencyTargets[componentName] == nil {
+				b.graph.DependencyTargets[componentName] = make(map[string]string)
+			}
+			b.graph.DependencyTargets[componentName][dep.Name()] = targetComp
+
 			if dep.Optional() {
 				if b.graph.OptionalDependencies == nil {
 					b.graph.OptionalDependencies = make(map[string]map[string]bool)
@@ -95,6 +111,20 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 			}
 			b.graph.ComponentDependencies[componentName] = depNames
 		}
+	}
+
+	// Record component-level output expressions so the executor can resolve
+	// them after all resources are deployed. This is essential for pass-through
+	// components (e.g., credential wrappers) that have outputs but no resources.
+	if outputs := comp.Outputs(); len(outputs) > 0 {
+		if b.graph.ComponentOutputExprs == nil {
+			b.graph.ComponentOutputExprs = make(map[string]map[string]string)
+		}
+		outMap := make(map[string]string, len(outputs))
+		for _, out := range outputs {
+			outMap[out.Name()] = out.Value()
+		}
+		b.graph.ComponentOutputExprs[componentName] = outMap
 	}
 
 	// Get the component's base directory for resolving relative paths
@@ -644,6 +674,18 @@ func (b *Builder) AddComponentWithInstances(componentName string, comp component
 	if deps := comp.Dependencies(); len(deps) > 0 {
 		var depNames []string
 		for _, dep := range deps {
+			targetComp := dep.Component()
+			if idx := strings.LastIndex(targetComp, ":"); idx > 0 {
+				targetComp = targetComp[:idx]
+			}
+			if b.graph.DependencyTargets == nil {
+				b.graph.DependencyTargets = make(map[string]map[string]string)
+			}
+			if b.graph.DependencyTargets[componentName] == nil {
+				b.graph.DependencyTargets[componentName] = make(map[string]string)
+			}
+			b.graph.DependencyTargets[componentName][dep.Name()] = targetComp
+
 			if dep.Optional() {
 				if b.graph.OptionalDependencies == nil {
 					b.graph.OptionalDependencies = make(map[string]map[string]bool)
@@ -662,6 +704,18 @@ func (b *Builder) AddComponentWithInstances(componentName string, comp component
 			}
 			b.graph.ComponentDependencies[componentName] = depNames
 		}
+	}
+
+	// Record component-level output expressions (same as single-instance).
+	if outputs := comp.Outputs(); len(outputs) > 0 {
+		if b.graph.ComponentOutputExprs == nil {
+			b.graph.ComponentOutputExprs = make(map[string]map[string]string)
+		}
+		outMap := make(map[string]string, len(outputs))
+		for _, out := range outputs {
+			outMap[out.Name()] = out.Value()
+		}
+		b.graph.ComponentOutputExprs[componentName] = outMap
 	}
 
 	compDir := filepath.Dir(comp.SourcePath())

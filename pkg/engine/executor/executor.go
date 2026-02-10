@@ -239,6 +239,102 @@ func computeComponentStatuses(envState *types.EnvironmentState) {
 	}
 }
 
+// resolveAndStoreComponentOutputs resolves component-level output expressions
+// and stores the results on each ComponentState. This enables dependents to
+// access outputs from pass-through components (e.g., credential wrappers) that
+// have no infrastructure resources but expose variables as outputs.
+//
+// Output expressions can reference:
+//   - ${{ variables.<name> }}       → component deployment variables
+//   - ${{ databases.<name>.<key> }} → resource outputs (resolved via graph nodes)
+//   - ${{ services.<name>.<key> }}  → resource outputs
+//   - Other standard component expressions
+func (e *Executor) resolveAndStoreComponentOutputs(envState *types.EnvironmentState) {
+	if e.graph == nil || e.graph.ComponentOutputExprs == nil {
+		return
+	}
+
+	exprPattern := regexp.MustCompile(`\$\{\{\s*([^}]+)\s*\}\}`)
+
+	for compName, outputExprs := range e.graph.ComponentOutputExprs {
+		// Get component variables
+		compVars := make(map[string]interface{})
+		if e.options.ComponentVariables != nil {
+			if vars, ok := e.options.ComponentVariables[compName]; ok {
+				compVars = vars
+			}
+		}
+
+		resolved := make(map[string]interface{}, len(outputExprs))
+		for outName, expr := range outputExprs {
+			val := exprPattern.ReplaceAllStringFunc(expr, func(match string) string {
+				inner := match[3 : len(match)-2]
+				inner = strings.TrimSpace(inner)
+				parts := strings.Split(inner, ".")
+
+				if len(parts) < 2 {
+					return match
+				}
+
+				switch parts[0] {
+				case "variables":
+					varName := parts[1]
+					if v, ok := compVars[varName]; ok {
+						return fmt.Sprintf("%v", v)
+					}
+					return ""
+
+				case "databases", "services", "buckets", "routes", "ports":
+					// Look up resource output from graph
+					if len(parts) < 3 {
+						return ""
+					}
+					var nodeType graph.NodeType
+					switch parts[0] {
+					case "databases":
+						nodeType = graph.NodeTypeDatabase
+					case "services":
+						nodeType = graph.NodeTypeService
+					case "buckets":
+						nodeType = graph.NodeTypeBucket
+					case "routes":
+						nodeType = graph.NodeTypeRoute
+					case "ports":
+						nodeType = graph.NodeTypePort
+					}
+					nodeID := fmt.Sprintf("%s/%s/%s", compName, nodeType, parts[1])
+					if n, ok := e.graph.Nodes[nodeID]; ok && n.Outputs != nil {
+						if v, ok := n.Outputs[parts[2]]; ok {
+							return fmt.Sprintf("%v", v)
+						}
+					}
+					return ""
+
+				default:
+					return ""
+				}
+			})
+			resolved[outName] = val
+		}
+
+		// Store on the ComponentState
+		if envState.Components != nil {
+			if compState, ok := envState.Components[compName]; ok {
+				compState.Outputs = resolved
+			}
+		}
+
+		// Also ensure components with outputs but no resources still get state entries
+		if envState.Components[compName] == nil {
+			cs := e.newComponentState(compName)
+			cs.Outputs = resolved
+			cs.Status = types.ResourceStatusReady
+			cs.DeployedAt = time.Now()
+			envState.Components[compName] = cs
+		}
+	}
+}
+
 // Execute runs an execution plan.
 func (e *Executor) Execute(ctx context.Context, plan *planner.Plan, g *graph.Graph) (*ExecutionResult, error) {
 	startTime := time.Now()
@@ -403,6 +499,10 @@ func (e *Executor) Execute(ctx context.Context, plan *planner.Plan, g *graph.Gra
 
 	// Compute component statuses from child resources
 	computeComponentStatuses(envState)
+
+	// Resolve component-level output expressions (e.g., pass-through components
+	// that expose variables as outputs for dependents).
+	e.resolveAndStoreComponentOutputs(envState)
 
 	// Update environment status
 	if result.Success {
@@ -2319,12 +2419,23 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 
 			case "dependencies":
 				// Resolve cross-component dependency outputs.
-				// Format: dependencies.<depName>.outputs.<outputKey>
-				// or:     dependencies.<depName>.<outputKey>
+				// Format: dependencies.<depAlias>.outputs.<outputKey>
+				// or:     dependencies.<depAlias>.<outputKey>
 				if len(parts) < 3 {
 					return debugUnresolved("malformed dependencies expression (expected dependencies.<name>.outputs.<key>)")
 				}
-				depName := parts[1]
+				depAlias := parts[1]
+
+				// Resolve the dependency alias to the actual component name.
+				// E.g., "clerk" → "questra/clerk" via DependencyTargets.
+				targetComp := depAlias
+				if e.graph.DependencyTargets != nil {
+					if targets, ok := e.graph.DependencyTargets[node.Component]; ok {
+						if tc, ok := targets[depAlias]; ok {
+							targetComp = tc
+						}
+					}
+				}
 
 				// Determine the output key (handle both with and without "outputs" segment)
 				var outputKey string
@@ -2334,20 +2445,47 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 					outputKey = parts[2]
 				}
 
-				// First try: look up the dependency component's outputs from the graph
-				// (for components deployed in the same session)
-				for _, graphNode := range e.graph.Nodes {
-					if graphNode.Component == depName && graphNode.Outputs != nil {
-						if val, ok := graphNode.Outputs[outputKey]; ok {
-							return fmt.Sprintf("%v", val)
+				// Try 1: look up component-level outputs from the graph
+				// (for pass-through components with outputs but no resources,
+				// resolved during the current session)
+				if e.graph.ComponentOutputExprs != nil {
+					if outExprs, ok := e.graph.ComponentOutputExprs[targetComp]; ok {
+						if exprStr, ok := outExprs[outputKey]; ok {
+							// Resolve the output expression inline using the
+							// dependency component's variables
+							depVars := make(map[string]interface{})
+							if e.options.ComponentVariables != nil {
+								if vars, ok := e.options.ComponentVariables[targetComp]; ok {
+									depVars = vars
+								}
+							}
+							resolved := exprPattern.ReplaceAllStringFunc(exprStr, func(m string) string {
+								innerM := m[3 : len(m)-2]
+								innerM = strings.TrimSpace(innerM)
+								mParts := strings.Split(innerM, ".")
+								if len(mParts) >= 2 && mParts[0] == "variables" {
+									if v, ok := depVars[mParts[1]]; ok {
+										return fmt.Sprintf("%v", v)
+									}
+								}
+								return ""
+							})
+							return resolved
 						}
 					}
 				}
 
-				// Second try: look up from environment state
+				// Try 2: look up component-level outputs from environment state
 				// (for components deployed in a previous session)
 				if envState != nil {
-					if depComp, ok := envState.Components[depName]; ok {
+					if depComp, ok := envState.Components[targetComp]; ok {
+						// Check component-level outputs first
+						if depComp.Outputs != nil {
+							if val, ok := depComp.Outputs[outputKey]; ok {
+								return fmt.Sprintf("%v", val)
+							}
+						}
+						// Fall back to resource-level outputs
 						for _, res := range depComp.Resources {
 							if res.Outputs != nil {
 								if val, ok := res.Outputs[outputKey]; ok {
@@ -2358,16 +2496,26 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 					}
 				}
 
+				// Try 3: look up resource-level outputs from graph nodes
+				// (for components deployed in the same session with resources)
+				for _, graphNode := range e.graph.Nodes {
+					if graphNode.Component == targetComp && graphNode.Outputs != nil {
+						if val, ok := graphNode.Outputs[outputKey]; ok {
+							return fmt.Sprintf("%v", val)
+						}
+					}
+				}
+
 				// Dependency not found or doesn't expose this output key.
 				// For optional dependencies this is expected — resolve silently to "".
 				// For required dependencies emit a debug warning.
 				isOptional := e.graph.OptionalDependencies != nil &&
 					e.graph.OptionalDependencies[node.Component] != nil &&
-					e.graph.OptionalDependencies[node.Component][depName]
-				if isOptional {
-					return "" // Silently resolve optional dep to empty string
-				}
-				return debugUnresolved(fmt.Sprintf("dependency %q output %q not available", depName, outputKey))
+				e.graph.OptionalDependencies[node.Component][depAlias]
+			if isOptional {
+				return "" // Silently resolve optional dep to empty string
+			}
+			return debugUnresolved(fmt.Sprintf("dependency %q (component %q) output %q not available", depAlias, targetComp, outputKey))
 
 			default:
 				return debugUnresolved(fmt.Sprintf("unknown expression prefix %q", resourceType))
@@ -3225,6 +3373,7 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 
 		// Still save state and return
 		computeComponentStatuses(envState)
+		e.resolveAndStoreComponentOutputs(envState)
 		envState.Status = types.EnvironmentStatusFailed
 		envState.UpdatedAt = time.Now()
 		_ = e.stateManager.SaveEnvironment(ctx, plan.Datacenter, envState)
@@ -3260,6 +3409,10 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 
 	// Compute component statuses from child resources
 	computeComponentStatuses(envState)
+
+	// Resolve component-level output expressions (e.g., pass-through components
+	// that expose variables as outputs for dependents).
+	e.resolveAndStoreComponentOutputs(envState)
 
 	// Update environment status
 	if result.Success {
