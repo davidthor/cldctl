@@ -70,6 +70,9 @@ type ProgressTable struct {
 	// tableLines tracks how many lines the dynamic table occupies so that
 	// subsequent redraws can move the cursor back to overwrite them.
 	tableLines int
+
+	// tickerStop signals the background refresh goroutine to stop.
+	tickerStop chan struct{}
 }
 
 // NewProgressTable creates a new progress table.
@@ -96,6 +99,39 @@ func NewProgressTable(w io.Writer) *ProgressTable {
 		writer:    w,
 		startTime: time.Now(),
 		dynamic:   dynamic,
+	}
+}
+
+// StartTicker starts a background goroutine that re-renders the dynamic table
+// every second. This keeps the elapsed-time counter and in-progress durations
+// ticking even when no status changes occur. Call StopTicker when the
+// deployment finishes.
+func (p *ProgressTable) StartTicker() {
+	if !p.dynamic {
+		return
+	}
+	p.tickerStop = make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				p.mu.Lock()
+				p.renderTableLocked()
+				p.mu.Unlock()
+			case <-p.tickerStop:
+				return
+			}
+		}
+	}()
+}
+
+// StopTicker stops the background refresh goroutine.
+func (p *ProgressTable) StopTicker() {
+	if p.tickerStop != nil {
+		close(p.tickerStop)
+		p.tickerStop = nil
 	}
 }
 
@@ -661,7 +697,14 @@ func (p *ProgressTable) statusDescription(res *ResourceInfo) string {
 		case "database", "bucket", "service", "route", "network", "volume":
 			verb = "creating"
 		}
-		return colorYellow + verb + "..." + colorReset
+		elapsed := ""
+		if !res.StartTime.IsZero() {
+			d := time.Since(res.StartTime).Round(time.Second)
+			if d >= time.Second {
+				elapsed = fmt.Sprintf(" (%s)", d)
+			}
+		}
+		return colorYellow + verb + "..." + elapsed + colorReset
 	case StatusCompleted:
 		duration := ""
 		if !res.EndTime.IsZero() && !res.StartTime.IsZero() {

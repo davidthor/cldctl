@@ -84,6 +84,11 @@ type ComponentState struct {
 	// Populated at deploy time from the component schema's dependency declarations.
 	Dependencies []string `json:"dependencies,omitempty"`
 
+	// Outputs are the resolved component-level outputs (from the component's
+	// outputs block). These are what dependents access via
+	// ${{ dependencies.<name>.outputs.<key> }}.
+	Outputs map[string]interface{} `json:"outputs,omitempty"`
+
 	// Resource states (shared resources in multi-instance mode)
 	Resources map[string]*ResourceState `json:"resources,omitempty"`
 

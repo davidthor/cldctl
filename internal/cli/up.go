@@ -214,6 +214,9 @@ Examples:
 			onPlan := func(plan *planner.Plan) {
 				populateProgressFromPlan(progress, plan)
 				progress.PrintInitial()
+				// Start periodic re-render so elapsed times tick even
+				// when no status changes are emitted by the engine.
+				progress.StartTicker()
 			}
 
 		// Create progress callback for engine updates
@@ -259,6 +262,10 @@ Examples:
 				OnProgress:  onProgress,
 				OnPlan:      onPlan,
 			})
+
+			// Stop the background ticker before printing the final summary
+			// so that renders don't race with the summary output.
+			progress.StopTicker()
 
 			// Always print the final progress summary so the user sees a clear
 			// success/failure report with resource counts and error details.
