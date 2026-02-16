@@ -17,12 +17,12 @@ import (
 
 // DockerProvisioner handles local Docker-based resource provisioning.
 type DockerProvisioner struct {
-	envName       string
-	networkName   string
-	basePort      int
-	nextPort      int
-	containerIDs  []string
-	resources     map[string]*types.ResourceState
+	envName      string
+	networkName  string
+	basePort     int
+	nextPort     int
+	containerIDs []string
+	resources    map[string]*types.ResourceState
 }
 
 // NewDockerProvisioner creates a new Docker provisioner for local development.

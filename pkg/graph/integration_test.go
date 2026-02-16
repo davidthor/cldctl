@@ -874,14 +874,14 @@ routes:
 
 	// Verify all nodes
 	expectedNodes := map[string]NodeType{
-		"my-app/database/main":    NodeTypeDatabase,
-		"my-app/database/cache":   NodeTypeDatabase,
-		"my-app/bucket/uploads":   NodeTypeBucket,
-		"my-app/deployment/api":   NodeTypeDeployment,
-		"my-app/function/web":     NodeTypeFunction,
-		"my-app/service/api":      NodeTypeService,
-		"my-app/route/main":       NodeTypeRoute,
-		"my-app/route/api":        NodeTypeRoute,
+		"my-app/database/main":  NodeTypeDatabase,
+		"my-app/database/cache": NodeTypeDatabase,
+		"my-app/bucket/uploads": NodeTypeBucket,
+		"my-app/deployment/api": NodeTypeDeployment,
+		"my-app/function/web":   NodeTypeFunction,
+		"my-app/service/api":    NodeTypeService,
+		"my-app/route/main":     NodeTypeRoute,
+		"my-app/route/api":      NodeTypeRoute,
 	}
 
 	for nodeID, expectedType := range expectedNodes {

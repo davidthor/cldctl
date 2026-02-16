@@ -8,11 +8,11 @@ import (
 // DatacenterState represents the state of a datacenter.
 type DatacenterState struct {
 	// Metadata
-	Name        string    `json:"name"`
-	Version     string    `json:"version"`              // Tag/reference (e.g., "my-dc:latest", "ghcr.io/org/dc:v1")
-	Source      string    `json:"source,omitempty"`      // Original source (filesystem path or OCI reference)
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`          // Tag/reference (e.g., "my-dc:latest", "ghcr.io/org/dc:v1")
+	Source    string    `json:"source,omitempty"` // Original source (filesystem path or OCI reference)
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 
 	// Configuration
 	Variables map[string]string `json:"variables,omitempty"`
@@ -34,10 +34,10 @@ type DatacenterComponentConfig struct {
 // EnvironmentState represents the state of an environment.
 type EnvironmentState struct {
 	// Metadata
-	Name        string    `json:"name"`
-	Datacenter  string    `json:"datacenter"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Name       string    `json:"name"`
+	Datacenter string    `json:"datacenter"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 
 	// Status
 	Status       EnvironmentStatus `json:"status"`
@@ -67,11 +67,11 @@ const (
 // ComponentState represents a deployed component's state.
 type ComponentState struct {
 	// Metadata
-	Name        string    `json:"name"`
-	Version     string    `json:"version"`     // OCI image tag or "local"
-	Source      string    `json:"source"`      // OCI reference or local path
-	DeployedAt  time.Time `json:"deployed_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Name       string    `json:"name"`
+	Version    string    `json:"version"` // OCI image tag or "local"
+	Source     string    `json:"source"`  // OCI reference or local path
+	DeployedAt time.Time `json:"deployed_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 
 	// Status
 	Status       ResourceStatus `json:"status"`
@@ -122,11 +122,11 @@ type InstanceState struct {
 // ResourceState represents a single resource's state.
 type ResourceState struct {
 	// Metadata
-	Name       string    `json:"name"`
-	Type       string    `json:"type"`       // database, bucket, deployment, function, service, route, cronjob
-	Component  string    `json:"component"`  // Parent component name
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	Name      string    `json:"name"`
+	Type      string    `json:"type"`      // database, bucket, deployment, function, service, route, cronjob
+	Component string    `json:"component"` // Parent component name
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 
 	// Hook/module that created this resource
 	Hook   string `json:"hook,omitempty"`   // Hook type that created this resource
@@ -156,20 +156,20 @@ type ResourceState struct {
 type ResourceStatus string
 
 const (
-	ResourceStatusPending     ResourceStatus = "pending"
+	ResourceStatusPending      ResourceStatus = "pending"
 	ResourceStatusProvisioning ResourceStatus = "provisioning"
-	ResourceStatusReady       ResourceStatus = "ready"
-	ResourceStatusFailed      ResourceStatus = "failed"
-	ResourceStatusDeleting    ResourceStatus = "deleting"
-	ResourceStatusDeleted     ResourceStatus = "deleted"
+	ResourceStatusReady        ResourceStatus = "ready"
+	ResourceStatusFailed       ResourceStatus = "failed"
+	ResourceStatusDeleting     ResourceStatus = "deleting"
+	ResourceStatusDeleted      ResourceStatus = "deleted"
 )
 
 // ModuleState represents the state of an IaC module execution.
 type ModuleState struct {
 	// Metadata
 	Name      string    `json:"name"`
-	Plugin    string    `json:"plugin"`    // pulumi, opentofu, native
-	Source    string    `json:"source"`    // OCI reference or local path
+	Plugin    string    `json:"plugin"` // pulumi, opentofu, native
+	Source    string    `json:"source"` // OCI reference or local path
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 

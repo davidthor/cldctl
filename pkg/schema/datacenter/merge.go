@@ -127,9 +127,9 @@ func mergeHooks(child, parent internal.InternalHooks) internal.InternalHooks {
 		Cronjob:       mergeHookSlice(child.Cronjob, parent.Cronjob),
 		Secret:        mergeHookSlice(child.Secret, parent.Secret),
 		DockerBuild:   mergeHookSlice(child.DockerBuild, parent.DockerBuild),
-		Observability:  mergeHookSlice(child.Observability, parent.Observability),
-		Port:           mergeHookSlice(child.Port, parent.Port),
-		NetworkPolicy:  mergeHookSlice(child.NetworkPolicy, parent.NetworkPolicy),
+		Observability: mergeHookSlice(child.Observability, parent.Observability),
+		Port:          mergeHookSlice(child.Port, parent.Port),
+		NetworkPolicy: mergeHookSlice(child.NetworkPolicy, parent.NetworkPolicy),
 	}
 }
 

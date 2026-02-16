@@ -221,10 +221,10 @@ func TestCreateTarGzAndExtract(t *testing.T) {
 
 	// Create test files
 	testFiles := map[string]string{
-		"config.yaml":        "name: test\nversion: v1",
-		"src/main.go":        "package main\n\nfunc main() {}",
-		"src/lib/helper.go":  "package lib\n\nfunc Helper() {}",
-		"docs/README.md":     "# Documentation",
+		"config.yaml":       "name: test\nversion: v1",
+		"src/main.go":       "package main\n\nfunc main() {}",
+		"src/lib/helper.go": "package lib\n\nfunc Helper() {}",
+		"docs/README.md":    "# Documentation",
 	}
 
 	for path, content := range testFiles {

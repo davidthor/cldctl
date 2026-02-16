@@ -459,22 +459,22 @@ func (p *Parser) parseEnvironment(block *hcl.Block) (*EnvironmentBlockV1, hcl.Di
 
 	// Parse hooks
 	hookTypes := map[string]*[]HookBlockV1{
-		"database":          &env.DatabaseHooks,
-		"task":              &env.TaskHooks,
-		"bucket":            &env.BucketHooks,
-		"encryptionKey":     &env.EncryptionKeyHooks,
-		"smtp":              &env.SMTPHooks,
-		"databaseUser":      &env.DatabaseUserHooks,
-		"deployment":        &env.DeploymentHooks,
-		"function":          &env.FunctionHooks,
-		"service":           &env.ServiceHooks,
-		"route":             &env.RouteHooks,
-		"cronjob":           &env.CronjobHooks,
-		"secret":            &env.SecretHooks,
-		"dockerBuild":       &env.DockerBuildHooks,
-		"observability":     &env.ObservabilityHooks,
-		"port":              &env.PortHooks,
-		"networkPolicy":     &env.NetworkPolicyHooks,
+		"database":      &env.DatabaseHooks,
+		"task":          &env.TaskHooks,
+		"bucket":        &env.BucketHooks,
+		"encryptionKey": &env.EncryptionKeyHooks,
+		"smtp":          &env.SMTPHooks,
+		"databaseUser":  &env.DatabaseUserHooks,
+		"deployment":    &env.DeploymentHooks,
+		"function":      &env.FunctionHooks,
+		"service":       &env.ServiceHooks,
+		"route":         &env.RouteHooks,
+		"cronjob":       &env.CronjobHooks,
+		"secret":        &env.SecretHooks,
+		"dockerBuild":   &env.DockerBuildHooks,
+		"observability": &env.ObservabilityHooks,
+		"port":          &env.PortHooks,
+		"networkPolicy": &env.NetworkPolicyHooks,
 	}
 
 	for hookType, hooks := range hookTypes {

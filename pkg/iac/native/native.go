@@ -904,13 +904,13 @@ func getPortMappings(props map[string]interface{}, key string) []PortMapping {
 					if container, ok := m["container"].(int); ok {
 						pm.ContainerPort = container
 					}
-				if host, ok := m["host"]; ok {
-					if hostInt, ok := host.(int); ok {
-						pm.HostPort = hostInt
-					} else if hostFloat, ok := host.(float64); ok {
-						pm.HostPort = int(hostFloat)
+					if host, ok := m["host"]; ok {
+						if hostInt, ok := host.(int); ok {
+							pm.HostPort = hostInt
+						} else if hostFloat, ok := host.(float64); ok {
+							pm.HostPort = int(hostFloat)
+						}
 					}
-				}
 					result = append(result, pm)
 				}
 			}

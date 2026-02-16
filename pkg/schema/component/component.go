@@ -138,9 +138,9 @@ type Deployment interface {
 // Runtime describes the runtime environment for a deployment.
 // When present without an image, the datacenter can provision a VM or managed runtime.
 type Runtime interface {
-	Language() string  // Required: language and version (e.g., "node:20", "python:^3.12")
-	OS() string        // Optional: target OS (default: linux)
-	Arch() string      // Optional: target architecture
+	Language() string   // Required: language and version (e.g., "node:20", "python:^3.12")
+	OS() string         // Optional: target OS (default: linux)
+	Arch() string       // Optional: target architecture
 	Packages() []string // Optional: system-level dependencies
 	Setup() []string    // Optional: provisioning commands
 }
@@ -278,7 +278,7 @@ type Timeouts interface {
 // Observability represents the observability configuration for a component.
 // Returns nil if observability is not configured or explicitly disabled.
 type Observability interface {
-	Inject() bool                // Auto-inject OTEL_* env vars into workloads
+	Inject() bool                  // Auto-inject OTEL_* env vars into workloads
 	Attributes() map[string]string // Custom OTel resource attributes
 }
 
@@ -331,11 +331,13 @@ type Volume interface {
 }
 
 // Probe represents a health check probe.
+// Port() and TCPPort() return interface{} to support both integer literals
+// and expression strings (${{ ports.*.port }}).
 type Probe interface {
 	Path() string
-	Port() int
+	Port() interface{}
 	Command() []string
-	TCPPort() int
+	TCPPort() interface{}
 	InitialDelaySeconds() int
 	PeriodSeconds() int
 	TimeoutSeconds() int

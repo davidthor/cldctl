@@ -10,20 +10,20 @@ import (
 type ErrorCode string
 
 const (
-	ErrCodeValidation   ErrorCode = "VALIDATION_ERROR"
-	ErrCodeNotFound     ErrorCode = "NOT_FOUND"
-	ErrCodeConflict     ErrorCode = "CONFLICT"
-	ErrCodeLocked       ErrorCode = "STATE_LOCKED"
-	ErrCodeBackend      ErrorCode = "BACKEND_ERROR"
-	ErrCodeIaC          ErrorCode = "IAC_ERROR"
-	ErrCodeTimeout      ErrorCode = "TIMEOUT"
-	ErrCodePermission   ErrorCode = "PERMISSION_DENIED"
-	ErrCodeParse        ErrorCode = "PARSE_ERROR"
-	ErrCodeExpression   ErrorCode = "EXPRESSION_ERROR"
-	ErrCodeOCI          ErrorCode = "OCI_ERROR"
-	ErrCodeDocker          ErrorCode = "DOCKER_ERROR"
-	ErrCodePlugin          ErrorCode = "PLUGIN_ERROR"
-	ErrCodeDatacenterHook  ErrorCode = "DATACENTER_HOOK_ERROR"
+	ErrCodeValidation     ErrorCode = "VALIDATION_ERROR"
+	ErrCodeNotFound       ErrorCode = "NOT_FOUND"
+	ErrCodeConflict       ErrorCode = "CONFLICT"
+	ErrCodeLocked         ErrorCode = "STATE_LOCKED"
+	ErrCodeBackend        ErrorCode = "BACKEND_ERROR"
+	ErrCodeIaC            ErrorCode = "IAC_ERROR"
+	ErrCodeTimeout        ErrorCode = "TIMEOUT"
+	ErrCodePermission     ErrorCode = "PERMISSION_DENIED"
+	ErrCodeParse          ErrorCode = "PARSE_ERROR"
+	ErrCodeExpression     ErrorCode = "EXPRESSION_ERROR"
+	ErrCodeOCI            ErrorCode = "OCI_ERROR"
+	ErrCodeDocker         ErrorCode = "DOCKER_ERROR"
+	ErrCodePlugin         ErrorCode = "PLUGIN_ERROR"
+	ErrCodeDatacenterHook ErrorCode = "DATACENTER_HOOK_ERROR"
 )
 
 // Error is the base error type for cldctl

@@ -106,7 +106,7 @@ func (m *mockAzureBlobServer) handleHead(w http.ResponseWriter, key string) {
 
 func (m *mockAzureBlobServer) handleListBlobs(w http.ResponseWriter, r *http.Request, container string) {
 	prefix := r.URL.Query().Get("prefix")
-	
+
 	var blobs []string
 	for key := range m.blobs {
 		if strings.HasPrefix(key, container+"/") {
@@ -120,7 +120,7 @@ func (m *mockAzureBlobServer) handleListBlobs(w http.ResponseWriter, r *http.Req
 	// Return XML response similar to Azure
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
-	
+
 	response := `<?xml version="1.0" encoding="utf-8"?><EnumerationResults><Blobs>`
 	for _, blob := range blobs {
 		response += `<Blob><Name>` + blob + `</Name></Blob>`

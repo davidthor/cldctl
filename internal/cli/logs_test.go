@@ -138,7 +138,7 @@ func TestFindDashboardURL_Found(t *testing.T) {
 
 func TestFindDashboardURL_NotFound(t *testing.T) {
 	envState := &types.EnvironmentState{
-		Name: "test-env",
+		Name:       "test-env",
 		Components: map[string]*types.ComponentState{},
 	}
 

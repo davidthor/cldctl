@@ -445,7 +445,7 @@ a value the component author explicitly set.
 - `databases.<name>.url|host|port|username|password|database`
 - `databases.<name>.read.url|host|port|username|password` (read endpoint; falls back to top-level if not set by datacenter)
 - `databases.<name>.write.url|host|port|username|password` (write endpoint; falls back to top-level if not set by datacenter)
-- `buckets.<name>.endpoint|bucket|accessKeyId|secretAccessKey`
+- `buckets.<name>.endpoint|bucket|region|accessKeyId|secretAccessKey`
 - `encryptionKeys.<name>.privateKey|publicKey|privateKeyBase64|publicKeyBase64|key|keyBase64`
 - `smtp.<name>.host|port|username|password`
 - `ports.<name>.port` (dynamically allocated port number)

@@ -34,9 +34,9 @@ func (e *environmentWrapper) Components() map[string]ComponentConfig {
 	return result
 }
 
-func (e *environmentWrapper) Name() string                              { return e.env.Name }
-func (e *environmentWrapper) SchemaVersion() string                     { return e.env.SourceVersion }
-func (e *environmentWrapper) SourcePath() string                        { return e.env.SourcePath }
+func (e *environmentWrapper) Name() string                            { return e.env.Name }
+func (e *environmentWrapper) SchemaVersion() string                   { return e.env.SourceVersion }
+func (e *environmentWrapper) SourcePath() string                      { return e.env.SourcePath }
 func (e *environmentWrapper) Internal() *internal.InternalEnvironment { return e.env }
 
 // componentConfigWrapper wraps an InternalComponentConfig.
@@ -44,10 +44,10 @@ type componentConfigWrapper struct {
 	c *internal.InternalComponentConfig
 }
 
-func (c *componentConfigWrapper) Path() string                            { return c.c.Path }
-func (c *componentConfigWrapper) Image() string                           { return c.c.Image }
-func (c *componentConfigWrapper) Variables() map[string]interface{}       { return c.c.Variables }
-func (c *componentConfigWrapper) Ports() map[string]int                   { return c.c.Ports }
+func (c *componentConfigWrapper) Path() string                              { return c.c.Path }
+func (c *componentConfigWrapper) Image() string                             { return c.c.Image }
+func (c *componentConfigWrapper) Variables() map[string]interface{}         { return c.c.Variables }
+func (c *componentConfigWrapper) Ports() map[string]int                     { return c.c.Ports }
 func (c *componentConfigWrapper) Environment() map[string]map[string]string { return c.c.Environment }
 
 func (c *componentConfigWrapper) Scaling() map[string]ScalingConfig {
@@ -148,7 +148,7 @@ type tlsConfigWrapper struct {
 	t *internal.InternalTLSConfig
 }
 
-func (t *tlsConfigWrapper) Enabled() bool     { return t.t.Enabled }
+func (t *tlsConfigWrapper) Enabled() bool      { return t.t.Enabled }
 func (t *tlsConfigWrapper) SecretName() string { return t.t.SecretName }
 
 // environmentVariableWrapper wraps an InternalEnvironmentVariable.
@@ -156,12 +156,12 @@ type environmentVariableWrapper struct {
 	v *internal.InternalEnvironmentVariable
 }
 
-func (v *environmentVariableWrapper) Name() string            { return v.v.Name }
-func (v *environmentVariableWrapper) Description() string     { return v.v.Description }
-func (v *environmentVariableWrapper) Default() interface{}    { return v.v.Default }
-func (v *environmentVariableWrapper) Required() bool          { return v.v.Required }
-func (v *environmentVariableWrapper) Sensitive() bool         { return v.v.Sensitive }
-func (v *environmentVariableWrapper) Env() string             { return v.v.Env }
+func (v *environmentVariableWrapper) Name() string         { return v.v.Name }
+func (v *environmentVariableWrapper) Description() string  { return v.v.Description }
+func (v *environmentVariableWrapper) Default() interface{} { return v.v.Default }
+func (v *environmentVariableWrapper) Required() bool       { return v.v.Required }
+func (v *environmentVariableWrapper) Sensitive() bool      { return v.v.Sensitive }
+func (v *environmentVariableWrapper) Env() string          { return v.v.Env }
 
 // instanceConfigWrapper wraps an InternalInstanceConfig.
 type instanceConfigWrapper struct {

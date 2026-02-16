@@ -72,6 +72,15 @@ variables:
     description: "Default subdomain for multi-workspace mode"
     default: "app"
 
+  # Token expiry
+  access_token_expires_in:
+    description: "Duration before access tokens expire (e.g. 7d, 1h)"
+    default: "7d"
+
+  login_token_expires_in:
+    description: "Duration before login tokens expire (e.g. 1h, 30m)"
+    default: "1h"
+
   # Serverless/Logic Functions
   serverless_type:
     description: "Logic functions driver: LOCAL, LAMBDA, or DISABLED"
@@ -80,12 +89,17 @@ variables:
 # Object storage for file uploads
 buckets:
   storage:
+    type: s3
     description: "Storage bucket for file uploads and attachments"
 
 # SMTP for sending emails
 smtp:
   email:
     description: "SMTP server for system emails and notifications"
+
+ports:
+  server:
+    description: "Port for the server application"
 
 # Encryption key for session security
 encryptionKeys:
@@ -97,6 +111,11 @@ encryptionKeys:
 databases:
   postgres:
     type: postgres:^16
+    migrations:
+      image: twentycrm/twenty:latest
+      command: ["npx", "-y", "typeorm", "migration:run", "-d", "dist/database/typeorm/core/core.datasource"]
+      environment:
+        PG_DATABASE_URL: ${{ databases.postgres.url }}
 
   redis:
     type: redis:^7
@@ -107,7 +126,7 @@ deployments:
   server:
     image: twentycrm/twenty:latest
     environment:
-      NODE_PORT: "3000"
+      NODE_PORT: ${{ ports.server.port }}
       # Database
       PG_DATABASE_URL: ${{ databases.postgres.url }}
       # Redis
@@ -116,15 +135,19 @@ deployments:
       SERVER_URL: ${{ routes.public.url }}
       # Security
       APP_SECRET: ${{ encryptionKeys.app_secret.keyBase64 }}
-      # Database migrations run on server startup
-      DISABLE_DB_MIGRATIONS: "false"
+      # Migrations are handled by a separate task on the database
+      DISABLE_DB_MIGRATIONS: "true"
       DISABLE_CRON_JOBS_REGISTRATION: "false"
       # Storage (S3-compatible object storage)
       STORAGE_TYPE: "s3"
+      STORAGE_S3_REGION: ${{ buckets.storage.region }}
       STORAGE_S3_NAME: ${{ buckets.storage.bucket }}
       STORAGE_S3_ENDPOINT: ${{ buckets.storage.endpoint }}
       STORAGE_S3_ACCESS_KEY_ID: ${{ buckets.storage.accessKeyId }}
       STORAGE_S3_SECRET_ACCESS_KEY: ${{ buckets.storage.secretAccessKey }}
+      # Token expiry
+      ACCESS_TOKEN_EXPIRES_IN: ${{ variables.access_token_expires_in }}
+      LOGIN_TOKEN_EXPIRES_IN: ${{ variables.login_token_expires_in }}
       # Google OAuth/Integration
       AUTH_GOOGLE_ENABLED: ${{ variables.auth_google_enabled }}
       AUTH_GOOGLE_CLIENT_ID: ${{ variables.auth_google_client_id }}
@@ -160,11 +183,11 @@ deployments:
     replicas: 1
     liveness_probe:
       path: /healthz
-      port: 3000
+      port: ${{ ports.server.port }}
       initial_delay_seconds: 30
     readiness_probe:
       path: /healthz
-      port: 3000
+      port: ${{ ports.server.port }}
       initial_delay_seconds: 15
 
   # Background worker for async jobs
@@ -180,15 +203,19 @@ deployments:
       SERVER_URL: ${{ routes.public.url }}
       # Security
       APP_SECRET: ${{ encryptionKeys.app_secret.keyBase64 }}
-      # Worker doesn't run migrations or register cron jobs
+      # Migrations are handled by a separate task on the database
       DISABLE_DB_MIGRATIONS: "true"
       DISABLE_CRON_JOBS_REGISTRATION: "true"
       # Storage (S3-compatible object storage)
       STORAGE_TYPE: "s3"
+      STORAGE_S3_REGION: ${{ buckets.storage.region }}
       STORAGE_S3_NAME: ${{ buckets.storage.bucket }}
       STORAGE_S3_ENDPOINT: ${{ buckets.storage.endpoint }}
       STORAGE_S3_ACCESS_KEY_ID: ${{ buckets.storage.accessKeyId }}
       STORAGE_S3_SECRET_ACCESS_KEY: ${{ buckets.storage.secretAccessKey }}
+      # Token expiry
+      ACCESS_TOKEN_EXPIRES_IN: ${{ variables.access_token_expires_in }}
+      LOGIN_TOKEN_EXPIRES_IN: ${{ variables.login_token_expires_in }}
       # Google OAuth/Integration
       AUTH_GOOGLE_ENABLED: ${{ variables.auth_google_enabled }}
       AUTH_GOOGLE_CLIENT_ID: ${{ variables.auth_google_client_id }}
@@ -227,80 +254,11 @@ deployments:
 services:
   server:
     deployment: server
-    port: 3000
+    port: ${{ ports.server.port }}
     protocol: http
 
 # Routes for external access
 routes:
   public:
     type: http
-    rules:
-      # Health check endpoint
-      - name: health
-        matches:
-          - path:
-              type: Exact
-              value: /healthz
-        backendRefs:
-          - service: server
-
-      # API routes
-      - name: api
-        matches:
-          - path:
-              type: PathPrefix
-              value: /api
-        backendRefs:
-          - service: server
-        timeouts:
-          request: 60s
-          backendRequest: 55s
-
-      # GraphQL endpoint
-      - name: graphql
-        matches:
-          - path:
-              type: Exact
-              value: /graphql
-        backendRefs:
-          - service: server
-        timeouts:
-          request: 60s
-
-      # REST endpoints
-      - name: rest
-        matches:
-          - path:
-              type: PathPrefix
-              value: /rest
-        backendRefs:
-          - service: server
-        timeouts:
-          request: 60s
-
-      # Auth callbacks
-      - name: auth
-        matches:
-          - path:
-              type: PathPrefix
-              value: /auth
-        backendRefs:
-          - service: server
-
-      # Files endpoint
-      - name: files
-        matches:
-          - path:
-              type: PathPrefix
-              value: /files
-        backendRefs:
-          - service: server
-
-      # Main application (catch-all for UI)
-      - name: frontend
-        matches:
-          - path:
-              type: PathPrefix
-              value: /
-        backendRefs:
-          - service: server
+    service: server

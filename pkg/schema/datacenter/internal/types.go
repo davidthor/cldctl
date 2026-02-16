@@ -59,10 +59,10 @@ type InternalModule struct {
 	Source string // OCI reference for compiled form
 
 	// Configuration
-	Plugin      string                 // "pulumi", "opentofu", "native"
-	Inputs      map[string]string      // Input values (may be HCL expressions)
-	Environment map[string]string      // Environment variables
-	When        string                 // Conditional expression
+	Plugin      string            // "pulumi", "opentofu", "native"
+	Inputs      map[string]string // Input values (may be HCL expressions)
+	Environment map[string]string // Environment variables
+	When        string            // Conditional expression
 
 	// Volume mounts
 	Volumes []InternalVolumeMount
@@ -83,29 +83,29 @@ type InternalEnvironment struct {
 
 // InternalHooks contains resource hooks.
 type InternalHooks struct {
-	Database          []InternalHook
-	Task              []InternalHook
-	Bucket            []InternalHook
-	EncryptionKey     []InternalHook
-	SMTP              []InternalHook
-	DatabaseUser      []InternalHook
-	Deployment        []InternalHook
-	Function          []InternalHook
-	Service           []InternalHook
-	Route             []InternalHook
-	Cronjob           []InternalHook
-	Secret            []InternalHook
-	DockerBuild       []InternalHook
-	Observability     []InternalHook
-	Port              []InternalHook
-	NetworkPolicy     []InternalHook
+	Database      []InternalHook
+	Task          []InternalHook
+	Bucket        []InternalHook
+	EncryptionKey []InternalHook
+	SMTP          []InternalHook
+	DatabaseUser  []InternalHook
+	Deployment    []InternalHook
+	Function      []InternalHook
+	Service       []InternalHook
+	Route         []InternalHook
+	Cronjob       []InternalHook
+	Secret        []InternalHook
+	DockerBuild   []InternalHook
+	Observability []InternalHook
+	Port          []InternalHook
+	NetworkPolicy []InternalHook
 }
 
 // InternalHook represents a resource hook.
 type InternalHook struct {
-	When          string                        // Conditional expression
-	Modules       []InternalModule              // Modules to execute
-	Outputs       map[string]string             // Output mappings (HCL expressions)
-	NestedOutputs map[string]map[string]string  // Nested output objects (e.g., read/write sub-objects for database hooks)
-	Error         string                        // Human-readable error message (mutually exclusive with Modules/Outputs)
+	When          string                       // Conditional expression
+	Modules       []InternalModule             // Modules to execute
+	Outputs       map[string]string            // Output mappings (HCL expressions)
+	NestedOutputs map[string]map[string]string // Nested output objects (e.g., read/write sub-objects for database hooks)
+	Error         string                       // Human-readable error message (mutually exclusive with Modules/Outputs)
 }

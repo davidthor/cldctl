@@ -24,7 +24,7 @@ func TestInstanceState_JSONRoundTrip(t *testing.T) {
 		Instances: map[string]*InstanceState{
 			"canary": {
 				Name:       "canary",
-				Source:      "my-app:v2",
+				Source:     "my-app:v2",
 				Weight:     10,
 				DeployedAt: time.Now().Truncate(time.Second),
 				Resources: map[string]*ResourceState{
@@ -37,7 +37,7 @@ func TestInstanceState_JSONRoundTrip(t *testing.T) {
 			},
 			"stable": {
 				Name:       "stable",
-				Source:      "my-app:v1",
+				Source:     "my-app:v1",
 				Weight:     90,
 				DeployedAt: time.Now().Add(-24 * time.Hour).Truncate(time.Second),
 				Resources: map[string]*ResourceState{

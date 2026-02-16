@@ -36,7 +36,7 @@ func resourceID(component, resourceType, name string) string {
 type upMode int
 
 const (
-	upModeComponent   upMode = iota
+	upModeComponent upMode = iota
 	upModeEnvironment
 )
 
@@ -143,11 +143,11 @@ Examples:
 
 			// Build component/variable maps and loaded components based on mode
 			var (
-				componentsMap   map[string]string
-				variablesMap    map[string]map[string]interface{}
-				envRoutesMap    map[string]map[string]engine.RouteOverride
-				envName         string
-				loadedComps     map[string]component.Component // for progress table
+				componentsMap map[string]string
+				variablesMap  map[string]map[string]interface{}
+				envRoutesMap  map[string]map[string]engine.RouteOverride
+				envName       string
+				loadedComps   map[string]component.Component // for progress table
 			)
 
 			switch mode {
@@ -222,35 +222,35 @@ Examples:
 				progress.StartTicker()
 			}
 
-		// Create progress callback for engine updates
-		onProgress := func(event executor.ProgressEvent) {
-			var status ResourceStatus
-			switch event.Status {
-			case "running":
-				status = StatusInProgress
-			case "completed":
-				status = StatusCompleted
-			case "failed":
-				status = StatusFailed
-			case "skipped":
-				status = StatusSkipped
-			default:
-				status = StatusPending
-			}
+			// Create progress callback for engine updates
+			onProgress := func(event executor.ProgressEvent) {
+				var status ResourceStatus
+				switch event.Status {
+				case "running":
+					status = StatusInProgress
+				case "completed":
+					status = StatusCompleted
+				case "failed":
+					status = StatusFailed
+				case "skipped":
+					status = StatusSkipped
+				default:
+					status = StatusPending
+				}
 
-			if event.Error != nil {
-				progress.SetError(event.NodeID, event.Error)
-			} else {
-				progress.UpdateStatus(event.NodeID, status, event.Message)
-			}
+				if event.Error != nil {
+					progress.SetError(event.NodeID, event.Error)
+				} else {
+					progress.UpdateStatus(event.NodeID, status, event.Message)
+				}
 
-			// Capture logs from failed resources for error diagnostics
-			if event.Logs != "" {
-				progress.SetLogs(event.NodeID, event.Logs)
-			}
+				// Capture logs from failed resources for error diagnostics
+				if event.Logs != "" {
+					progress.SetLogs(event.NodeID, event.Logs)
+				}
 
-			progress.PrintUpdate(event.NodeID)
-		}
+				progress.PrintUpdate(event.NodeID)
+			}
 
 			// Build route overrides map from environment config and/or CLI flags.
 			// Environment routes are extracted by prepareEnvironmentMode; CLI flags

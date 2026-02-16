@@ -1,7 +1,27 @@
 // Package v1 implements the v1 component schema.
 package v1
 
-import "fmt"
+import (
+	"fmt"
+)
+
+// interfaceToString converts an interface{} value (int, float64, or string) to a string.
+// Used for fields that support both integer literals and expression strings.
+func interfaceToString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	switch val := v.(type) {
+	case int:
+		return fmt.Sprintf("%d", val)
+	case float64:
+		return fmt.Sprintf("%d", int(val))
+	case string:
+		return val
+	default:
+		return fmt.Sprintf("%v", val)
+	}
+}
 
 // SchemaV1 represents the v1 component schema.
 type SchemaV1 struct {
@@ -34,9 +54,9 @@ type SchemaV1 struct {
 // When inject is true, the engine also auto-injects standard OTEL_* env vars
 // into all workloads.
 type ObservabilityV1 struct {
-	Enabled    bool              `yaml:"-" json:"-"`                                         // Internal: tracks if observability is enabled
-	Inject     *bool             `yaml:"inject,omitempty" json:"inject,omitempty"`           // Auto-inject OTEL_* env vars (default: false)
-	Attributes map[string]string `yaml:"attributes,omitempty" json:"attributes,omitempty"`   // Custom OTel resource attributes
+	Enabled    bool              `yaml:"-" json:"-"`                                       // Internal: tracks if observability is enabled
+	Inject     *bool             `yaml:"inject,omitempty" json:"inject,omitempty"`         // Auto-inject OTEL_* env vars (default: false)
+	Attributes map[string]string `yaml:"attributes,omitempty" json:"attributes,omitempty"` // Custom OTel resource attributes
 }
 
 // UnmarshalYAML supports both boolean shorthand (true/false) and full object form.
@@ -94,7 +114,7 @@ type BucketV1 struct {
 // EncryptionKeyV1 represents an encryption key in the v1 schema.
 // Keys are discriminated by type: rsa, ecdsa, or symmetric.
 type EncryptionKeyV1 struct {
-	Type  string `yaml:"type" json:"type"`            // Required: rsa, ecdsa, symmetric
+	Type  string `yaml:"type" json:"type"`                       // Required: rsa, ecdsa, symmetric
 	Bits  int    `yaml:"bits,omitempty" json:"bits,omitempty"`   // For RSA: 2048, 3072, 4096 (default: 2048)
 	Curve string `yaml:"curve,omitempty" json:"curve,omitempty"` // For ECDSA: P-256, P-384, P-521 (default: P-256)
 	Bytes int    `yaml:"bytes,omitempty" json:"bytes,omitempty"` // For symmetric: key length in bytes (default: 32)
@@ -159,11 +179,11 @@ type DeploymentV1 struct {
 // Supports both a string shorthand ("node:20") and a full object form.
 // When present without an image, the datacenter can provision a VM or managed runtime.
 type RuntimeV1 struct {
-	Language string   `yaml:"language" json:"language"`                       // Required: language and version (e.g., "node:20", "python:^3.12")
-	OS       string   `yaml:"os,omitempty" json:"os,omitempty"`               // Optional: target OS (default: linux)
-	Arch     string   `yaml:"arch,omitempty" json:"arch,omitempty"`           // Optional: target architecture (default: datacenter's choice)
-	Packages []string `yaml:"packages,omitempty" json:"packages,omitempty"`   // Optional: system-level dependencies
-	Setup    []string `yaml:"setup,omitempty" json:"setup,omitempty"`         // Optional: provisioning commands
+	Language string   `yaml:"language" json:"language"`                     // Required: language and version (e.g., "node:20", "python:^3.12")
+	OS       string   `yaml:"os,omitempty" json:"os,omitempty"`             // Optional: target OS (default: linux)
+	Arch     string   `yaml:"arch,omitempty" json:"arch,omitempty"`         // Optional: target architecture (default: datacenter's choice)
+	Packages []string `yaml:"packages,omitempty" json:"packages,omitempty"` // Optional: system-level dependencies
+	Setup    []string `yaml:"setup,omitempty" json:"setup,omitempty"`       // Optional: provisioning commands
 }
 
 // UnmarshalYAML supports both string shorthand ("node:20") and full object form.
@@ -204,7 +224,7 @@ type FunctionV1 struct {
 // FunctionSourceV1 represents a source-based function configuration.
 // Most fields are optional and can be inferred from project files.
 type FunctionSourceV1 struct {
-	Path      string `yaml:"path" json:"path"`                         // Required: path to source code
+	Path      string `yaml:"path" json:"path"`                               // Required: path to source code
 	Language  string `yaml:"language,omitempty" json:"language,omitempty"`   // e.g., "javascript", "typescript", "python", "go"
 	Runtime   string `yaml:"runtime,omitempty" json:"runtime,omitempty"`     // e.g., "nodejs20.x", "python3.11" (for Lambda)
 	Framework string `yaml:"framework,omitempty" json:"framework,omitempty"` // e.g., "nextjs", "fastapi", "express"
@@ -230,7 +250,7 @@ type FunctionContainerV1 struct {
 type ServiceV1 struct {
 	Deployment string      `yaml:"deployment" json:"deployment"`
 	URL        string      `yaml:"url,omitempty" json:"url,omitempty"`
-	Port       interface{} `yaml:"-" json:"-"` // int or string; handled by custom UnmarshalYAML
+	Port       interface{} `yaml:"-" json:"-"`                           // int or string; handled by custom UnmarshalYAML
 	PortRaw    interface{} `yaml:"port,omitempty" json:"port,omitempty"` // raw YAML value
 	Protocol   string      `yaml:"protocol,omitempty" json:"protocol,omitempty"`
 }
@@ -302,11 +322,11 @@ type RouteV1 struct {
 
 // RouteRuleV1 represents a route rule in the v1 schema.
 type RouteRuleV1 struct {
-	Name        string           `yaml:"name,omitempty" json:"name,omitempty"`
-	Matches     []RouteMatchV1   `yaml:"matches,omitempty" json:"matches,omitempty"`
-	BackendRefs []BackendRefV1   `yaml:"backendRefs,omitempty" json:"backendRefs,omitempty"`
-	Filters     []RouteFilterV1  `yaml:"filters,omitempty" json:"filters,omitempty"`
-	Timeouts    *TimeoutsV1      `yaml:"timeouts,omitempty" json:"timeouts,omitempty"`
+	Name        string          `yaml:"name,omitempty" json:"name,omitempty"`
+	Matches     []RouteMatchV1  `yaml:"matches,omitempty" json:"matches,omitempty"`
+	BackendRefs []BackendRefV1  `yaml:"backendRefs,omitempty" json:"backendRefs,omitempty"`
+	Filters     []RouteFilterV1 `yaml:"filters,omitempty" json:"filters,omitempty"`
+	Timeouts    *TimeoutsV1     `yaml:"timeouts,omitempty" json:"timeouts,omitempty"`
 }
 
 // RouteMatchV1 represents route match conditions in the v1 schema.
@@ -355,12 +375,12 @@ type BackendRefV1 struct {
 
 // RouteFilterV1 represents a route filter in the v1 schema.
 type RouteFilterV1 struct {
-	Type                   string                  `yaml:"type" json:"type"`
-	RequestHeaderModifier  *HeaderModifierV1       `yaml:"requestHeaderModifier,omitempty" json:"requestHeaderModifier,omitempty"`
-	ResponseHeaderModifier *HeaderModifierV1       `yaml:"responseHeaderModifier,omitempty" json:"responseHeaderModifier,omitempty"`
-	RequestRedirect        *RedirectV1             `yaml:"requestRedirect,omitempty" json:"requestRedirect,omitempty"`
-	URLRewrite             *URLRewriteV1           `yaml:"urlRewrite,omitempty" json:"urlRewrite,omitempty"`
-	RequestMirror          *MirrorV1               `yaml:"requestMirror,omitempty" json:"requestMirror,omitempty"`
+	Type                   string            `yaml:"type" json:"type"`
+	RequestHeaderModifier  *HeaderModifierV1 `yaml:"requestHeaderModifier,omitempty" json:"requestHeaderModifier,omitempty"`
+	ResponseHeaderModifier *HeaderModifierV1 `yaml:"responseHeaderModifier,omitempty" json:"responseHeaderModifier,omitempty"`
+	RequestRedirect        *RedirectV1       `yaml:"requestRedirect,omitempty" json:"requestRedirect,omitempty"`
+	URLRewrite             *URLRewriteV1     `yaml:"urlRewrite,omitempty" json:"urlRewrite,omitempty"`
+	RequestMirror          *MirrorV1         `yaml:"requestMirror,omitempty" json:"requestMirror,omitempty"`
 }
 
 // HeaderModifierV1 represents header modification in the v1 schema.
@@ -440,8 +460,8 @@ type OutputV1 struct {
 // Supports both string shorthand (OCI reference) and full object form with
 // source and optional fields.
 type DependencyV1 struct {
-	Source   string `yaml:"source" json:"source"`                           // OCI reference in repo:tag format
-	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`   // If true, dependency is not auto-deployed (default: false)
+	Source   string `yaml:"source" json:"source"`                         // OCI reference in repo:tag format
+	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"` // If true, dependency is not auto-deployed (default: false)
 }
 
 // UnmarshalYAML supports both string shorthand ("ghcr.io/org/app:v1") and full object form.
@@ -472,14 +492,54 @@ type VolumeV1 struct {
 }
 
 // ProbeV1 represents a probe in the v1 schema.
+// Port and TCPPort support both integer literals and expression strings (${{ ports.*.port }}).
 type ProbeV1 struct {
-	Path                string   `yaml:"path,omitempty" json:"path,omitempty"`
-	Port                int      `yaml:"port,omitempty" json:"port,omitempty"`
-	Command             []string `yaml:"command,omitempty" json:"command,omitempty"`
-	TCPPort             int      `yaml:"tcp_port,omitempty" json:"tcp_port,omitempty"`
-	InitialDelaySeconds int      `yaml:"initial_delay_seconds,omitempty" json:"initial_delay_seconds,omitempty"`
-	PeriodSeconds       int      `yaml:"period_seconds,omitempty" json:"period_seconds,omitempty"`
-	TimeoutSeconds      int      `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
-	SuccessThreshold    int      `yaml:"success_threshold,omitempty" json:"success_threshold,omitempty"`
-	FailureThreshold    int      `yaml:"failure_threshold,omitempty" json:"failure_threshold,omitempty"`
+	Path                string      `yaml:"path,omitempty" json:"path,omitempty"`
+	Port                interface{} `yaml:"-" json:"-"` // int or string; handled by custom UnmarshalYAML
+	Command             []string    `yaml:"command,omitempty" json:"command,omitempty"`
+	TCPPort             interface{} `yaml:"-" json:"-"` // int or string; handled by custom UnmarshalYAML
+	InitialDelaySeconds int         `yaml:"initial_delay_seconds,omitempty" json:"initial_delay_seconds,omitempty"`
+	PeriodSeconds       int         `yaml:"period_seconds,omitempty" json:"period_seconds,omitempty"`
+	TimeoutSeconds      int         `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
+	SuccessThreshold    int         `yaml:"success_threshold,omitempty" json:"success_threshold,omitempty"`
+	FailureThreshold    int         `yaml:"failure_threshold,omitempty" json:"failure_threshold,omitempty"`
+}
+
+// UnmarshalYAML handles Port and TCPPort being either an int or a string expression.
+func (p *ProbeV1) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	type rawProbe struct {
+		Path                string      `yaml:"path,omitempty"`
+		Port                interface{} `yaml:"port,omitempty"`
+		Command             []string    `yaml:"command,omitempty"`
+		TCPPort             interface{} `yaml:"tcp_port,omitempty"`
+		InitialDelaySeconds int         `yaml:"initial_delay_seconds,omitempty"`
+		PeriodSeconds       int         `yaml:"period_seconds,omitempty"`
+		TimeoutSeconds      int         `yaml:"timeout_seconds,omitempty"`
+		SuccessThreshold    int         `yaml:"success_threshold,omitempty"`
+		FailureThreshold    int         `yaml:"failure_threshold,omitempty"`
+	}
+	var raw rawProbe
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+	p.Path = raw.Path
+	p.Port = raw.Port
+	p.Command = raw.Command
+	p.TCPPort = raw.TCPPort
+	p.InitialDelaySeconds = raw.InitialDelaySeconds
+	p.PeriodSeconds = raw.PeriodSeconds
+	p.TimeoutSeconds = raw.TimeoutSeconds
+	p.SuccessThreshold = raw.SuccessThreshold
+	p.FailureThreshold = raw.FailureThreshold
+	return nil
+}
+
+// PortAsString returns the probe port value as a string (for expression handling).
+func (p *ProbeV1) PortAsString() string {
+	return interfaceToString(p.Port)
+}
+
+// TCPPortAsString returns the probe TCP port value as a string (for expression handling).
+func (p *ProbeV1) TCPPortAsString() string {
+	return interfaceToString(p.TCPPort)
 }

@@ -27,9 +27,9 @@ const (
 // Artifact represents an OCI artifact.
 type Artifact struct {
 	Type        ArtifactType
-	Reference   string            // OCI reference (repo:tag)
-	Digest      string            // Content digest
-	Config      []byte            // Artifact configuration
+	Reference   string // OCI reference (repo:tag)
+	Digest      string // Content digest
+	Config      []byte // Artifact configuration
 	Layers      []Layer
 	Annotations map[string]string
 }
@@ -128,10 +128,10 @@ type DatacenterConfig struct {
 
 // ModuleConfig represents the configuration stored in a module artifact.
 type ModuleConfig struct {
-	Plugin    string            `json:"plugin"` // pulumi, opentofu, native
-	Name      string            `json:"name"`
-	Inputs    map[string]string `json:"inputs,omitempty"`  // Input schema summary
-	Outputs   map[string]string `json:"outputs,omitempty"` // Output schema summary
-	SourceHash string           `json:"sourceHash,omitempty"`
-	BuildTime  string           `json:"buildTime,omitempty"`
+	Plugin     string            `json:"plugin"` // pulumi, opentofu, native
+	Name       string            `json:"name"`
+	Inputs     map[string]string `json:"inputs,omitempty"`  // Input schema summary
+	Outputs    map[string]string `json:"outputs,omitempty"` // Output schema summary
+	SourceHash string            `json:"sourceHash,omitempty"`
+	BuildTime  string            `json:"buildTime,omitempty"`
 }

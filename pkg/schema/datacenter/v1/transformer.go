@@ -286,13 +286,13 @@ func (t *Transformer) transformHooks(hooks []HookBlockV1) []internal.InternalHoo
 							if nkDiags.HasErrors() {
 								continue
 							}
-						nestedMap[nkVal.AsString()] = exprToString(ni.ValueExpr, t.sourceBytes)
-					}
-					if len(nestedMap) > 0 {
-						ih.NestedOutputs[key] = nestedMap
-					}
-				} else {
-					ih.Outputs[key] = exprToString(item.ValueExpr, t.sourceBytes)
+							nestedMap[nkVal.AsString()] = exprToString(ni.ValueExpr, t.sourceBytes)
+						}
+						if len(nestedMap) > 0 {
+							ih.NestedOutputs[key] = nestedMap
+						}
+					} else {
+						ih.Outputs[key] = exprToString(item.ValueExpr, t.sourceBytes)
 					}
 				}
 			}
@@ -458,10 +458,10 @@ func (t *Transformer) validateHookOutputs(hooks *internal.InternalHooks) []error
 		"cronjob":       hooks.Cronjob,
 		"secret":        hooks.Secret,
 		"dockerBuild":   hooks.DockerBuild,
-		"observability":  hooks.Observability,
-		"port":           hooks.Port,
-		"databaseUser":   hooks.DatabaseUser,
-		"networkPolicy":  hooks.NetworkPolicy,
+		"observability": hooks.Observability,
+		"port":          hooks.Port,
+		"databaseUser":  hooks.DatabaseUser,
+		"networkPolicy": hooks.NetworkPolicy,
 	}
 
 	for hookType, hookList := range hookMap {

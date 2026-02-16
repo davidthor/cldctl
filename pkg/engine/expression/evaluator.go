@@ -156,14 +156,14 @@ type PipeFuncImpl func(value interface{}, args []string) (interface{}, error)
 func NewEvaluator() *Evaluator {
 	return &Evaluator{
 		functions: map[string]PipeFuncImpl{
-			"join":   joinFunc,
-			"first":  firstFunc,
-			"last":   lastFunc,
-			"length": lengthFunc,
+			"join":    joinFunc,
+			"first":   firstFunc,
+			"last":    lastFunc,
+			"length":  lengthFunc,
 			"default": defaultFunc,
-			"upper":  upperFunc,
-			"lower":  lowerFunc,
-			"trim":   trimFunc,
+			"upper":   upperFunc,
+			"lower":   lowerFunc,
+			"trim":    trimFunc,
 		},
 	}
 }

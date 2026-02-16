@@ -119,8 +119,8 @@ type RouteConfigV1 struct {
 	// Defaults to "/" when not set.
 	PathPrefix string `yaml:"pathPrefix,omitempty" json:"pathPrefix,omitempty"`
 
-	Hostnames []HostnameV1  `yaml:"hostnames,omitempty" json:"hostnames,omitempty"`
-	TLS       *TLSConfigV1  `yaml:"tls,omitempty" json:"tls,omitempty"`
+	Hostnames []HostnameV1 `yaml:"hostnames,omitempty" json:"hostnames,omitempty"`
+	TLS       *TLSConfigV1 `yaml:"tls,omitempty" json:"tls,omitempty"`
 }
 
 // HostnameV1 represents a hostname in v1 schema.

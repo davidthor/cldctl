@@ -16,9 +16,9 @@ func newComponentWrapper(ic *internal.InternalComponent) *componentWrapper {
 	return &componentWrapper{ic: ic}
 }
 
-func (c *componentWrapper) Readme() string        { return c.ic.Readme }
-func (c *componentWrapper) SchemaVersion() string { return c.ic.SourceVersion }
-func (c *componentWrapper) SourcePath() string   { return c.ic.SourcePath }
+func (c *componentWrapper) Readme() string                        { return c.ic.Readme }
+func (c *componentWrapper) SchemaVersion() string                 { return c.ic.SourceVersion }
+func (c *componentWrapper) SourcePath() string                    { return c.ic.SourcePath }
 func (c *componentWrapper) Internal() *internal.InternalComponent { return c.ic }
 
 func (c *componentWrapper) Builds() []ComponentBuild {
@@ -186,31 +186,31 @@ type buildWrapper struct {
 	b *internal.InternalBuild
 }
 
-func (b *buildWrapper) Context() string            { return b.b.Context }
-func (b *buildWrapper) Dockerfile() string         { return b.b.Dockerfile }
-func (b *buildWrapper) Target() string             { return b.b.Target }
-func (b *buildWrapper) Args() map[string]string    { return b.b.Args }
+func (b *buildWrapper) Context() string         { return b.b.Context }
+func (b *buildWrapper) Dockerfile() string      { return b.b.Dockerfile }
+func (b *buildWrapper) Target() string          { return b.b.Target }
+func (b *buildWrapper) Args() map[string]string { return b.b.Args }
 
 // ComponentBuild wrapper
 type componentBuildWrapper struct {
 	b *internal.InternalComponentBuild
 }
 
-func (cb *componentBuildWrapper) Name() string             { return cb.b.Name }
-func (cb *componentBuildWrapper) Context() string          { return cb.b.Context }
-func (cb *componentBuildWrapper) Dockerfile() string       { return cb.b.Dockerfile }
-func (cb *componentBuildWrapper) Target() string           { return cb.b.Target }
-func (cb *componentBuildWrapper) Args() map[string]string  { return cb.b.Args }
+func (cb *componentBuildWrapper) Name() string            { return cb.b.Name }
+func (cb *componentBuildWrapper) Context() string         { return cb.b.Context }
+func (cb *componentBuildWrapper) Dockerfile() string      { return cb.b.Dockerfile }
+func (cb *componentBuildWrapper) Target() string          { return cb.b.Target }
+func (cb *componentBuildWrapper) Args() map[string]string { return cb.b.Args }
 
 // Bucket wrapper
 type bucketWrapper struct {
 	b *internal.InternalBucket
 }
 
-func (b *bucketWrapper) Name() string       { return b.b.Name }
-func (b *bucketWrapper) Type() string       { return b.b.Type }
-func (b *bucketWrapper) Versioning() bool   { return b.b.Versioning }
-func (b *bucketWrapper) Public() bool       { return b.b.Public }
+func (b *bucketWrapper) Name() string     { return b.b.Name }
+func (b *bucketWrapper) Type() string     { return b.b.Type }
+func (b *bucketWrapper) Versioning() bool { return b.b.Versioning }
+func (b *bucketWrapper) Public() bool     { return b.b.Public }
 
 // EncryptionKey wrapper
 type encryptionKeyWrapper struct {
@@ -307,7 +307,7 @@ type functionWrapper struct {
 }
 
 func (f *functionWrapper) Name() string   { return f.fn.Name }
-func (f *functionWrapper) Port() string    { return f.fn.Port.Raw }
+func (f *functionWrapper) Port() string   { return f.fn.Port.Raw }
 func (f *functionWrapper) CPU() string    { return f.fn.CPU }
 func (f *functionWrapper) Memory() string { return f.fn.Memory }
 func (f *functionWrapper) Timeout() int   { return f.fn.Timeout }
@@ -570,11 +570,11 @@ type variableWrapper struct {
 	v *internal.InternalVariable
 }
 
-func (v *variableWrapper) Name() string          { return v.v.Name }
-func (v *variableWrapper) Description() string   { return v.v.Description }
-func (v *variableWrapper) Default() interface{}  { return v.v.Default }
-func (v *variableWrapper) Required() bool        { return v.v.Required }
-func (v *variableWrapper) Sensitive() bool       { return v.v.Sensitive }
+func (v *variableWrapper) Name() string         { return v.v.Name }
+func (v *variableWrapper) Description() string  { return v.v.Description }
+func (v *variableWrapper) Default() interface{} { return v.v.Default }
+func (v *variableWrapper) Required() bool       { return v.v.Required }
+func (v *variableWrapper) Sensitive() bool      { return v.v.Sensitive }
 
 // Dependency wrapper
 type dependencyWrapper struct {
@@ -610,12 +610,12 @@ type probeWrapper struct {
 	p *internal.InternalProbe
 }
 
-func (p *probeWrapper) Path() string                 { return p.p.Path }
-func (p *probeWrapper) Port() int                    { return p.p.Port }
-func (p *probeWrapper) Command() []string            { return p.p.Command }
-func (p *probeWrapper) TCPPort() int                 { return p.p.TCPPort }
-func (p *probeWrapper) InitialDelaySeconds() int     { return p.p.InitialDelaySeconds }
-func (p *probeWrapper) PeriodSeconds() int           { return p.p.PeriodSeconds }
-func (p *probeWrapper) TimeoutSeconds() int          { return p.p.TimeoutSeconds }
-func (p *probeWrapper) SuccessThreshold() int        { return p.p.SuccessThreshold }
-func (p *probeWrapper) FailureThreshold() int        { return p.p.FailureThreshold }
+func (p *probeWrapper) Path() string             { return p.p.Path }
+func (p *probeWrapper) Port() interface{}        { return p.p.Port }
+func (p *probeWrapper) Command() []string        { return p.p.Command }
+func (p *probeWrapper) TCPPort() interface{}     { return p.p.TCPPort }
+func (p *probeWrapper) InitialDelaySeconds() int { return p.p.InitialDelaySeconds }
+func (p *probeWrapper) PeriodSeconds() int       { return p.p.PeriodSeconds }
+func (p *probeWrapper) TimeoutSeconds() int      { return p.p.TimeoutSeconds }
+func (p *probeWrapper) SuccessThreshold() int    { return p.p.SuccessThreshold }
+func (p *probeWrapper) FailureThreshold() int    { return p.p.FailureThreshold }

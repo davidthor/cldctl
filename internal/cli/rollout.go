@@ -108,13 +108,13 @@ func printRolloutStatus(componentName, envName, dcName string, compState *types.
 	fmt.Printf("Status:      %s\n", compState.Status)
 	fmt.Println()
 
-			if len(compState.Instances) == 0 {
-				// Single-instance mode
-				fmt.Println("Mode: single-instance")
-				fmt.Printf("Source: %s\n", compState.Source)
-				fmt.Printf("Resources: %d\n", len(compState.Resources))
-				return nil
-			}
+	if len(compState.Instances) == 0 {
+		// Single-instance mode
+		fmt.Println("Mode: single-instance")
+		fmt.Printf("Source: %s\n", compState.Source)
+		fmt.Printf("Resources: %d\n", len(compState.Resources))
+		return nil
+	}
 
 	fmt.Println("Mode: multi-instance (progressive delivery)")
 	fmt.Println()

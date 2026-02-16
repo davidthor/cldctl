@@ -67,11 +67,11 @@ func (p *Plugin) Name() string {
 
 // TFState represents Terraform/OpenTofu state.
 type TFState struct {
-	Version          int         `json:"version"`
-	TerraformVersion string      `json:"terraform_version"`
-	Serial           int         `json:"serial"`
-	Lineage          string      `json:"lineage"`
-	Outputs          TFOutputs   `json:"outputs"`
+	Version          int          `json:"version"`
+	TerraformVersion string       `json:"terraform_version"`
+	Serial           int          `json:"serial"`
+	Lineage          string       `json:"lineage"`
+	Outputs          TFOutputs    `json:"outputs"`
 	Resources        []TFResource `json:"resources"`
 }
 

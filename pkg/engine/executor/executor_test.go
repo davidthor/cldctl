@@ -1017,11 +1017,11 @@ type mockHook struct {
 	errorMsg      string
 }
 
-func (h *mockHook) When() string                              { return h.when }
-func (h *mockHook) Modules() []datacenter.Module              { return nil }
-func (h *mockHook) Outputs() map[string]string                { return h.outputs }
+func (h *mockHook) When() string                                { return h.when }
+func (h *mockHook) Modules() []datacenter.Module                { return nil }
+func (h *mockHook) Outputs() map[string]string                  { return h.outputs }
 func (h *mockHook) NestedOutputs() map[string]map[string]string { return h.nestedOutputs }
-func (h *mockHook) Error() string                             { return h.errorMsg }
+func (h *mockHook) Error() string                               { return h.errorMsg }
 
 func TestBuildDependencyError(t *testing.T) {
 	exec := &Executor{}

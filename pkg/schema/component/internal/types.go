@@ -285,12 +285,12 @@ type InternalBackendRef struct {
 
 // InternalRouteFilter represents request/response processing.
 type InternalRouteFilter struct {
-	Type                    string // RequestHeaderModifier, ResponseHeaderModifier, etc.
-	RequestHeaderModifier   *InternalHeaderModifier
-	ResponseHeaderModifier  *InternalHeaderModifier
-	RequestRedirect         *InternalRedirect
-	URLRewrite              *InternalURLRewrite
-	RequestMirror           *InternalMirror
+	Type                   string // RequestHeaderModifier, ResponseHeaderModifier, etc.
+	RequestHeaderModifier  *InternalHeaderModifier
+	ResponseHeaderModifier *InternalHeaderModifier
+	RequestRedirect        *InternalRedirect
+	URLRewrite             *InternalURLRewrite
+	RequestMirror          *InternalMirror
 }
 
 // InternalHeaderModifier modifies headers.
@@ -316,8 +316,8 @@ type InternalRedirect struct {
 
 // InternalURLRewrite represents URL rewriting.
 type InternalURLRewrite struct {
-	Hostname        string
-	Path            *InternalPathModifier
+	Hostname string
+	Path     *InternalPathModifier
 }
 
 // InternalPathModifier represents path modification.
@@ -394,16 +394,18 @@ type InternalVolume struct {
 }
 
 // InternalProbe represents a health check probe.
+// Port and TCPPort are interface{} to support both integer literals and
+// expression strings (${{ ports.*.port }}).
 type InternalProbe struct {
 	// HTTP probe
 	Path string
-	Port int
+	Port interface{} // int or string expression
 
 	// Exec probe
 	Command []string
 
 	// TCP probe
-	TCPPort int
+	TCPPort interface{} // int or string expression
 
 	// Timing
 	InitialDelaySeconds int

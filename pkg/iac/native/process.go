@@ -385,7 +385,6 @@ func streamOutput(r io.Reader, prefix string, w io.Writer) {
 	}
 }
 
-
 // ParseDockerfileCmd parses a Dockerfile and extracts the CMD instruction.
 func ParseDockerfileCmd(dockerfilePath string) ([]string, error) {
 	data, err := os.ReadFile(dockerfilePath)

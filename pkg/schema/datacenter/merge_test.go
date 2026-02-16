@@ -167,8 +167,8 @@ func TestMergeDatacenters_Hooks_PrependChild(t *testing.T) {
 	hooks := merged.Environment.Hooks.Database
 	require.Len(t, hooks, 3)
 	assert.Equal(t, "postgres-override", hooks[0].When) // child first
-	assert.Equal(t, "postgres", hooks[1].When)           // parent second
-	assert.Equal(t, "redis", hooks[2].When)              // parent third
+	assert.Equal(t, "postgres", hooks[1].When)          // parent second
+	assert.Equal(t, "redis", hooks[2].When)             // parent third
 }
 
 func TestMergeDatacenters_Hooks_ChildCatchAllShadowsParent(t *testing.T) {
@@ -346,9 +346,9 @@ func TestMergeDatacenters_AllHookTypes(t *testing.T) {
 				Cronjob:       []internal.InternalHook{childHook},
 				Secret:        []internal.InternalHook{childHook},
 				DockerBuild:   []internal.InternalHook{childHook},
-				Observability:  []internal.InternalHook{childHook},
-				Port:           []internal.InternalHook{childHook},
-				NetworkPolicy:  []internal.InternalHook{childHook},
+				Observability: []internal.InternalHook{childHook},
+				Port:          []internal.InternalHook{childHook},
+				NetworkPolicy: []internal.InternalHook{childHook},
 			},
 		},
 	}
@@ -368,9 +368,9 @@ func TestMergeDatacenters_AllHookTypes(t *testing.T) {
 				Cronjob:       []internal.InternalHook{parentHook},
 				Secret:        []internal.InternalHook{parentHook},
 				DockerBuild:   []internal.InternalHook{parentHook},
-				Observability:  []internal.InternalHook{parentHook},
-				Port:           []internal.InternalHook{parentHook},
-				NetworkPolicy:  []internal.InternalHook{parentHook},
+				Observability: []internal.InternalHook{parentHook},
+				Port:          []internal.InternalHook{parentHook},
+				NetworkPolicy: []internal.InternalHook{parentHook},
 			},
 		},
 	}

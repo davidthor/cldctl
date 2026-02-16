@@ -155,20 +155,20 @@ type variableWrapper struct {
 	v *internal.InternalVariable
 }
 
-func (v *variableWrapper) Name() string        { return v.v.Name }
-func (v *variableWrapper) Type() string        { return v.v.Type }
-func (v *variableWrapper) Description() string { return v.v.Description }
+func (v *variableWrapper) Name() string         { return v.v.Name }
+func (v *variableWrapper) Type() string         { return v.v.Type }
+func (v *variableWrapper) Description() string  { return v.v.Description }
 func (v *variableWrapper) Default() interface{} { return v.v.Default }
-func (v *variableWrapper) Required() bool      { return v.v.Required }
-func (v *variableWrapper) Sensitive() bool     { return v.v.Sensitive }
+func (v *variableWrapper) Required() bool       { return v.v.Required }
+func (v *variableWrapper) Sensitive() bool      { return v.v.Sensitive }
 
 // datacenterComponentWrapper implements DatacenterComponent interface.
 type datacenterComponentWrapper struct {
 	c *internal.InternalDatacenterComponent
 }
 
-func (c *datacenterComponentWrapper) Name() string              { return c.c.Name }
-func (c *datacenterComponentWrapper) Source() string            { return c.c.Source }
+func (c *datacenterComponentWrapper) Name() string                 { return c.c.Name }
+func (c *datacenterComponentWrapper) Source() string               { return c.c.Source }
 func (c *datacenterComponentWrapper) Variables() map[string]string { return c.c.Variables }
 
 // moduleWrapper implements Module interface.
@@ -176,13 +176,13 @@ type moduleWrapper struct {
 	m *internal.InternalModule
 }
 
-func (m *moduleWrapper) Name() string                  { return m.m.Name }
-func (m *moduleWrapper) Build() string                 { return m.m.Build }
-func (m *moduleWrapper) Source() string                { return m.m.Source }
-func (m *moduleWrapper) Plugin() string                { return m.m.Plugin }
-func (m *moduleWrapper) Inputs() map[string]string     { return m.m.Inputs }
+func (m *moduleWrapper) Name() string                   { return m.m.Name }
+func (m *moduleWrapper) Build() string                  { return m.m.Build }
+func (m *moduleWrapper) Source() string                 { return m.m.Source }
+func (m *moduleWrapper) Plugin() string                 { return m.m.Plugin }
+func (m *moduleWrapper) Inputs() map[string]string      { return m.m.Inputs }
 func (m *moduleWrapper) Environment() map[string]string { return m.m.Environment }
-func (m *moduleWrapper) When() string                  { return m.m.When }
+func (m *moduleWrapper) When() string                   { return m.m.When }
 
 func (m *moduleWrapper) Volumes() []VolumeMount {
 	result := make([]VolumeMount, len(m.m.Volumes))
@@ -223,22 +223,22 @@ type hooksWrapper struct {
 	h *internal.InternalHooks
 }
 
-func (h *hooksWrapper) Database() []Hook { return wrapHooks(h.h.Database) }
-func (h *hooksWrapper) Task() []Hook     { return wrapHooks(h.h.Task) }
-func (h *hooksWrapper) Bucket() []Hook   { return wrapHooks(h.h.Bucket) }
-func (h *hooksWrapper) EncryptionKey() []Hook     { return wrapHooks(h.h.EncryptionKey) }
-func (h *hooksWrapper) SMTP() []Hook              { return wrapHooks(h.h.SMTP) }
-func (h *hooksWrapper) DatabaseUser() []Hook      { return wrapHooks(h.h.DatabaseUser) }
-func (h *hooksWrapper) Deployment() []Hook        { return wrapHooks(h.h.Deployment) }
-func (h *hooksWrapper) Function() []Hook          { return wrapHooks(h.h.Function) }
-func (h *hooksWrapper) Service() []Hook           { return wrapHooks(h.h.Service) }
-func (h *hooksWrapper) Route() []Hook             { return wrapHooks(h.h.Route) }
-func (h *hooksWrapper) Cronjob() []Hook           { return wrapHooks(h.h.Cronjob) }
-func (h *hooksWrapper) Secret() []Hook            { return wrapHooks(h.h.Secret) }
-func (h *hooksWrapper) DockerBuild() []Hook       { return wrapHooks(h.h.DockerBuild) }
-func (h *hooksWrapper) Observability() []Hook     { return wrapHooks(h.h.Observability) }
-func (h *hooksWrapper) Port() []Hook              { return wrapHooks(h.h.Port) }
-func (h *hooksWrapper) NetworkPolicy() []Hook     { return wrapHooks(h.h.NetworkPolicy) }
+func (h *hooksWrapper) Database() []Hook      { return wrapHooks(h.h.Database) }
+func (h *hooksWrapper) Task() []Hook          { return wrapHooks(h.h.Task) }
+func (h *hooksWrapper) Bucket() []Hook        { return wrapHooks(h.h.Bucket) }
+func (h *hooksWrapper) EncryptionKey() []Hook { return wrapHooks(h.h.EncryptionKey) }
+func (h *hooksWrapper) SMTP() []Hook          { return wrapHooks(h.h.SMTP) }
+func (h *hooksWrapper) DatabaseUser() []Hook  { return wrapHooks(h.h.DatabaseUser) }
+func (h *hooksWrapper) Deployment() []Hook    { return wrapHooks(h.h.Deployment) }
+func (h *hooksWrapper) Function() []Hook      { return wrapHooks(h.h.Function) }
+func (h *hooksWrapper) Service() []Hook       { return wrapHooks(h.h.Service) }
+func (h *hooksWrapper) Route() []Hook         { return wrapHooks(h.h.Route) }
+func (h *hooksWrapper) Cronjob() []Hook       { return wrapHooks(h.h.Cronjob) }
+func (h *hooksWrapper) Secret() []Hook        { return wrapHooks(h.h.Secret) }
+func (h *hooksWrapper) DockerBuild() []Hook   { return wrapHooks(h.h.DockerBuild) }
+func (h *hooksWrapper) Observability() []Hook { return wrapHooks(h.h.Observability) }
+func (h *hooksWrapper) Port() []Hook          { return wrapHooks(h.h.Port) }
+func (h *hooksWrapper) NetworkPolicy() []Hook { return wrapHooks(h.h.NetworkPolicy) }
 
 func wrapHooks(hooks []internal.InternalHook) []Hook {
 	result := make([]Hook, len(hooks))

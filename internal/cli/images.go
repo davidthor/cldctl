@@ -68,10 +68,10 @@ Examples:
 				if len(entries) == 0 {
 					fmt.Println("No locally cached artifacts found.")
 					fmt.Println()
-				fmt.Println("Build a component:   cldctl build component -t <repo:tag> <path>")
-				fmt.Println("Build a datacenter:  cldctl build datacenter -t <repo:tag> <path>")
-				fmt.Println("Pull a component:    cldctl pull component <repo:tag>")
-				fmt.Println("Pull a datacenter:   cldctl pull datacenter <repo:tag>")
+					fmt.Println("Build a component:   cldctl build component -t <repo:tag> <path>")
+					fmt.Println("Build a datacenter:  cldctl build datacenter -t <repo:tag> <path>")
+					fmt.Println("Pull a component:    cldctl pull component <repo:tag>")
+					fmt.Println("Pull a datacenter:   cldctl pull datacenter <repo:tag>")
 					return nil
 				}
 

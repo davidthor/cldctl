@@ -94,7 +94,7 @@ func findDashboardURL(envState *types.EnvironmentState) (string, error) {
 
 				if dashboardURL == "" {
 					return "", fmt.Errorf(
-						"observability resource found but no dashboard_url output.\n"+
+						"observability resource found but no dashboard_url output.\n" +
 							"The datacenter's observability hook must include dashboard_url in its outputs.",
 					)
 				}

@@ -48,11 +48,11 @@ type ModuleBlockV1 struct {
 	Build           string               `hcl:"build,optional"`
 	Source          string               `hcl:"source,optional"`
 	Plugin          string               `hcl:"plugin,optional"`
-	InputsExpr      hcl.Expression       `hcl:"-"`             // Raw inputs expression for runtime evaluation
-	InputsEvaluated map[string]cty.Value `hcl:"-"`             // Evaluated inputs
+	InputsExpr      hcl.Expression       `hcl:"-"` // Raw inputs expression for runtime evaluation
+	InputsEvaluated map[string]cty.Value `hcl:"-"` // Evaluated inputs
 	Environment     map[string]string    `hcl:"environment,optional"`
 	When            string               `hcl:"when,optional"`
-	WhenExpr        hcl.Expression       `hcl:"-"`             // Raw when expression for runtime evaluation
+	WhenExpr        hcl.Expression       `hcl:"-"` // Raw when expression for runtime evaluation
 	Volumes         []VolumeBlockV1      `hcl:"volume,block"`
 	Remain          hcl.Body             `hcl:",remain"`
 }
@@ -66,37 +66,37 @@ type VolumeBlockV1 struct {
 
 // EnvironmentBlockV1 represents the environment block.
 type EnvironmentBlockV1 struct {
-	Modules                []ModuleBlockV1 `hcl:"module,block"`
-	DatabaseHooks          []HookBlockV1   `hcl:"database,block"`
-	TaskHooks              []HookBlockV1   `hcl:"task,block"`
-	BucketHooks            []HookBlockV1   `hcl:"bucket,block"`
-	EncryptionKeyHooks     []HookBlockV1   `hcl:"encryptionKey,block"`
-	SMTPHooks              []HookBlockV1   `hcl:"smtp,block"`
-	DatabaseUserHooks      []HookBlockV1   `hcl:"databaseUser,block"`
-	DeploymentHooks        []HookBlockV1   `hcl:"deployment,block"`
-	FunctionHooks          []HookBlockV1   `hcl:"function,block"`
-	ServiceHooks           []HookBlockV1   `hcl:"service,block"`
-	RouteHooks             []HookBlockV1   `hcl:"route,block"`
-	CronjobHooks           []HookBlockV1   `hcl:"cronjob,block"`
-	SecretHooks            []HookBlockV1   `hcl:"secret,block"`
-	DockerBuildHooks       []HookBlockV1   `hcl:"dockerBuild,block"`
-	ObservabilityHooks     []HookBlockV1   `hcl:"observability,block"`
-	PortHooks              []HookBlockV1   `hcl:"port,block"`
-	NetworkPolicyHooks     []HookBlockV1   `hcl:"networkPolicy,block"`
-	Remain                 hcl.Body        `hcl:",remain"`
+	Modules            []ModuleBlockV1 `hcl:"module,block"`
+	DatabaseHooks      []HookBlockV1   `hcl:"database,block"`
+	TaskHooks          []HookBlockV1   `hcl:"task,block"`
+	BucketHooks        []HookBlockV1   `hcl:"bucket,block"`
+	EncryptionKeyHooks []HookBlockV1   `hcl:"encryptionKey,block"`
+	SMTPHooks          []HookBlockV1   `hcl:"smtp,block"`
+	DatabaseUserHooks  []HookBlockV1   `hcl:"databaseUser,block"`
+	DeploymentHooks    []HookBlockV1   `hcl:"deployment,block"`
+	FunctionHooks      []HookBlockV1   `hcl:"function,block"`
+	ServiceHooks       []HookBlockV1   `hcl:"service,block"`
+	RouteHooks         []HookBlockV1   `hcl:"route,block"`
+	CronjobHooks       []HookBlockV1   `hcl:"cronjob,block"`
+	SecretHooks        []HookBlockV1   `hcl:"secret,block"`
+	DockerBuildHooks   []HookBlockV1   `hcl:"dockerBuild,block"`
+	ObservabilityHooks []HookBlockV1   `hcl:"observability,block"`
+	PortHooks          []HookBlockV1   `hcl:"port,block"`
+	NetworkPolicyHooks []HookBlockV1   `hcl:"networkPolicy,block"`
+	Remain             hcl.Body        `hcl:",remain"`
 }
 
 // HookBlockV1 represents a resource hook block.
 type HookBlockV1 struct {
-	When              string          `hcl:"when,optional"`
-	WhenExpr          hcl.Expression  `hcl:"-"` // Raw when expression for runtime evaluation
-	Modules           []ModuleBlockV1 `hcl:"module,block"`
-	OutputsExpr       hcl.Expression  `hcl:"-"` // Raw outputs expression for runtime evaluation (attribute syntax)
-	OutputsAttrs      hcl.Attributes  `hcl:"-"` // Raw outputs attributes for runtime evaluation (block syntax)
-	NestedOutputExprs map[string]hcl.Expression  `hcl:"-"` // Nested output objects (e.g., read = {...}, write = {...})
-	Error             string          `hcl:"error,optional"` // Human-readable error message (mutually exclusive with modules/outputs)
-	ErrorExpr         hcl.Expression  `hcl:"-"`              // Raw error expression for runtime interpolation
-	Remain            hcl.Body        `hcl:",remain"`
+	When              string                    `hcl:"when,optional"`
+	WhenExpr          hcl.Expression            `hcl:"-"` // Raw when expression for runtime evaluation
+	Modules           []ModuleBlockV1           `hcl:"module,block"`
+	OutputsExpr       hcl.Expression            `hcl:"-"`              // Raw outputs expression for runtime evaluation (attribute syntax)
+	OutputsAttrs      hcl.Attributes            `hcl:"-"`              // Raw outputs attributes for runtime evaluation (block syntax)
+	NestedOutputExprs map[string]hcl.Expression `hcl:"-"`              // Nested output objects (e.g., read = {...}, write = {...})
+	Error             string                    `hcl:"error,optional"` // Human-readable error message (mutually exclusive with modules/outputs)
+	ErrorExpr         hcl.Expression            `hcl:"-"`              // Raw error expression for runtime interpolation
+	Remain            hcl.Body                  `hcl:",remain"`
 }
 
 // OutputsBlockV1 represents the outputs block in a hook.

@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	arcerrors "github.com/davidthor/cldctl/pkg/errors"
 	"github.com/davidthor/cldctl/pkg/engine/planner"
+	arcerrors "github.com/davidthor/cldctl/pkg/errors"
 	"github.com/davidthor/cldctl/pkg/graph"
 	"github.com/davidthor/cldctl/pkg/iac"
 	"github.com/davidthor/cldctl/pkg/names"
@@ -30,13 +30,13 @@ import (
 
 // ExecutionResult contains the results of an execution.
 type ExecutionResult struct {
-	Success   bool
-	Duration  time.Duration
-	Created   int
-	Updated   int
-	Deleted   int
-	Failed    int
-	Errors    []error
+	Success     bool
+	Duration    time.Duration
+	Created     int
+	Updated     int
+	Deleted     int
+	Failed      int
+	Errors      []error
 	NodeResults map[string]*NodeResult
 }
 
@@ -904,13 +904,13 @@ func (e *Executor) executeHookModules(ctx context.Context, node *graph.Node, env
 
 		// Track per-module state
 		moduleStates[module.Name()] = &types.ModuleState{
-			Name:    module.Name(),
-			Plugin:  pluginName,
-			Source:  modulePath,
-			Inputs:  inputs,
-			Outputs: modOutputs,
+			Name:     module.Name(),
+			Plugin:   pluginName,
+			Source:   modulePath,
+			Inputs:   inputs,
+			Outputs:  modOutputs,
 			IaCState: applyResult.State,
-			Status:  types.ModuleStatusReady,
+			Status:   types.ModuleStatusReady,
 		}
 	}
 
@@ -1105,7 +1105,7 @@ var requiredHookOutputs = map[graph.NodeType][]string{
 	graph.NodeTypeRoute:         {"url", "host", "port"},
 	graph.NodeTypeTask:          {"id", "status"},
 	graph.NodeTypeObservability: {"endpoint", "protocol"},
-	graph.NodeTypeDatabaseUser: {"host", "port", "url"},
+	graph.NodeTypeDatabaseUser:  {"host", "port", "url"},
 	// database: username and password are optional (not all engines require
 	// credentials, e.g., Redis).
 	// encryptionKey: outputs vary by algorithm (RSA vs symmetric) — validated separately if needed.
@@ -1330,7 +1330,6 @@ func (e *Executor) evaluateWhenHCL(when string, inputs map[string]interface{}) (
 	return eval.EvaluateWhen(expr)
 }
 
-
 // evaluateWhenStringFallback provides legacy string-based matching for when conditions
 // that cannot be parsed as HCL expressions.
 func (e *Executor) evaluateWhenStringFallback(when string, inputs map[string]interface{}) bool {
@@ -1345,7 +1344,7 @@ func (e *Executor) evaluateWhenStringFallback(when string, inputs map[string]int
 
 	// Check for "== null" patterns (before generic "==" check)
 	// Handles conditions like: node.inputs.image == null
-	if (contains(when, "== null") || contains(when, "==null")) {
+	if contains(when, "== null") || contains(when, "==null") {
 		inputName := extractInputName(when)
 		if inputName != "" {
 			val := inputs[inputName]
@@ -2630,11 +2629,11 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 				// For required dependencies emit a debug warning.
 				isOptional := e.graph.OptionalDependencies != nil &&
 					e.graph.OptionalDependencies[node.Component] != nil &&
-				e.graph.OptionalDependencies[node.Component][depAlias]
-			if isOptional {
-				return "" // Silently resolve optional dep to empty string
-			}
-			return debugUnresolved(fmt.Sprintf("dependency %q (component %q) output %q not available", depAlias, targetComp, outputKey))
+					e.graph.OptionalDependencies[node.Component][depAlias]
+				if isOptional {
+					return "" // Silently resolve optional dep to empty string
+				}
+				return debugUnresolved(fmt.Sprintf("dependency %q (component %q) output %q not available", depAlias, targetComp, outputKey))
 
 			default:
 				return debugUnresolved(fmt.Sprintf("unknown expression prefix %q", resourceType))
@@ -3432,9 +3431,9 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 			if isReady {
 				inFlight[id] = true
 
-			if os.Getenv("CLDCTL_DEBUG") != "" {
-				fmt.Fprintf(os.Stderr, "[debug] Launching %s (deps satisfied)\n", id)
-			}
+				if os.Getenv("CLDCTL_DEBUG") != "" {
+					fmt.Fprintf(os.Stderr, "[debug] Launching %s (deps satisfied)\n", id)
+				}
 
 				wg.Add(1)
 
@@ -3576,13 +3575,13 @@ func (e *Executor) ExecuteParallel(ctx context.Context, plan *planner.Plan, g *g
 
 	// Check for stuck nodes (dependency cycle or unresolvable deps)
 	if len(pending) > 0 {
-	if os.Getenv("CLDCTL_DEBUG") != "" {
-		fmt.Fprintf(os.Stderr, "[debug] Deadlock detected! Pending nodes:\n")
-		for id, change := range pending {
-			fmt.Fprintf(os.Stderr, "[debug]   %s depends on: %v\n", id, change.Node.DependsOn)
+		if os.Getenv("CLDCTL_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "[debug] Deadlock detected! Pending nodes:\n")
+			for id, change := range pending {
+				fmt.Fprintf(os.Stderr, "[debug]   %s depends on: %v\n", id, change.Node.DependsOn)
+			}
+			fmt.Fprintf(os.Stderr, "[debug] Completed nodes: %v\n", completed)
 		}
-		fmt.Fprintf(os.Stderr, "[debug] Completed nodes: %v\n", completed)
-	}
 		// Mark remaining nodes as failed
 		for id, change := range pending {
 			if !inFlight[id] {

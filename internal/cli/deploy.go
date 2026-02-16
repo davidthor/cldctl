@@ -40,18 +40,18 @@ func newDeployCmd() *cobra.Command {
 
 func newDeployComponentCmd() *cobra.Command {
 	var (
-		environment      string
-		datacenter       string
-		variables        []string
-		varFile          string
-		autoApprove      bool
-		importFile       string
-		targets          []string
-		backendType      string
-		backendConfig    []string
-		instanceName     string
-		instanceWeight   int
-		routeSubdomains  []string
+		environment       string
+		datacenter        string
+		variables         []string
+		varFile           string
+		autoApprove       bool
+		importFile        string
+		targets           []string
+		backendType       string
+		backendConfig     []string
+		instanceName      string
+		instanceWeight    int
+		routeSubdomains   []string
 		routePathPrefixes []string
 	)
 
@@ -1060,7 +1060,7 @@ func isInteractive() bool {
 		"BUILDKITE",
 		"DRONE",
 		"TEAMCITY_VERSION",
-		"TF_BUILD",           // Azure DevOps
+		"TF_BUILD", // Azure DevOps
 		"BITBUCKET_BUILD_NUMBER",
 		"CODEBUILD_BUILD_ID", // AWS CodeBuild
 	}

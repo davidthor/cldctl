@@ -104,7 +104,7 @@ func TestResourceChange_Marshal(t *testing.T) {
 		Resource: "aws:rds/instance:Instance::my-db",
 		Action:   "create",
 		After: map[string]interface{}{
-			"engine":        "postgres",
+			"engine":         "postgres",
 			"engine_version": "16",
 			"instance_class": "db.t3.micro",
 		},

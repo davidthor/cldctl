@@ -267,6 +267,25 @@ func TestWaitForReady_HTTPSuccess(t *testing.T) {
 }
 
 func TestWaitForReady_HTTPTimeout(t *testing.T) {
+	// Use an endpoint that will never accept connections to trigger a real timeout.
+	// Any HTTP response (including 5xx) is now treated as "alive", so we need a
+	// genuinely unreachable server to test the timeout path.
+	pm := newTestProcessManager()
+	readiness := &ReadinessCheck{
+		Type:     "http",
+		Endpoint: "http://localhost:19999",
+		Interval: 50 * time.Millisecond,
+		Timeout:  200 * time.Millisecond,
+	}
+
+	err := pm.waitForReady(context.Background(), readiness, aliveProcess())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "did not become ready")
+}
+
+func TestWaitForReady_HTTP5xxIsAlive(t *testing.T) {
+	// A 5xx response means the process is alive and listening, even though the
+	// application may not be fully ready. The readiness check should succeed.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -277,12 +296,11 @@ func TestWaitForReady_HTTPTimeout(t *testing.T) {
 		Type:     "http",
 		Endpoint: server.URL,
 		Interval: 50 * time.Millisecond,
-		Timeout:  200 * time.Millisecond,
+		Timeout:  2 * time.Second,
 	}
 
 	err := pm.waitForReady(context.Background(), readiness, aliveProcess())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "did not become ready")
+	assert.NoError(t, err)
 }
 
 func TestWaitForReady_HTTPProcessExited(t *testing.T) {

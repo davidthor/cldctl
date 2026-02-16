@@ -21,10 +21,10 @@ const (
 	NodeTypeSecret        NodeType = "secret"
 	NodeTypeDockerBuild   NodeType = "dockerBuild"
 	NodeTypeTask          NodeType = "task"
-	NodeTypeObservability  NodeType = "observability"
-	NodeTypePort           NodeType = "port"
-	NodeTypeDatabaseUser   NodeType = "databaseUser"
-	NodeTypeNetworkPolicy  NodeType = "networkPolicy"
+	NodeTypeObservability NodeType = "observability"
+	NodeTypePort          NodeType = "port"
+	NodeTypeDatabaseUser  NodeType = "databaseUser"
+	NodeTypeNetworkPolicy NodeType = "networkPolicy"
 )
 
 // NodeInstance holds instance context for per-instance nodes in progressive delivery.
@@ -104,16 +104,16 @@ func NewNode(nodeType NodeType, component, name string) *Node {
 // The node ID includes the instance: component/instance/type/name.
 func NewInstanceNode(nodeType NodeType, component, instanceName string, weight int, name string) *Node {
 	return &Node{
-		ID:        fmt.Sprintf("%s/%s/%s/%s", component, instanceName, nodeType, name),
-		Type:      nodeType,
-		Component: component,
-		Name:      name,
-		Inputs:    make(map[string]interface{}),
-		Outputs:   make(map[string]interface{}),
-		DependsOn: []string{},
+		ID:           fmt.Sprintf("%s/%s/%s/%s", component, instanceName, nodeType, name),
+		Type:         nodeType,
+		Component:    component,
+		Name:         name,
+		Inputs:       make(map[string]interface{}),
+		Outputs:      make(map[string]interface{}),
+		DependsOn:    []string{},
 		DependedOnBy: []string{},
-		State:     NodeStatePending,
-		Instance:  &NodeInstance{Name: instanceName, Weight: weight},
+		State:        NodeStatePending,
+		Instance:     &NodeInstance{Name: instanceName, Weight: weight},
 	}
 }
 

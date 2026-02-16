@@ -246,13 +246,6 @@ environment {
         memory         = node.inputs.memory
         network        = variable.network_name
         liveness_probe = node.inputs.liveness_probe
-        # Forward container stdout to OTel collector via fluentd driver
-        log_driver = "fluentd"
-        log_driver_options = {
-          fluentd-address  = module.otel.fluentd_endpoint
-          fluentd-async    = "true"
-          tag              = "${environment.name}.${node.component}.${node.type}.${node.name}"
-        }
       }
     }
     

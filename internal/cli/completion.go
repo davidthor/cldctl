@@ -132,12 +132,12 @@ func completeEnvironmentNames(cmd *cobra.Command, args []string, toComplete stri
 // findComponentFiles finds cloud.component.yml files in a directory.
 func findComponentFiles(dir string) ([]string, error) { //nolint:unused
 	var files []string
-	
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	for _, entry := range entries {
 		if entry.Name() == "cloud.component.yml" || entry.Name() == "cloud.component.yaml" {
 			files = append(files, dir)
@@ -149,19 +149,19 @@ func findComponentFiles(dir string) ([]string, error) { //nolint:unused
 			}
 		}
 	}
-	
+
 	return files, nil
 }
 
 // findDatacenterFiles finds datacenter.hcl files in a directory.
 func findDatacenterFiles(dir string) ([]string, error) { //nolint:unused
 	var files []string
-	
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	for _, entry := range entries {
 		if entry.Name() == "datacenter.hcl" {
 			files = append(files, dir)
@@ -173,19 +173,19 @@ func findDatacenterFiles(dir string) ([]string, error) { //nolint:unused
 			}
 		}
 	}
-	
+
 	return files, nil
 }
 
 // findEnvironmentFiles finds environment.yml files in a directory.
 func findEnvironmentFiles(dir string) ([]string, error) { //nolint:unused
 	var files []string
-	
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	for _, entry := range entries {
 		if entry.Name() == "environment.yml" || entry.Name() == "environment.yaml" {
 			files = append(files, dir)
@@ -197,6 +197,6 @@ func findEnvironmentFiles(dir string) ([]string, error) { //nolint:unused
 			}
 		}
 	}
-	
+
 	return files, nil
 }

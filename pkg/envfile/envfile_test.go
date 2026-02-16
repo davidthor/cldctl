@@ -110,7 +110,7 @@ func TestLoad_EnvironmentSpecificFiles(t *testing.T) {
 
 	vars, err := Load(dir, "staging")
 	require.NoError(t, err)
-	assert.Equal(t, "staging", vars["KEY1"])        // overridden by .env.staging
+	assert.Equal(t, "staging", vars["KEY1"])       // overridden by .env.staging
 	assert.Equal(t, "staging-local", vars["KEY2"]) // overridden by .env.staging.local
 }
 

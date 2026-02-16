@@ -209,8 +209,8 @@ Examples:
 
 			// Load full datacenter states and count environments
 			type dcInfo struct {
-				name string
-				version string
+				name     string
+				version  string
 				envCount int
 			}
 			var datacenters []dcInfo
