@@ -111,6 +111,14 @@ type FunctionConfigV1 struct {
 
 // RouteConfigV1 represents route configuration in v1 schema.
 type RouteConfigV1 struct {
+	// Subdomain for the route. Used as node.inputs.subdomain by datacenter hooks.
+	// When not set, a deterministic default is generated from hash(env, component, route).
+	Subdomain string `yaml:"subdomain,omitempty" json:"subdomain,omitempty"`
+
+	// PathPrefix for the route. Used as node.inputs.path_prefix by datacenter hooks.
+	// Defaults to "/" when not set.
+	PathPrefix string `yaml:"pathPrefix,omitempty" json:"pathPrefix,omitempty"`
+
 	Hostnames []HostnameV1  `yaml:"hostnames,omitempty" json:"hostnames,omitempty"`
 	TLS       *TLSConfigV1  `yaml:"tls,omitempty" json:"tls,omitempty"`
 }

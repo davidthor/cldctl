@@ -42,14 +42,16 @@ const (
 
 func newUpCmd() *cobra.Command {
 	var (
-		componentFile string
-		envFile       string
-		name          string
-		datacenter    string
-		variables     []string
-		varFile       string
-		detach        bool
-		port          int
+		componentFile     string
+		envFile           string
+		name              string
+		datacenter        string
+		variables         []string
+		varFile           string
+		detach            bool
+		port              int
+		routeSubdomains   []string
+		routePathPrefixes []string
 	)
 
 	cmd := &cobra.Command{
@@ -249,12 +251,31 @@ Examples:
 			progress.PrintUpdate(event.NodeID)
 		}
 
+			// Parse route flags (only applies to component mode)
+			var routesMap map[string]map[string]engine.RouteOverride
+			if mode == upModeComponent && (len(routeSubdomains) > 0 || len(routePathPrefixes) > 0) {
+				routeOverrides, routeErr := parseRouteFlags(routeSubdomains, routePathPrefixes)
+				if routeErr != nil {
+					return routeErr
+				}
+				if len(routeOverrides) > 0 {
+					// In component mode there is exactly one component
+					for compName := range componentsMap {
+						routesMap = map[string]map[string]engine.RouteOverride{
+							compName: routeOverrides,
+						}
+						break
+					}
+				}
+			}
+
 			// Execute deployment
 			result, err := eng.Deploy(ctx, engine.DeployOptions{
 				Environment: envName,
 				Datacenter:  dc,
 				Components:  componentsMap,
 				Variables:   variablesMap,
+				Routes:      routesMap,
 				Output:      nil, // Suppress plan summary - progress table handles display
 				DryRun:      false,
 				AutoApprove: true,
@@ -375,6 +396,8 @@ Examples:
 	cmd.Flags().StringVar(&varFile, "var-file", "", "Load variables from a file")
 	cmd.Flags().BoolVar(&detach, "detach", false, "Run in background (don't watch for changes)")
 	cmd.Flags().IntVar(&port, "port", 0, "Override the port for local access (default: 8080)")
+	cmd.Flags().StringArrayVar(&routeSubdomains, "route-subdomain", nil, "Set route subdomain (route=subdomain, repeatable; component mode only)")
+	cmd.Flags().StringArrayVar(&routePathPrefixes, "route-path-prefix", nil, "Set route path prefix (route=/path, repeatable; component mode only)")
 
 	return cmd
 }

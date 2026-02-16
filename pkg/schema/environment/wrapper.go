@@ -116,6 +116,9 @@ type routeConfigWrapper struct {
 	r *internal.InternalRouteConfig
 }
 
+func (r *routeConfigWrapper) Subdomain() string  { return r.r.Subdomain }
+func (r *routeConfigWrapper) PathPrefix() string { return r.r.PathPrefix }
+
 func (r *routeConfigWrapper) Hostnames() []Hostname {
 	result := make([]Hostname, len(r.r.Hostnames))
 	for i := range r.r.Hostnames {
