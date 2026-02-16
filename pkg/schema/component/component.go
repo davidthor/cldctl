@@ -155,7 +155,9 @@ type Function interface {
 	Container() FunctionContainer
 
 	// Common configuration
-	Port() int
+	// Port returns the raw port value as a string. May be an integer string ("3000")
+	// or an expression ("${{ ports.web.port }}"). Returns "" if not set.
+	Port() string
 	Environment() map[string]string
 	CPU() string
 	Memory() string

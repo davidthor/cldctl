@@ -252,7 +252,7 @@ func (t *Transformer) transformDeployment(name string, dep DeploymentV1) (intern
 func (t *Transformer) transformFunction(name string, fn FunctionV1) (internal.InternalFunction, error) {
 	ifn := internal.InternalFunction{
 		Name:    name,
-		Port:    fn.Port,
+		Port:    internal.NewExpression(fn.PortAsString()),
 		CPU:     fn.CPU,
 		Memory:  fn.Memory,
 		Timeout: fn.Timeout,

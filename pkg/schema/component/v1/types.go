@@ -193,7 +193,8 @@ type FunctionV1 struct {
 	Container *FunctionContainerV1 `yaml:"container,omitempty" json:"container,omitempty"`
 
 	// Common fields (valid for both src and container)
-	Port        int               `yaml:"port,omitempty" json:"port,omitempty"`
+	// Port supports both integer literals (3000) and expression strings (${{ ports.web.port }}).
+	Port        interface{}       `yaml:"port,omitempty" json:"port,omitempty"`
 	Environment map[string]string `yaml:"environment,omitempty" json:"environment,omitempty"`
 	CPU         string            `yaml:"cpu,omitempty" json:"cpu,omitempty"`
 	Memory      string            `yaml:"memory,omitempty" json:"memory,omitempty"`
@@ -260,6 +261,23 @@ func (s *ServiceV1) PortAsString() string {
 		return ""
 	}
 	switch v := s.Port.(type) {
+	case int:
+		return fmt.Sprintf("%d", v)
+	case float64:
+		return fmt.Sprintf("%d", int(v))
+	case string:
+		return v
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+// PortAsString returns the function port value as a string (for expression handling).
+func (f *FunctionV1) PortAsString() string {
+	if f.Port == nil {
+		return ""
+	}
+	switch v := f.Port.(type) {
 	case int:
 		return fmt.Sprintf("%d", v)
 	case float64:

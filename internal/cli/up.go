@@ -143,17 +143,18 @@ Examples:
 
 			// Build component/variable maps and loaded components based on mode
 			var (
-				componentsMap map[string]string
-				variablesMap  map[string]map[string]interface{}
-				envName       string
-				loadedComps   map[string]component.Component // for progress table
+				componentsMap   map[string]string
+				variablesMap    map[string]map[string]interface{}
+				envRoutesMap    map[string]map[string]engine.RouteOverride
+				envName         string
+				loadedComps     map[string]component.Component // for progress table
 			)
 
 			switch mode {
 			case upModeComponent:
 				componentsMap, variablesMap, envName, loadedComps, err = prepareComponentMode(ctx, resolvedPath, name, cliVars, dc, mgr)
 			case upModeEnvironment:
-				componentsMap, variablesMap, envName, loadedComps, err = prepareEnvironmentMode(resolvedPath, name, cliVars, dc)
+				componentsMap, variablesMap, envRoutesMap, envName, loadedComps, err = prepareEnvironmentMode(resolvedPath, name, cliVars, dc)
 			}
 			if err != nil {
 				return err
@@ -251,19 +252,22 @@ Examples:
 			progress.PrintUpdate(event.NodeID)
 		}
 
-			// Parse route flags (only applies to component mode)
-			var routesMap map[string]map[string]engine.RouteOverride
+			// Build route overrides map from environment config and/or CLI flags.
+			// Environment routes are extracted by prepareEnvironmentMode; CLI flags
+			// (component mode only) override or supplement them.
+			routesMap := envRoutesMap
 			if mode == upModeComponent && (len(routeSubdomains) > 0 || len(routePathPrefixes) > 0) {
 				routeOverrides, routeErr := parseRouteFlags(routeSubdomains, routePathPrefixes)
 				if routeErr != nil {
 					return routeErr
 				}
 				if len(routeOverrides) > 0 {
+					if routesMap == nil {
+						routesMap = make(map[string]map[string]engine.RouteOverride)
+					}
 					// In component mode there is exactly one component
 					for compName := range componentsMap {
-						routesMap = map[string]map[string]engine.RouteOverride{
-							compName: routeOverrides,
-						}
+						routesMap[compName] = routeOverrides
 						break
 					}
 				}
@@ -561,7 +565,7 @@ func prepareComponentMode(
 }
 
 // prepareEnvironmentMode loads an environment file, resolves variables,
-// and builds the component/variable maps needed for engine.Deploy.
+// and builds the component/variable/route maps needed for engine.Deploy.
 func prepareEnvironmentMode(
 	resolvedPath string,
 	nameFlag string,
@@ -570,6 +574,7 @@ func prepareEnvironmentMode(
 ) (
 	componentsMap map[string]string,
 	variablesMap map[string]map[string]interface{},
+	envRoutesMap map[string]map[string]engine.RouteOverride,
 	envName string,
 	loadedComps map[string]component.Component,
 	err error,
@@ -578,7 +583,7 @@ func prepareEnvironmentMode(
 	envLoader := environment.NewLoader()
 	envConfig, err := envLoader.Load(resolvedPath)
 	if err != nil {
-		return nil, nil, "", nil, fmt.Errorf("failed to load environment config: %w", err)
+		return nil, nil, nil, "", nil, fmt.Errorf("failed to load environment config: %w", err)
 	}
 
 	// Determine environment name: --name flag > config file name > directory-based default
@@ -597,11 +602,11 @@ func prepareEnvironmentMode(
 	envDir := filepath.Dir(resolvedPath)
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, nil, "", nil, fmt.Errorf("failed to get working directory: %w", err)
+		return nil, nil, nil, "", nil, fmt.Errorf("failed to get working directory: %w", err)
 	}
 	dotenvVars, err := envfile.Load(cwd, envName)
 	if err != nil {
-		return nil, nil, "", nil, fmt.Errorf("failed to load .env files: %w", err)
+		return nil, nil, nil, "", nil, fmt.Errorf("failed to load .env files: %w", err)
 	}
 
 	// Resolve environment-level variables and substitute expressions
@@ -610,13 +615,14 @@ func prepareEnvironmentMode(
 		DotenvVars: dotenvVars,
 		EnvName:    envName,
 	}); err != nil {
-		return nil, nil, "", nil, fmt.Errorf("failed to resolve environment variables: %w", err)
+		return nil, nil, nil, "", nil, fmt.Errorf("failed to resolve environment variables: %w", err)
 	}
 
-	// Build component and variable maps from the environment config
+	// Build component, variable, and route maps from the environment config
 	envComponents := envConfig.Components()
 	componentsMap = make(map[string]string, len(envComponents))
 	variablesMap = make(map[string]map[string]interface{}, len(envComponents))
+	envRoutesMap = make(map[string]map[string]engine.RouteOverride)
 	loadedComps = make(map[string]component.Component, len(envComponents))
 
 	compLoader := component.NewLoader()
@@ -634,18 +640,34 @@ func prepareEnvironmentMode(
 		componentsMap[compName] = source
 		variablesMap[compName] = compConfig.Variables()
 
+		// Extract route overrides (subdomain, pathPrefix) from the environment config
+		if routeConfigs := compConfig.Routes(); len(routeConfigs) > 0 {
+			routeMap := make(map[string]engine.RouteOverride, len(routeConfigs))
+			for routeName, rc := range routeConfigs {
+				if rc.Subdomain() != "" || rc.PathPrefix() != "" {
+					routeMap[routeName] = engine.RouteOverride{
+						Subdomain:  rc.Subdomain(),
+						PathPrefix: rc.PathPrefix(),
+					}
+				}
+			}
+			if len(routeMap) > 0 {
+				envRoutesMap[compName] = routeMap
+			}
+		}
+
 		// Load component for the progress table
 		// For local paths, load directly; for OCI references the engine handles pulling
 		if compConfig.Path() != "" {
 			comp, err := compLoader.Load(source)
 			if err != nil {
-				return nil, nil, "", nil, fmt.Errorf("failed to load component %q from %s: %w", compName, source, err)
+				return nil, nil, nil, "", nil, fmt.Errorf("failed to load component %q from %s: %w", compName, source, err)
 			}
 			loadedComps[compName] = comp
 		}
 	}
 
-	return componentsMap, variablesMap, envName, loadedComps, nil
+	return componentsMap, variablesMap, envRoutesMap, envName, loadedComps, nil
 }
 
 // makeCleanupFunc creates the cleanup function used during shutdown.

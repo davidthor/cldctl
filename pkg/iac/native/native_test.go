@@ -70,10 +70,10 @@ func TestGetStringSlice(t *testing.T) {
 		t.Errorf("expected nil, got %v", result)
 	}
 
-	// Test string value (should be split into fields)
+	// Test string value (should be wrapped with sh -c for shell execution)
 	result = getStringSlice(props, "notArray")
-	if len(result) != 1 || result[0] != "string" {
-		t.Errorf("expected [string] for string value, got %v", result)
+	if len(result) != 3 || result[0] != "sh" || result[1] != "-c" || result[2] != "string" {
+		t.Errorf("expected [sh -c string] for string value, got %v", result)
 	}
 }
 

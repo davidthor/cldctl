@@ -330,19 +330,23 @@ environment {
     }
   }
   
-  # Route hook - for local dev, just expose the port directly
+  # Route hook - shared nginx gateway for the environment.
+  # All routes share a single nginx container per environment. Each route
+  # gets its own subdomain (e.g., app.localhost, api.localhost).
+  # Modern browsers resolve *.localhost to 127.0.0.1 natively.
   route {
     module "route" {
       plugin = "native"
       build  = "./modules/local-route"
       inputs = {
-        name        = "${environment.name}-${node.component}-${node.name}"
-        type        = node.inputs.type
-        rules       = node.inputs.rules
-        internal    = node.inputs.internal
-        host        = variable.host
-        subdomain   = node.inputs.subdomain
-        path_prefix = node.inputs.path_prefix
+        gateway_name  = "${environment.name}-gateway"
+        config_dir    = "/tmp/cldctl-${environment.name}-gateway"
+        route_name    = "${node.component}--${node.name}"
+        subdomain     = node.inputs.subdomain
+        upstream_host = "host.docker.internal"
+        upstream_port = node.inputs.upstream_port
+        host          = variable.host
+        network       = variable.network_name
       }
     }
     
@@ -412,6 +416,10 @@ environment {
         container_name = "${environment.name}-${node.component}-${node.inputs.database}"
         database       = node.inputs.database
         username       = node.inputs.consumer
+        # host and port are injected by the executor from the parent database
+        # node's outputs, so the databaseUser URL uses the actual allocated port
+        host           = node.inputs.host
+        port           = node.inputs.port
       }
     }
     

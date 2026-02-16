@@ -107,8 +107,14 @@ func resolveReference(ref string, ctx *EvalContext) (interface{}, error) {
 		return nil, fmt.Errorf("empty reference")
 	}
 
-	// Handle inline map literals like { KEY: 'value', OTHER: 'data' }
+	// Handle string literals (single or double-quoted)
 	trimmedRef := strings.TrimSpace(ref)
+	if (strings.HasPrefix(trimmedRef, "'") && strings.HasSuffix(trimmedRef, "'")) ||
+		(strings.HasPrefix(trimmedRef, "\"") && strings.HasSuffix(trimmedRef, "\"")) {
+		return trimmedRef[1 : len(trimmedRef)-1], nil
+	}
+
+	// Handle inline map literals like { KEY: 'value', OTHER: 'data' }
 	if strings.HasPrefix(trimmedRef, "{") && strings.HasSuffix(trimmedRef, "}") {
 		return parseMapLiteral(trimmedRef)
 	}

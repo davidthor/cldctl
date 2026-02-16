@@ -383,6 +383,35 @@ database {
 }
 ```
 
+## Route Hook — Shared Nginx Gateway
+
+The local datacenter uses a single nginx container per environment as a shared gateway for all routes. Instead of creating one nginx container per route, each route writes a config file that's bind-mounted into the gateway, and nginx is reloaded to pick up the change.
+
+### How It Works
+
+1. **First route deployed**: Creates the gateway container (`{env}-gateway`) with a dynamic host port
+2. **Subsequent routes**: Reuse the existing gateway — just write a new config file and reload
+3. **Route URLs**: All routes share the same port, differentiated by path prefix: `http://localhost:{port}/{route-name}/`
+4. **Path stripping**: nginx strips the route prefix before forwarding to the upstream, so the application sees requests at `/`
+5. **Cleanup**: When the last route is destroyed, the gateway container is removed
+
+### Example Output
+
+```
+Routes:
+  myenv/app/route.api     http://localhost:54700/api
+  myenv/app/route.www     http://localhost:54700/www
+  myenv/inngest/route.inngest  http://localhost:54700/inngest
+```
+
+### Upstream Resolution
+
+The executor automatically resolves `upstream_port` for each route based on its target:
+- **Service targets**: Uses the service's declared port from the component schema
+- **Function targets**: Resolves the function's allocated port (from the port hook or associated service)
+
+Inside the gateway container, `host.docker.internal` is used to reach services and functions running on the host.
+
 ## Related Guides
 
 <CardGroup cols={2}>

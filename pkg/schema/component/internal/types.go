@@ -172,7 +172,7 @@ type InternalFunction struct {
 	Container *InternalFunctionContainer
 
 	// Common configuration
-	Port        int
+	Port        Expression // Port number or expression (e.g., "3000" or "${{ ports.web.port }}")
 	Environment map[string]Expression
 	CPU         string
 	Memory      string

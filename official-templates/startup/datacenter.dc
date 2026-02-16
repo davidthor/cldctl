@@ -417,7 +417,7 @@ environment {
   route {
     module "vercel_route" {
       plugin = "opentofu"
-      build  = "./modules/vercel-ingress"
+      build  = "./modules/vercel-route"
       inputs = {
         name       = "${environment.name}-${node.component}-${node.name}"
         token      = variable.vercel_token

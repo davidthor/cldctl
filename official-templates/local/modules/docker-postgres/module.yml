@@ -43,15 +43,15 @@ resources:
         POSTGRES_PASSWORD: "localdevpassword"
       ports:
         - container: 5432
-          host: "${inputs.port}"
+          host: 0
       volumes:
         - name: "${inputs.name}-data"
           path: /var/lib/postgresql/data
       healthcheck:
         command: ["pg_isready", "-U", "app", "-d", "${inputs.database}"]
-        interval: 5s
-        timeout: 5s
-        retries: 10
+        interval: 2s
+        timeout: 3s
+        retries: 15
       restart: unless-stopped
 
 outputs:
@@ -59,8 +59,8 @@ outputs:
     value: "localhost"
     description: Database host
   port:
-    value: "${inputs.port}"
-    description: Database port on host
+    value: "${resources.container.ports[0].host}"
+    description: Database port on host (dynamically allocated)
   database:
     value: "${inputs.database}"
     description: Database name
@@ -72,7 +72,7 @@ outputs:
     sensitive: true
     description: Database password
   url:
-    value: "postgresql://app:localdevpassword@localhost:${inputs.port}/${inputs.database}"
+    value: "postgresql://app:localdevpassword@localhost:${resources.container.ports[0].host}/${inputs.database}"
     sensitive: true
     description: Full connection URL
   container_id:

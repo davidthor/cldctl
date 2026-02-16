@@ -1148,7 +1148,7 @@ environment {
     # ...
   }
 
-  ingress {
+  route {
     # ...
   }
 
@@ -1602,15 +1602,15 @@ environment {
 | `port` | number | Service port |
 | `url` | string | Full service URL |
 
-##### Route Hook (Ingress)
+##### Route Hook
 
-Routes are processed using the Gateway API pattern. The datacenter receives the full route specification and is responsible for creating the appropriate gateway resources (HTTPRoute, GRPCRoute, Gateway, etc.). In HCL, this is typically handled by the `ingress` hook.
+Routes are processed using the Gateway API pattern. The datacenter receives the full route specification and is responsible for creating the appropriate gateway resources (HTTPRoute, GRPCRoute, Gateway, etc.). In HCL, this is handled by the `route` hook.
 
 ```hcl
 environment {
-  ingress {
-    module "ingress_rule" {
-      build = "./modules/ingress-rule"
+  route {
+    module "route_rule" {
+      build = "./modules/route-rule"
       inputs = merge(node.inputs, {
         name             = "${node.component}--${node.name}"
         namespace        = module.namespace.id
@@ -1628,17 +1628,17 @@ environment {
       inputs = {
         domain    = variable.dns_zone
         type      = "A"
-        value     = module.ingress_rule.load_balancer_ip
+        value     = module.route_rule.load_balancer_ip
         subdomain = node.inputs.subdomain
       }
     }
 
     outputs = {
-      protocol  = module.ingress_rule.protocol
-      host      = module.ingress_rule.host
-      port      = module.ingress_rule.port
-      url       = module.ingress_rule.url
-      path      = module.ingress_rule.path
+      protocol  = module.route_rule.protocol
+      host      = module.route_rule.host
+      port      = module.route_rule.port
+      url       = module.route_rule.url
+      path      = module.route_rule.path
       subdomain = node.inputs.subdomain
       dns_zone  = node.inputs.dns_zone
     }
@@ -2070,7 +2070,7 @@ environment {
   }
 
   module "nginx_controller" {
-    when  = contains(environment.nodes.*.type, "ingress")
+    when  = contains(environment.nodes.*.type, "route")
     build = "./modules/nginx-controller"
     inputs = {
       name       = "${datacenter.name}-nginx-controller"
@@ -2176,9 +2176,9 @@ environment {
     }
   }
 
-  ingress {
-    module "ingress_rule" {
-      build = "./modules/ingress-rule"
+  route {
+    module "route_rule" {
+      build = "./modules/route-rule"
       inputs = merge(node.inputs, {
         name             = "${node.component}--${node.name}"
         namespace        = module.namespace.id
@@ -2193,16 +2193,16 @@ environment {
       inputs = {
         domain    = variable.domain
         type      = "A"
-        value     = module.ingress_rule.load_balancer_ip
+        value     = module.route_rule.load_balancer_ip
         subdomain = node.inputs.subdomain
       }
     }
 
     outputs = {
-      protocol  = module.ingress_rule.protocol
-      host      = module.ingress_rule.host
-      port      = module.ingress_rule.port
-      url       = module.ingress_rule.url
+      protocol  = module.route_rule.protocol
+      host      = module.route_rule.host
+      port      = module.route_rule.port
+      url       = module.route_rule.url
       subdomain = node.inputs.subdomain
       dns_zone  = variable.domain
     }
@@ -2990,7 +2990,7 @@ Execution Plan:
     + create: EKS service "staging-web-app-api"
 
   route "main"
-    + create: Ingress rule "staging-web-app-main"
+    + create: Route rule "staging-web-app-main"
 
 Plan: 6 to create, 0 to update, 0 to destroy
 
@@ -3220,7 +3220,7 @@ The following artifacts will be created:
     module "postgres_cluster" → myregistry.io/myorg/aws-prod-module-postgres_cluster:v1.0.0
     module "deployment"       → myregistry.io/myorg/aws-prod-module-deployment:v1.0.0
     module "service"          → myregistry.io/myorg/aws-prod-module-service:v1.0.0
-    module "ingress_rule"     → myregistry.io/myorg/aws-prod-module-ingress_rule:v1.0.0
+    module "route_rule"      → myregistry.io/myorg/aws-prod-module-route_rule:v1.0.0
     module "dns_record"       → myregistry.io/myorg/aws-prod-module-dns_record:v1.0.0
 
 Proceed with build? [Y/n]:

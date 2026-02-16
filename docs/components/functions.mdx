@@ -63,7 +63,7 @@ functions:
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `port` | number | Port the function listens on |
+| `port` | number or expression | Port the function listens on. Supports static values (`3000`) or expressions (`${{ ports.web.port }}`). Used for readiness checks and route upstream discovery. |
 | `environment` | map | Environment variables |
 | `memory` | string | Memory allocation per invocation |
 | `timeout` | number | Maximum execution time in seconds |
@@ -153,6 +153,42 @@ Choose **deployments** when:
 - You need persistent connections (WebSockets, gRPC streams)
 - Cold start latency is unacceptable
 - You need more control over resource allocation
+
+## Dynamic Ports
+
+Functions support dynamic port allocation via the `ports` resource, just like deployments.
+This is useful when you need a consistent, dynamically allocated port — for example, when
+a route targets a function directly and the datacenter needs to discover the upstream port.
+
+```yaml
+ports:
+  web:
+    description: "Web server port"
+
+functions:
+  web:
+    src:
+      path: ./web
+      framework: nextjs
+    port: ${{ ports.web.port }}
+    environment:
+      PORT: ${{ ports.web.port }}
+
+routes:
+  main:
+    type: http
+    function: web
+```
+
+When a function declares `port`, the value is:
+- Used for readiness checks during deployment
+- Discoverable by routes that target the function (as `upstream_port` in the datacenter hook)
+
+<Note>
+  The `port` property only tells the platform what port the function listens on — it does
+  not automatically set the `PORT` environment variable. If your framework reads `PORT` from
+  the environment, set it explicitly in the `environment` block.
+</Note>
 
 ## Complete Example
 

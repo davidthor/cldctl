@@ -36,11 +36,16 @@ resources:
       # Determine command based on framework if not specified
       command: "${coalesce(inputs.command, framework_command(inputs.framework))}"
       environment: "${inputs.environment}"
-      # Readiness check against the service port (skipped when port is 0)
+      # Readiness check against the service port (skipped when port is 0).
+      # Uses TCP instead of HTTP to avoid triggering on-demand page
+      # compilation in dev servers (e.g. Next.js Turbopack). An HTTP
+      # GET can cause heavy background compilation that, under file-
+      # watcher pressure from multiple concurrent dev servers, may
+      # lead to an unrecoverable compilation loop.
       readiness:
-        type: http
-        endpoint: "http://localhost:${inputs.port}"
-        interval: 2s
+        type: tcp
+        endpoint: "localhost:${inputs.port}"
+        interval: 500ms
         timeout: 120s  # Dev servers can take a while to start
       # Graceful shutdown
       graceful_stop:

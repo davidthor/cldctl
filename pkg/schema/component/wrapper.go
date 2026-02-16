@@ -307,7 +307,7 @@ type functionWrapper struct {
 }
 
 func (f *functionWrapper) Name() string   { return f.fn.Name }
-func (f *functionWrapper) Port() int      { return f.fn.Port }
+func (f *functionWrapper) Port() string    { return f.fn.Port.Raw }
 func (f *functionWrapper) CPU() string    { return f.fn.CPU }
 func (f *functionWrapper) Memory() string { return f.fn.Memory }
 func (f *functionWrapper) Timeout() int   { return f.fn.Timeout }

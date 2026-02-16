@@ -15,6 +15,11 @@ type Module struct {
 	Inputs    map[string]InputDef  `yaml:"inputs"`
 	Resources map[string]Resource  `yaml:"resources"`
 	Outputs   map[string]OutputDef `yaml:"outputs"`
+
+	// ResourceOrder preserves the YAML declaration order of resources.
+	// The Apply loop iterates in this order so that sequentially-declared
+	// resources execute top-to-bottom (matching author expectations).
+	ResourceOrder []string `yaml:"-"`
 }
 
 // InputDef defines a module input.
@@ -111,5 +116,37 @@ func LoadModule(path string) (*Module, error) {
 		return nil, fmt.Errorf("invalid plugin type: expected 'native', got '%s'", module.Plugin)
 	}
 
+	// Extract resource key ordering from the raw YAML tree.
+	// Go maps don't preserve insertion order, so we parse the YAML node
+	// tree to discover the declaration order of resource keys.
+	module.ResourceOrder = extractResourceOrder(data)
+
 	return &module, nil
+}
+
+// extractResourceOrder parses raw YAML bytes and returns the resource keys
+// in their declaration order. Falls back to an empty slice on parse errors.
+func extractResourceOrder(data []byte) []string {
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil || root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
+		return nil
+	}
+	mapping := root.Content[0]
+	if mapping.Kind != yaml.MappingNode {
+		return nil
+	}
+
+	// Find the "resources" key in the top-level mapping
+	for i := 0; i < len(mapping.Content)-1; i += 2 {
+		keyNode := mapping.Content[i]
+		valNode := mapping.Content[i+1]
+		if keyNode.Value == "resources" && valNode.Kind == yaml.MappingNode {
+			order := make([]string, 0, len(valNode.Content)/2)
+			for j := 0; j < len(valNode.Content)-1; j += 2 {
+				order = append(order, valNode.Content[j].Value)
+			}
+			return order
+		}
+	}
+	return nil
 }

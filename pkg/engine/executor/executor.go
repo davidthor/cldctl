@@ -677,6 +677,15 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 		return e.executeNetworkPolicyNoop(ctx, change, envState)
 	}
 
+	// For databaseUser nodes, inject the parent database's resolved host and port
+	// into the node inputs so the datacenter hook can forward them to the module.
+	// The database node has already completed (it's a dependency), so its outputs
+	// are available. This allows the databaseUser module to construct correct
+	// connection URLs even when the database uses dynamically allocated ports.
+	if change.Node.Type == graph.NodeTypeDatabaseUser {
+		e.injectParentDatabaseOutputs(change.Node)
+	}
+
 	// Lock for state initialization
 	e.stateMu.Lock()
 
@@ -1659,10 +1668,18 @@ func (e *Executor) buildModuleInputs(module datacenter.Module, node *graph.Node,
 			targetType, _ := node.Inputs["targetType"].(string)
 			switch targetType {
 			case "service":
-				// Look up the service node's declared port from the component schema
+				// Look up the service node's declared port from the component schema.
+				// The service node may execute in parallel with this route, so its
+				// port input may still be an unresolved expression. Handle both
+				// resolved (int/float64) and unresolved (${{ }}) cases.
 				svcNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeService, target)
 				if svcNode, ok := e.graph.Nodes[svcNodeID]; ok {
 					upstreamPort = toIntSafe(svcNode.Inputs["port"])
+					if upstreamPort == 0 {
+						if portStr, ok := svcNode.Inputs["port"].(string); ok && strings.Contains(portStr, "${{") {
+							upstreamPort = e.resolvePortFromExpression(portStr, node.Component)
+						}
+					}
 				}
 			case "function":
 				// Look up the function node and resolve its port (from schema or associated service)
@@ -2170,6 +2187,32 @@ func (e *Executor) executePortAllocation(ctx context.Context, change *planner.Re
 	return result
 }
 
+// injectParentDatabaseOutputs copies the parent database node's host and port
+// outputs into the databaseUser node's inputs. This bridges the gap between the
+// database (which knows its actual allocated port) and the databaseUser hook
+// (which needs the port to construct correct connection URLs). The database
+// node is a dependency of the databaseUser, so it has already completed.
+func (e *Executor) injectParentDatabaseOutputs(node *graph.Node) {
+	if e.graph == nil {
+		return
+	}
+	dbName, _ := node.Inputs["database"].(string)
+	if dbName == "" {
+		return
+	}
+	dbNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeDatabase, dbName)
+	dbNode := e.graph.GetNode(dbNodeID)
+	if dbNode == nil || dbNode.Outputs == nil {
+		return
+	}
+	if host, ok := dbNode.Outputs["host"]; ok {
+		node.SetInput("host", host)
+	}
+	if port, ok := dbNode.Outputs["port"]; ok {
+		node.SetInput("port", port)
+	}
+}
+
 // executeDatabaseUserPassthrough handles databaseUser nodes when no matching hook
 // exists for the specific database type (e.g., a Redis database when only a Postgres
 // databaseUser hook is defined). It copies the parent database node's outputs so that
@@ -2652,14 +2695,23 @@ func (e *Executor) getBuildImageForNode(node *graph.Node) string {
 }
 
 // resolvePortForWorkload determines the port a deployment or function should listen on.
-// Priority: 1) node's own port property (for functions), 2) associated service's port, 3) default 0
+// Priority: 1) node's own port property, 2) unresolved port expression lookup,
+// 3) associated service's port.
 func (e *Executor) resolvePortForWorkload(node *graph.Node) int {
-	// First, check if the node has its own port property (functions can specify this)
-	if port, ok := node.Inputs["port"].(int); ok && port > 0 {
+	// First, check if the node has its own port property.
+	// After expression resolution, the port may be an int, float64, or string.
+	if port := toIntSafe(node.Inputs["port"]); port > 0 {
 		return port
 	}
-	if port, ok := node.Inputs["port"].(float64); ok && port > 0 {
-		return int(port)
+
+	// If the port is an unresolved expression (e.g., the node hasn't been processed
+	// yet), try to resolve it by looking up the referenced port node's outputs directly.
+	// This happens when a route resolves upstream_port for a function that hasn't
+	// had its expressions resolved yet (because the function depends on the route).
+	if portStr, ok := node.Inputs["port"].(string); ok && strings.Contains(portStr, "${{") {
+		if port := e.resolvePortFromExpression(portStr, node.Component); port > 0 {
+			return port
+		}
 	}
 
 	// Fall back to looking up the associated service's port
@@ -2667,7 +2719,69 @@ func (e *Executor) resolvePortForWorkload(node *graph.Node) int {
 	if node.Type == graph.NodeTypeFunction {
 		targetType = "function"
 	}
-	return e.lookupServicePortForTarget(node.Component, node.Name, targetType)
+	if port := e.lookupServicePortForTarget(node.Component, node.Name, targetType); port > 0 {
+		return port
+	}
+
+	// Last resort: check the PORT environment variable. Functions and deployments
+	// often set PORT=${{ ports.<name>.port }} without declaring an explicit port
+	// property. After expression resolution, the env var holds the allocated port.
+	if env := node.Inputs["environment"]; env != nil {
+		switch envMap := env.(type) {
+		case map[string]string:
+			if portStr, ok := envMap["PORT"]; ok {
+				if port := toIntSafe(portStr); port > 0 {
+					return port
+				}
+				// Handle unresolved expression
+				if strings.Contains(portStr, "${{") {
+					if port := e.resolvePortFromExpression(portStr, node.Component); port > 0 {
+						return port
+					}
+				}
+			}
+		case map[string]interface{}:
+			if portVal, ok := envMap["PORT"]; ok {
+				if port := toIntSafe(portVal); port > 0 {
+					return port
+				}
+				if portStr, ok := portVal.(string); ok && strings.Contains(portStr, "${{") {
+					if port := e.resolvePortFromExpression(portStr, node.Component); port > 0 {
+						return port
+					}
+				}
+			}
+		}
+	}
+
+	return 0
+}
+
+// resolvePortFromExpression resolves a ${{ ports.<name>.port }} expression by looking
+// up the port node's outputs directly from the graph. This is used when we need to
+// determine a node's port before its expressions have been resolved (e.g., when a
+// route handler looks up a function's port, but the function hasn't been processed yet).
+func (e *Executor) resolvePortFromExpression(expr string, component string) int {
+	if e.graph == nil {
+		return 0
+	}
+	// Extract: "${{ ports.NAME.port }}" -> NAME
+	trimmed := strings.TrimSpace(expr)
+	trimmed = strings.TrimPrefix(trimmed, "${{")
+	trimmed = strings.TrimSuffix(trimmed, "}}")
+	trimmed = strings.TrimSpace(trimmed)
+	parts := strings.Split(trimmed, ".")
+	if len(parts) != 3 || parts[0] != "ports" || parts[2] != "port" {
+		return 0
+	}
+	portName := parts[1]
+	portNodeID := fmt.Sprintf("%s/%s/%s", component, graph.NodeTypePort, portName)
+	if portNode, ok := e.graph.Nodes[portNodeID]; ok && portNode.Outputs != nil {
+		if val, ok := portNode.Outputs["port"]; ok {
+			return toIntSafe(val)
+		}
+	}
+	return 0
 }
 
 // lookupServicePortForTarget finds a service that references the given target (deployment/function name)
@@ -2697,12 +2811,15 @@ func (e *Executor) lookupServicePortForTarget(componentName, targetName, targetT
 			continue
 		}
 
-		// Found a matching service, get its port
-		if port, ok := node.Inputs["port"].(int); ok {
+		// Found a matching service, get its port (may be int, float64, or string after expression resolution)
+		if port := toIntSafe(node.Inputs["port"]); port > 0 {
 			return port
 		}
-		if port, ok := node.Inputs["port"].(float64); ok {
-			return int(port)
+		// If the port is an unresolved expression, resolve it from the port node
+		if portStr, ok := node.Inputs["port"].(string); ok && strings.Contains(portStr, "${{") {
+			if port := e.resolvePortFromExpression(portStr, node.Component); port > 0 {
+				return port
+			}
 		}
 	}
 

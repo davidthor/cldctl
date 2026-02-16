@@ -54,7 +54,7 @@ resources:
       # Readiness check based on service port (skipped when port is 0)
       readiness:
         type: http
-        endpoint: "http://localhost:${inputs.port}${coalesce(inputs.liveness_probe.path, '/health')}"
+        endpoint: "http://localhost:${inputs.port}${coalesce(inputs.liveness_probe.path, '/')}"
         interval: 2s
         timeout: 120s  # Dev servers can take a while to start
       # Graceful shutdown

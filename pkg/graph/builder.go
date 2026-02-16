@@ -333,6 +333,8 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 	// Note: Routes do NOT depend on services/functions - they can be created in parallel.
 	// Routes are external routing configuration that can exist before backends are ready.
 	// This also avoids cycles when workloads reference their own route URLs in env vars.
+	// However, routes DO depend on port nodes because the executor resolves upstream_port
+	// from the target function/service's port, which may come from port allocation.
 	for _, route := range comp.Routes() {
 		node := NewNode(NodeTypeRoute, componentName, route.Name())
 		node.SetInput("type", route.Type())
@@ -363,6 +365,39 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		}
 
 		_ = b.graph.AddNode(node)
+
+		// Routes depend on the port node used by their target so upstream_port
+		// can be resolved from port allocations when the route hook executes.
+		// Uses AddEdge (not AddDependency) to update both forward and reverse edges,
+		// which is required for Kahn's topological sort algorithm.
+		targetName := ""
+		if route.Service() != "" {
+			targetName = route.Service()
+		} else if route.Function() != "" {
+			targetName = route.Function()
+		}
+		if targetName != "" {
+			// Check if there's a port with the same name as the target
+			for _, p := range comp.Ports() {
+				if p.Name() == targetName {
+					portNodeID := fmt.Sprintf("%s/%s/%s", componentName, NodeTypePort, p.Name())
+					_ = b.graph.AddEdge(node.ID, portNodeID)
+					break
+				}
+			}
+			// Also check if the target is a service backed by a deployment with a matching port
+			for _, svc := range comp.Services() {
+				if svc.Name() == targetName && svc.Deployment() != "" {
+					for _, p := range comp.Ports() {
+						if p.Name() == svc.Deployment() {
+							portNodeID := fmt.Sprintf("%s/%s/%s", componentName, NodeTypePort, p.Name())
+							_ = b.graph.AddEdge(node.ID, portNodeID)
+							break
+						}
+					}
+				}
+			}
+		}
 	}
 
 	// Add observability node if component has observability configured.
@@ -441,6 +476,10 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		}
 		for _, value := range fn.Environment() {
 			b.addEnvDependencies(componentName, node, value)
+		}
+		// Scan port field for expression dependencies (e.g., ${{ ports.web.port }})
+		if fn.Port() != "" {
+			b.addEnvDependencies(componentName, node, fn.Port())
 		}
 		// Make workload depend on observability node so OTel config is resolved first
 		if obsNodeID != "" {
@@ -997,6 +1036,10 @@ func (b *Builder) AddComponentWithInstances(componentName string, comp component
 			}
 			for _, value := range fn.Environment() {
 				b.addInstanceEnvDependencies(componentName, inst.Name, node, value)
+			}
+			// Scan port field for expression dependencies (e.g., ${{ ports.web.port }})
+			if fn.Port() != "" {
+				b.addInstanceEnvDependencies(componentName, inst.Name, node, fn.Port())
 			}
 			if obsNodeID != "" {
 				obsNode := b.graph.GetNode(obsNodeID)

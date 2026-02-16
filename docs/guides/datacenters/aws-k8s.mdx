@@ -390,8 +390,8 @@ Uses the AWS Load Balancer Controller for Kubernetes-native ALB routing:
 
 ```hcl
 route {
-  module "alb_ingress" {
-    build = "./modules/k8s-alb-ingress"
+  module "alb_route" {
+    build = "./modules/k8s-alb-route"
     inputs = merge(node.inputs, {
       namespace       = environment.name
       kubeconfig      = module.eks.kubeconfig

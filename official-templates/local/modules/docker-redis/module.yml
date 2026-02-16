@@ -36,15 +36,15 @@ resources:
       command: ["redis-server", "--appendonly", "yes"]
       ports:
         - container: 6379
-          host: "${inputs.port}"
+          host: 0
       volumes:
         - name: "${inputs.name}-data"
           path: /data
       healthcheck:
         command: ["redis-cli", "ping"]
-        interval: 5s
-        timeout: 5s
-        retries: 10
+        interval: 2s
+        timeout: 3s
+        retries: 15
       restart: unless-stopped
 
 outputs:
@@ -52,10 +52,10 @@ outputs:
     value: "localhost"
     description: Redis host
   port:
-    value: "${inputs.port}"
-    description: Redis port on host
+    value: "${resources.container.ports[0].host}"
+    description: Redis port on host (dynamically allocated)
   url:
-    value: "redis://localhost:${inputs.port}"
+    value: "redis://localhost:${resources.container.ports[0].host}"
     description: Full connection URL
   container_id:
     value: "${resources.container.id}"

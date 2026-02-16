@@ -375,8 +375,8 @@ Vercel handles TLS termination and routing automatically. Each environment gets 
 
 ```hcl
 route {
-  module "vercel_ingress" {
-    build = "./modules/vercel-ingress"
+  module "vercel_route" {
+    build = "./modules/vercel-route"
     inputs = {
       name       = "${environment.name}-${node.component}-${node.name}"
       token      = variable.vercel_token
@@ -392,10 +392,10 @@ route {
   }
 
   outputs = {
-    url      = module.vercel_ingress.url
-    hosts    = module.vercel_ingress.hosts
+    url      = module.vercel_route.url
+    hosts    = module.vercel_route.hosts
     protocol = "https"
-    host     = module.vercel_ingress.host
+    host     = module.vercel_route.host
     port     = 443
   }
 }

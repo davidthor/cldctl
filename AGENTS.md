@@ -314,6 +314,27 @@ services:
 ```
 
 ```yaml
+# Functions can also use dynamic ports — the port field supports expressions
+ports:
+  web:
+    description: "Port for the web function"
+
+functions:
+  web:
+    src:
+      path: .
+      framework: nextjs
+    port: ${{ ports.web.port }}
+    environment:
+      PORT: ${{ ports.web.port }}
+
+routes:
+  main:
+    type: http
+    function: web
+```
+
+```yaml
 # Fixed-port apps work without ports block
 deployments:
   inngest:
@@ -575,6 +596,8 @@ Rules:
 - `module.<name>.<output>` - Module outputs
 
 For `observability` hooks, `node.inputs` includes: `inject`, `attributes`
+
+For `route` hooks, `node.inputs` includes: `type`, `internal`, `rules`, `target`, `targetType`, `upstream_port` (auto-resolved from target service/function port)
 
 ## Environment Files
 

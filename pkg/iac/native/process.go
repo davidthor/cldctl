@@ -106,6 +106,9 @@ func (pm *ProcessManager) StartProcess(ctx context.Context, opts ProcessOptions)
 	cmd := exec.CommandContext(ctx, opts.Command[0], opts.Command[1:]...)
 	cmd.Dir = opts.WorkingDir
 	cmd.Env = env
+	// Put the process in its own process group so we can kill the entire
+	// tree (sh -> npx -> node) on shutdown, preventing orphaned children.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	// Set up output capture
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -194,9 +197,12 @@ func (pm *ProcessManager) stopProcessLocked(name string, timeout time.Duration) 
 		return nil
 	}
 
-	// Try graceful shutdown
-	if err := mp.cmd.Process.Signal(syscall.SIGTERM); err != nil {
-		// Process might already be dead
+	pgid := mp.cmd.Process.Pid
+
+	// Try graceful shutdown — signal the entire process group so child
+	// processes (e.g. node spawned by sh -c) also receive SIGTERM.
+	if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
+		// Process group might already be dead
 		delete(pm.processes, name)
 		return nil
 	}
@@ -210,10 +216,8 @@ func (pm *ProcessManager) stopProcessLocked(name string, timeout time.Duration) 
 		delete(pm.processes, name)
 		return nil
 	case <-timer.C:
-		// Force kill
-		if err := mp.cmd.Process.Kill(); err != nil {
-			return fmt.Errorf("failed to kill process: %w", err)
-		}
+		// Force kill the entire process group
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 		delete(pm.processes, name)
 		return nil
 	}
@@ -298,14 +302,28 @@ func (pm *ProcessManager) waitForReady(ctx context.Context, readiness *Readiness
 	}
 }
 
-// waitForReadyHTTP waits for an HTTP endpoint to return a 2xx/3xx status.
+// waitForReadyHTTP waits for an HTTP endpoint to respond with any status code.
+// Any HTTP response (including 3xx, 4xx, 5xx) means the process is alive and
+// accepting connections, which is all the readiness check needs to verify.
+// Dev servers (e.g. Next.js) may return errors during initial compilation but
+// are still alive and will recover.
 func (pm *ProcessManager) waitForReadyHTTP(ctx context.Context, readiness *ReadinessCheck, done <-chan error) error {
 	deadline := time.Now().Add(readiness.Timeout)
 	ticker := time.NewTicker(readiness.Interval)
 	defer ticker.Stop()
 
+	// Use a generous per-request timeout. Dev servers in monorepos can take
+	// 30+ seconds to compile a page on first request. A short timeout would
+	// cause repeated retries, each starting a new compilation and flooding
+	// the server.
 	client := &http.Client{
-		Timeout: 2 * time.Second,
+		Timeout: 30 * time.Second,
+		// Don't follow redirects — a redirect response (3xx) means the
+		// process is alive and responding.  Following redirects can trigger
+		// on-demand page compilation that may take a long time or return 404.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 
 	for time.Now().Before(deadline) {
@@ -321,9 +339,10 @@ func (pm *ProcessManager) waitForReadyHTTP(ctx context.Context, readiness *Readi
 			resp, err := client.Get(readiness.Endpoint)
 			if err == nil {
 				resp.Body.Close()
-				if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-					return nil
-				}
+				// Any HTTP response means the process is alive and listening.
+				// We accept all status codes (2xx, 3xx, 4xx, 5xx) because the
+				// readiness check verifies liveness, not correctness.
+				return nil
 			}
 		}
 	}

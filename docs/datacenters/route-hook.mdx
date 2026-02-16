@@ -51,6 +51,14 @@ The following inputs are available via `node.inputs`:
 | `port` | number | Target port (shorthand) |
 | `subdomain` | string | Route subdomain. Set from environment config or generated deterministically (e.g., `salty-aardvark`). Always present. |
 | `path_prefix` | string | Route path prefix. Set from environment config or defaults to `"/"`. Always present. |
+| `target` | string | Name of the target service or function |
+| `targetType` | string | Type of target: `"service"` or `"function"` |
+| `upstream_port` | number | Resolved port of the upstream service/function (auto-populated by the executor) |
+
+<Info>
+`upstream_port` is automatically resolved by the executor based on the route's target.
+For **service** targets, it uses the service's declared port. For **function** targets, it resolves the port from the function's associated service or port allocation.
+</Info>
 
 ## Required Outputs
 
@@ -212,6 +220,39 @@ route {
   }
 }
 ```
+
+## Local Development — Shared Nginx Gateway
+
+For local development, you can use a single nginx container as a shared gateway for all routes in an environment. Each route writes a location-block config file and reloads nginx, rather than creating a separate container per route.
+
+Routes are accessible at `http://localhost:<gateway-port>/<route-name>/`, with the path prefix stripped before forwarding to the upstream service.
+
+```hcl
+route {
+  module "route" {
+    plugin = "native"
+    build  = "./modules/local-route"
+    inputs = {
+      gateway_name  = "${environment.name}-gateway"
+      config_dir    = "/tmp/cldctl-${environment.name}-gateway"
+      route_name    = "${node.component}--${node.name}"
+      path_prefix   = node.name
+      upstream_host = "host.docker.internal"
+      upstream_port = node.inputs.upstream_port
+      host          = variable.host
+      network       = variable.network_name
+    }
+  }
+
+  outputs = {
+    url  = module.route.url
+    host = module.route.host
+    port = module.route.port
+  }
+}
+```
+
+The `upstream_port` input is resolved automatically by the executor from the target service or function's declared port. Inside the nginx container, `host.docker.internal` reaches services and functions running on the host machine.
 
 ## Traffic Splitting
 

@@ -47,9 +47,9 @@ resources:
           path: /data
       healthcheck:
         command: ["curl", "-f", "http://localhost:9000/minio/health/live"]
-        interval: 10s
-        timeout: 5s
-        retries: 5
+        interval: 2s
+        timeout: 3s
+        retries: 10
       restart: unless-stopped
   
   # Create the bucket using mc (MinIO client) as a one-time exec

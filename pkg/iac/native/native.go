@@ -78,7 +78,23 @@ func (p *Plugin) Apply(ctx context.Context, opts iac.RunOptions) (*iac.ApplyResu
 		Resources: state.Resources,
 	}
 
-	for name, resource := range module.Resources {
+	// Iterate resources in YAML declaration order (ResourceOrder) so that
+	// sequentially-declared resources execute top-to-bottom. Fall back to
+	// unordered map iteration when ResourceOrder is empty (legacy modules).
+	resourceNames := module.ResourceOrder
+	if len(resourceNames) == 0 {
+		resourceNames = make([]string, 0, len(module.Resources))
+		for name := range module.Resources {
+			resourceNames = append(resourceNames, name)
+		}
+	}
+
+	for _, name := range resourceNames {
+		resource, ok := module.Resources[name]
+		if !ok {
+			continue
+		}
+
 		// Check for context cancellation before each resource
 		if ctx.Err() != nil {
 			p.rollback(ctx, state)
@@ -851,9 +867,11 @@ func getStringSlice(props map[string]interface{}, key string) []string {
 		case []string:
 			return val
 		case string:
-			// Handle string commands by splitting on spaces (e.g., "pnpm dev --filter=app")
+			// Run string commands through a shell so that variable expansion,
+			// piping, and other shell syntax work correctly. This matches
+			// the behavior of Docker CMD strings and npm scripts.
 			if val != "" {
-				return strings.Fields(val)
+				return []string{"sh", "-c", val}
 			}
 		}
 	}

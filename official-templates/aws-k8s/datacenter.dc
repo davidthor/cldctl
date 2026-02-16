@@ -341,9 +341,9 @@ environment {
 
   # Route hook - ALB via AWS Load Balancer Controller
   route {
-    module "alb_ingress" {
+    module "alb_route" {
       plugin = "opentofu"
-      build  = "./modules/k8s-alb-ingress"
+      build  = "./modules/k8s-alb-route"
       inputs = merge(node.inputs, {
         namespace       = environment.name
         kubeconfig      = module.eks.kubeconfig
