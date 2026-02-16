@@ -964,3 +964,686 @@ services:
 		}
 	}
 }
+
+// === Tests for encryption key nodes ===
+
+func TestBuilder_EncryptionKeyNode_Created(t *testing.T) {
+	builder := NewBuilder("test-env", "test-dc")
+
+	comp := loadComponent(t, `
+encryptionKeys:
+  app_secret:
+    type: symmetric
+    bytes: 32
+  signing:
+    type: rsa
+    bits: 2048
+`)
+
+	err := builder.AddComponent("my-app", comp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := builder.Build()
+
+	// Should have two encryptionKey nodes
+	ekNodes := g.GetNodesByType(NodeTypeEncryptionKey)
+	if len(ekNodes) != 2 {
+		t.Fatalf("expected 2 encryptionKey nodes, got %d", len(ekNodes))
+	}
+
+	// Verify symmetric key node
+	symNode := g.GetNode("my-app/encryptionKey/app_secret")
+	if symNode == nil {
+		t.Fatal("expected encryptionKey/app_secret node to exist")
+	}
+	if symNode.Type != NodeTypeEncryptionKey {
+		t.Errorf("expected encryptionKey type, got %s", symNode.Type)
+	}
+	if symNode.Inputs["type"] != "symmetric" {
+		t.Errorf("expected type 'symmetric', got %v", symNode.Inputs["type"])
+	}
+	if symNode.Inputs["bytes"] != 32 {
+		t.Errorf("expected bytes 32, got %v", symNode.Inputs["bytes"])
+	}
+
+	// Verify RSA key node
+	rsaNode := g.GetNode("my-app/encryptionKey/signing")
+	if rsaNode == nil {
+		t.Fatal("expected encryptionKey/signing node to exist")
+	}
+	if rsaNode.Inputs["type"] != "rsa" {
+		t.Errorf("expected type 'rsa', got %v", rsaNode.Inputs["type"])
+	}
+	if rsaNode.Inputs["bits"] != 2048 {
+		t.Errorf("expected bits 2048, got %v", rsaNode.Inputs["bits"])
+	}
+}
+
+func TestBuilder_EncryptionKeyNode_DeploymentDependency(t *testing.T) {
+	builder := NewBuilder("test-env", "test-dc")
+
+	comp := loadComponent(t, `
+encryptionKeys:
+  app_secret:
+    type: symmetric
+    bytes: 32
+
+deployments:
+  server:
+    image: my-app:latest
+    environment:
+      APP_SECRET: "${{ encryptionKeys.app_secret.keyBase64 }}"
+`)
+
+	err := builder.AddComponent("my-app", comp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := builder.Build()
+
+	ekNode := g.GetNode("my-app/encryptionKey/app_secret")
+	deployNode := g.GetNode("my-app/deployment/server")
+
+	if ekNode == nil {
+		t.Fatal("expected encryptionKey node to exist")
+	}
+	if deployNode == nil {
+		t.Fatal("expected deployment node to exist")
+	}
+
+	// Deployment should depend on encryptionKey
+	deployDependsOnEK := false
+	for _, dep := range deployNode.DependsOn {
+		if dep == ekNode.ID {
+			deployDependsOnEK = true
+			break
+		}
+	}
+	if !deployDependsOnEK {
+		t.Error("expected deployment to depend on encryptionKey node")
+	}
+
+	// encryptionKey should list deployment as a dependent
+	ekHasDependent := false
+	for _, depBy := range ekNode.DependedOnBy {
+		if depBy == deployNode.ID {
+			ekHasDependent = true
+			break
+		}
+	}
+	if !ekHasDependent {
+		t.Error("expected encryptionKey to list deployment as a dependent")
+	}
+}
+
+// === Tests for SMTP nodes ===
+
+func TestBuilder_SMTPNode_Created(t *testing.T) {
+	builder := NewBuilder("test-env", "test-dc")
+
+	comp := loadComponent(t, `
+smtp:
+  email:
+    description: "SMTP server for system emails"
+`)
+
+	err := builder.AddComponent("my-app", comp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := builder.Build()
+
+	// Should have one SMTP node
+	smtpNodes := g.GetNodesByType(NodeTypeSMTP)
+	if len(smtpNodes) != 1 {
+		t.Fatalf("expected 1 smtp node, got %d", len(smtpNodes))
+	}
+
+	smtpNode := g.GetNode("my-app/smtp/email")
+	if smtpNode == nil {
+		t.Fatal("expected smtp/email node to exist")
+	}
+	if smtpNode.Type != NodeTypeSMTP {
+		t.Errorf("expected smtp type, got %s", smtpNode.Type)
+	}
+	if smtpNode.Inputs["description"] != "SMTP server for system emails" {
+		t.Errorf("expected description input, got %v", smtpNode.Inputs["description"])
+	}
+}
+
+func TestBuilder_SMTPNode_DeploymentDependency(t *testing.T) {
+	builder := NewBuilder("test-env", "test-dc")
+
+	comp := loadComponent(t, `
+smtp:
+  email:
+    description: "SMTP server for system emails"
+
+deployments:
+  server:
+    image: my-app:latest
+    environment:
+      SMTP_HOST: "${{ smtp.email.host }}"
+      SMTP_PORT: "${{ smtp.email.port }}"
+      SMTP_USER: "${{ smtp.email.username }}"
+      SMTP_PASS: "${{ smtp.email.password }}"
+`)
+
+	err := builder.AddComponent("my-app", comp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := builder.Build()
+
+	smtpNode := g.GetNode("my-app/smtp/email")
+	deployNode := g.GetNode("my-app/deployment/server")
+
+	if smtpNode == nil {
+		t.Fatal("expected smtp node to exist")
+	}
+	if deployNode == nil {
+		t.Fatal("expected deployment node to exist")
+	}
+
+	// Deployment should depend on smtp
+	deployDependsOnSMTP := false
+	for _, dep := range deployNode.DependsOn {
+		if dep == smtpNode.ID {
+			deployDependsOnSMTP = true
+			break
+		}
+	}
+	if !deployDependsOnSMTP {
+		t.Error("expected deployment to depend on smtp node")
+	}
+
+	// smtp should list deployment as a dependent
+	smtpHasDependent := false
+	for _, depBy := range smtpNode.DependedOnBy {
+		if depBy == deployNode.ID {
+			smtpHasDependent = true
+			break
+		}
+	}
+	if !smtpHasDependent {
+		t.Error("expected smtp to list deployment as a dependent")
+	}
+}
+
+func TestBuilder_EncryptionKeyAndSMTP_TopologicalOrder(t *testing.T) {
+	builder := NewBuilder("test-env", "test-dc")
+
+	comp := loadComponent(t, `
+encryptionKeys:
+  app_secret:
+    type: symmetric
+    bytes: 32
+
+smtp:
+  email:
+    description: "SMTP server"
+
+databases:
+  main:
+    type: postgres:^16
+
+deployments:
+  server:
+    image: my-app:latest
+    environment:
+      DATABASE_URL: "${{ databases.main.url }}"
+      APP_SECRET: "${{ encryptionKeys.app_secret.keyBase64 }}"
+      SMTP_HOST: "${{ smtp.email.host }}"
+`)
+
+	err := builder.AddComponent("my-app", comp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := builder.Build()
+
+	// Topological sort should succeed (no cycles)
+	sorted, err := g.TopologicalSort()
+	if err != nil {
+		t.Fatalf("unexpected topological sort error: %v", err)
+	}
+
+	nodeIndex := make(map[string]int)
+	for i, n := range sorted {
+		nodeIndex[n.ID] = i
+	}
+
+	dbNode := g.GetNode("my-app/database/main")
+	ekNode := g.GetNode("my-app/encryptionKey/app_secret")
+	smtpNode := g.GetNode("my-app/smtp/email")
+	deployNode := g.GetNode("my-app/deployment/server")
+
+	if dbNode == nil || ekNode == nil || smtpNode == nil || deployNode == nil {
+		t.Fatal("expected all nodes to exist")
+	}
+
+	// All dependencies must come before the deployment
+	if nodeIndex[dbNode.ID] >= nodeIndex[deployNode.ID] {
+		t.Error("database should come before deployment in topological order")
+	}
+	if nodeIndex[ekNode.ID] >= nodeIndex[deployNode.ID] {
+		t.Error("encryptionKey should come before deployment in topological order")
+	}
+	if nodeIndex[smtpNode.ID] >= nodeIndex[deployNode.ID] {
+		t.Error("smtp should come before deployment in topological order")
+	}
+}
+
+func TestBuilder_EncryptionKeyAndSMTP_FunctionDependency(t *testing.T) {
+	builder := NewBuilder("test-env", "test-dc")
+
+	comp := loadComponent(t, `
+encryptionKeys:
+  signing:
+    type: rsa
+    bits: 2048
+
+smtp:
+  notifications:
+    description: "Notification emails"
+
+functions:
+  api:
+    src:
+      path: ./api
+    environment:
+      PRIVATE_KEY: "${{ encryptionKeys.signing.privateKeyBase64 }}"
+      SMTP_HOST: "${{ smtp.notifications.host }}"
+`)
+
+	err := builder.AddComponent("my-app", comp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := builder.Build()
+
+	ekNode := g.GetNode("my-app/encryptionKey/signing")
+	smtpNode := g.GetNode("my-app/smtp/notifications")
+	fnNode := g.GetNode("my-app/function/api")
+
+	if ekNode == nil {
+		t.Fatal("expected encryptionKey node to exist")
+	}
+	if smtpNode == nil {
+		t.Fatal("expected smtp node to exist")
+	}
+	if fnNode == nil {
+		t.Fatal("expected function node to exist")
+	}
+
+	// Function should depend on both encryptionKey and smtp
+	fnDepsOnEK := false
+	fnDepsOnSMTP := false
+	for _, dep := range fnNode.DependsOn {
+		if dep == ekNode.ID {
+			fnDepsOnEK = true
+		}
+		if dep == smtpNode.ID {
+			fnDepsOnSMTP = true
+		}
+	}
+	if !fnDepsOnEK {
+		t.Error("expected function to depend on encryptionKey node")
+	}
+	if !fnDepsOnSMTP {
+		t.Error("expected function to depend on smtp node")
+	}
+}
+
+func TestBuilder_NoEncryptionKeyOrSMTP_NoNodes(t *testing.T) {
+	builder := NewBuilder("test-env", "test-dc")
+
+	// Component with no encryption keys or smtp
+	comp := loadComponent(t, `
+databases:
+  main:
+    type: postgres:^16
+
+deployments:
+  api:
+    image: my-app:latest
+    environment:
+      DATABASE_URL: "${{ databases.main.url }}"
+`)
+
+	err := builder.AddComponent("my-app", comp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := builder.Build()
+
+	// Should have no encryptionKey or smtp nodes
+	ekNodes := g.GetNodesByType(NodeTypeEncryptionKey)
+	if len(ekNodes) != 0 {
+		t.Errorf("expected 0 encryptionKey nodes, got %d", len(ekNodes))
+	}
+
+	smtpNodes := g.GetNodesByType(NodeTypeSMTP)
+	if len(smtpNodes) != 0 {
+		t.Errorf("expected 0 smtp nodes, got %d", len(smtpNodes))
+	}
+}
+
+func TestBuilder_EncryptionKeyAndSMTP_CronjobDependency(t *testing.T) {
+	builder := NewBuilder("test-env", "test-dc")
+
+	comp := loadComponent(t, `
+encryptionKeys:
+  signing:
+    type: rsa
+    bits: 2048
+
+smtp:
+  email:
+    description: "System emails"
+
+cronjobs:
+  notify:
+    image: my-app-notify:latest
+    schedule: "0 8 * * *"
+    command: ["npm", "run", "notify"]
+    environment:
+      PRIVATE_KEY: "${{ encryptionKeys.signing.privateKey }}"
+      SMTP_HOST: "${{ smtp.email.host }}"
+`)
+
+	err := builder.AddComponent("my-app", comp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := builder.Build()
+
+	ekNode := g.GetNode("my-app/encryptionKey/signing")
+	smtpNode := g.GetNode("my-app/smtp/email")
+	cronNode := g.GetNode("my-app/cronjob/notify")
+
+	if ekNode == nil {
+		t.Fatal("expected encryptionKey node to exist")
+	}
+	if smtpNode == nil {
+		t.Fatal("expected smtp node to exist")
+	}
+	if cronNode == nil {
+		t.Fatal("expected cronjob node to exist")
+	}
+
+	// Cronjob should depend on both encryptionKey and smtp
+	cronDepsOnEK := false
+	cronDepsOnSMTP := false
+	for _, dep := range cronNode.DependsOn {
+		if dep == ekNode.ID {
+			cronDepsOnEK = true
+		}
+		if dep == smtpNode.ID {
+			cronDepsOnSMTP = true
+		}
+	}
+	if !cronDepsOnEK {
+		t.Error("expected cronjob to depend on encryptionKey node")
+	}
+	if !cronDepsOnSMTP {
+		t.Error("expected cronjob to depend on smtp node")
+	}
+}
+
+func TestBuilder_EncryptionKeyAndSMTP_WithInstances(t *testing.T) {
+	builder := NewBuilder("test-env", "test-dc")
+
+	comp := loadComponent(t, `
+encryptionKeys:
+  app_secret:
+    type: symmetric
+    bytes: 32
+
+smtp:
+  email:
+    description: "SMTP server"
+
+deployments:
+  server:
+    image: my-app:latest
+    environment:
+      APP_SECRET: "${{ encryptionKeys.app_secret.keyBase64 }}"
+      SMTP_HOST: "${{ smtp.email.host }}"
+
+services:
+  server:
+    deployment: server
+    port: 3000
+`)
+
+	instances := []InstanceInfo{
+		{Name: "canary", Weight: 10},
+		{Name: "stable", Weight: 90},
+	}
+
+	err := builder.AddComponentWithInstances("my-app", comp, instances, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := builder.Build()
+
+	// Encryption key and SMTP nodes should be shared (one copy, not per-instance)
+	ekNode := g.GetNode("my-app/encryptionKey/app_secret")
+	smtpNode := g.GetNode("my-app/smtp/email")
+
+	if ekNode == nil {
+		t.Fatal("expected shared encryptionKey node to exist")
+	}
+	if smtpNode == nil {
+		t.Fatal("expected shared smtp node to exist")
+	}
+
+	// Should have instance metadata on the shared nodes
+	if len(ekNode.Instances) != 2 {
+		t.Errorf("expected 2 instances on encryptionKey node, got %d", len(ekNode.Instances))
+	}
+	if len(smtpNode.Instances) != 2 {
+		t.Errorf("expected 2 instances on smtp node, got %d", len(smtpNode.Instances))
+	}
+
+	// Should NOT have per-instance encryptionKey/smtp nodes
+	ekNodes := g.GetNodesByType(NodeTypeEncryptionKey)
+	if len(ekNodes) != 1 {
+		t.Errorf("expected 1 encryptionKey node (shared), got %d", len(ekNodes))
+	}
+
+	smtpNodes := g.GetNodesByType(NodeTypeSMTP)
+	if len(smtpNodes) != 1 {
+		t.Errorf("expected 1 smtp node (shared), got %d", len(smtpNodes))
+	}
+
+	// Per-instance deployments should depend on the shared nodes
+	canaryDeploy := g.GetNode("my-app/canary/deployment/server")
+	stableDeploy := g.GetNode("my-app/stable/deployment/server")
+
+	if canaryDeploy == nil {
+		t.Fatal("expected canary deployment node to exist")
+	}
+	if stableDeploy == nil {
+		t.Fatal("expected stable deployment node to exist")
+	}
+
+	for _, deployNode := range []*Node{canaryDeploy, stableDeploy} {
+		depsOnEK := false
+		depsOnSMTP := false
+		for _, dep := range deployNode.DependsOn {
+			if dep == ekNode.ID {
+				depsOnEK = true
+			}
+			if dep == smtpNode.ID {
+				depsOnSMTP = true
+			}
+		}
+		if !depsOnEK {
+			t.Errorf("expected %s to depend on encryptionKey node", deployNode.ID)
+		}
+		if !depsOnSMTP {
+			t.Errorf("expected %s to depend on smtp node", deployNode.ID)
+		}
+	}
+}
+
+func TestBuilder_MultipleEncryptionKeys(t *testing.T) {
+	builder := NewBuilder("test-env", "test-dc")
+
+	comp := loadComponent(t, `
+encryptionKeys:
+  app_secret:
+    type: symmetric
+    bytes: 32
+  signing:
+    type: rsa
+    bits: 2048
+  auth:
+    type: ecdsa
+    curve: P-256
+
+deployments:
+  server:
+    image: my-app:latest
+    environment:
+      APP_SECRET: "${{ encryptionKeys.app_secret.keyBase64 }}"
+      SIGNING_KEY: "${{ encryptionKeys.signing.privateKeyBase64 }}"
+`)
+
+	err := builder.AddComponent("my-app", comp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := builder.Build()
+
+	// All three encryption key nodes should be created
+	ekNodes := g.GetNodesByType(NodeTypeEncryptionKey)
+	if len(ekNodes) != 3 {
+		t.Fatalf("expected 3 encryptionKey nodes, got %d", len(ekNodes))
+	}
+
+	// Verify each node exists with correct inputs
+	symNode := g.GetNode("my-app/encryptionKey/app_secret")
+	rsaNode := g.GetNode("my-app/encryptionKey/signing")
+	ecdsaNode := g.GetNode("my-app/encryptionKey/auth")
+
+	if symNode == nil || rsaNode == nil || ecdsaNode == nil {
+		t.Fatal("expected all three encryptionKey nodes to exist")
+	}
+
+	if symNode.Inputs["type"] != "symmetric" {
+		t.Errorf("expected symmetric type, got %v", symNode.Inputs["type"])
+	}
+	if rsaNode.Inputs["type"] != "rsa" {
+		t.Errorf("expected rsa type, got %v", rsaNode.Inputs["type"])
+	}
+	if ecdsaNode.Inputs["type"] != "ecdsa" {
+		t.Errorf("expected ecdsa type, got %v", ecdsaNode.Inputs["type"])
+	}
+	if ecdsaNode.Inputs["curve"] != "P-256" {
+		t.Errorf("expected curve P-256, got %v", ecdsaNode.Inputs["curve"])
+	}
+
+	// Deployment should depend on app_secret and signing (referenced in env), not auth (not referenced)
+	deployNode := g.GetNode("my-app/deployment/server")
+	if deployNode == nil {
+		t.Fatal("expected deployment node to exist")
+	}
+
+	depsOnAppSecret := false
+	depsOnSigning := false
+	depsOnAuth := false
+	for _, dep := range deployNode.DependsOn {
+		switch dep {
+		case symNode.ID:
+			depsOnAppSecret = true
+		case rsaNode.ID:
+			depsOnSigning = true
+		case ecdsaNode.ID:
+			depsOnAuth = true
+		}
+	}
+	if !depsOnAppSecret {
+		t.Error("expected deployment to depend on encryptionKey/app_secret")
+	}
+	if !depsOnSigning {
+		t.Error("expected deployment to depend on encryptionKey/signing")
+	}
+	if depsOnAuth {
+		t.Error("deployment should NOT depend on encryptionKey/auth (not referenced in env)")
+	}
+}
+
+func TestBuilder_MultipleSMTP(t *testing.T) {
+	builder := NewBuilder("test-env", "test-dc")
+
+	comp := loadComponent(t, `
+smtp:
+  notifications:
+    description: "Notification emails"
+  transactional:
+    description: "Transactional emails"
+
+deployments:
+  server:
+    image: my-app:latest
+    environment:
+      NOTIFY_HOST: "${{ smtp.notifications.host }}"
+`)
+
+	err := builder.AddComponent("my-app", comp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := builder.Build()
+
+	// Both SMTP nodes should be created
+	smtpNodes := g.GetNodesByType(NodeTypeSMTP)
+	if len(smtpNodes) != 2 {
+		t.Fatalf("expected 2 smtp nodes, got %d", len(smtpNodes))
+	}
+
+	notifyNode := g.GetNode("my-app/smtp/notifications")
+	txnNode := g.GetNode("my-app/smtp/transactional")
+
+	if notifyNode == nil || txnNode == nil {
+		t.Fatal("expected both smtp nodes to exist")
+	}
+
+	// Deployment should only depend on notifications (referenced in env), not transactional
+	deployNode := g.GetNode("my-app/deployment/server")
+	if deployNode == nil {
+		t.Fatal("expected deployment node to exist")
+	}
+
+	depsOnNotify := false
+	depsOnTxn := false
+	for _, dep := range deployNode.DependsOn {
+		if dep == notifyNode.ID {
+			depsOnNotify = true
+		}
+		if dep == txnNode.ID {
+			depsOnTxn = true
+		}
+	}
+	if !depsOnNotify {
+		t.Error("expected deployment to depend on smtp/notifications")
+	}
+	if depsOnTxn {
+		t.Error("deployment should NOT depend on smtp/transactional (not referenced in env)")
+	}
+}

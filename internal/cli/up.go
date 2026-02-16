@@ -496,8 +496,15 @@ func prepareComponentMode(
 		envName = fmt.Sprintf("%s-dev", dirName)
 	}
 
-	// Convert CLI vars to interface map
+	// Build variable map: start with component defaults, then overlay CLI vars.
+	// This ensures variables with defaults are always populated even when the
+	// user doesn't explicitly pass them via --var flags.
 	varsInterface := make(map[string]interface{})
+	for _, v := range comp.Variables() {
+		if v.Default() != nil {
+			varsInterface[v.Name()] = v.Default()
+		}
+	}
 	for k, v := range cliVars {
 		varsInterface[k] = v
 	}

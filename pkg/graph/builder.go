@@ -209,6 +209,25 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		_ = b.graph.AddNode(node)
 	}
 
+	// Add encryption keys
+	for _, ek := range comp.EncryptionKeys() {
+		node := NewNode(NodeTypeEncryptionKey, componentName, ek.Name())
+		node.SetInput("type", ek.Type())
+		node.SetInput("bits", ek.Bits())
+		node.SetInput("curve", ek.Curve())
+		node.SetInput("bytes", ek.Bytes())
+
+		_ = b.graph.AddNode(node)
+	}
+
+	// Add SMTP connections
+	for _, smtp := range comp.SMTP() {
+		node := NewNode(NodeTypeSMTP, componentName, smtp.Name())
+		node.SetInput("description", smtp.Description())
+
+		_ = b.graph.AddNode(node)
+	}
+
 	// Add ports (no dependencies - they are depended on by workloads/services via expressions)
 	for _, p := range comp.Ports() {
 		node := NewNode(NodeTypePort, componentName, p.Name())
@@ -824,6 +843,25 @@ func (b *Builder) AddComponentWithInstances(componentName string, comp component
 		_ = b.graph.AddNode(node)
 	}
 
+	// Add encryption keys (shared by default)
+	for _, ek := range comp.EncryptionKeys() {
+		node := NewNode(NodeTypeEncryptionKey, componentName, ek.Name())
+		node.SetInput("type", ek.Type())
+		node.SetInput("bits", ek.Bits())
+		node.SetInput("curve", ek.Curve())
+		node.SetInput("bytes", ek.Bytes())
+		node.Instances = nodeInstances
+		_ = b.graph.AddNode(node)
+	}
+
+	// Add SMTP connections (shared by default)
+	for _, smtp := range comp.SMTP() {
+		node := NewNode(NodeTypeSMTP, componentName, smtp.Name())
+		node.SetInput("description", smtp.Description())
+		node.Instances = nodeInstances
+		_ = b.graph.AddNode(node)
+	}
+
 	// Add observability (shared)
 	var obsNodeID string
 	if comp.Observability() != nil {
@@ -1160,6 +1198,10 @@ func (b *Builder) resolveInstanceDepReference(componentName, instanceName, ref s
 		nodeType = NodeTypeDatabase
 	case "buckets":
 		nodeType = NodeTypeBucket
+	case "encryptionKeys":
+		nodeType = NodeTypeEncryptionKey
+	case "smtp":
+		nodeType = NodeTypeSMTP
 	case "services":
 		nodeType = NodeTypeService
 	case "routes":
@@ -1219,6 +1261,10 @@ func (b *Builder) resolveDepReference(componentName, ref string) string {
 		nodeType = NodeTypeDatabase
 	case "buckets":
 		nodeType = NodeTypeBucket
+	case "encryptionKeys":
+		nodeType = NodeTypeEncryptionKey
+	case "smtp":
+		nodeType = NodeTypeSMTP
 	case "services":
 		nodeType = NodeTypeService
 	case "routes":

@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/davidthor/cldctl/pkg/schema/component"
 )
 
 func TestNewUpCmd(t *testing.T) {
@@ -235,6 +238,105 @@ func TestUpCmd_ComponentFlag(t *testing.T) {
 	// Default should be empty
 	if compFlag.DefValue != "" {
 		t.Errorf("expected empty default for --component, got '%s'", compFlag.DefValue)
+	}
+}
+
+func TestMergeComponentVariableDefaults(t *testing.T) {
+	// This tests the variable merge logic used in prepareComponentMode:
+	// start with component defaults, then overlay CLI vars.
+	loader := component.NewLoader()
+	comp, err := loader.LoadFromBytes([]byte(`
+variables:
+  api_key:
+    description: "API key"
+    required: true
+  log_level:
+    description: "Log level"
+    default: "info"
+  debug:
+    description: "Debug mode"
+    default: "false"
+  region:
+    description: "AWS region"
+    default: "us-east-1"
+`), "/tmp/test/cloud.component.yml")
+	if err != nil {
+		t.Fatalf("failed to load component: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		cliVars  map[string]string
+		expected map[string]interface{}
+	}{
+		{
+			name:    "defaults only, no CLI vars",
+			cliVars: map[string]string{},
+			expected: map[string]interface{}{
+				"log_level": "info",
+				"debug":     "false",
+				"region":    "us-east-1",
+			},
+		},
+		{
+			name: "CLI var overrides default",
+			cliVars: map[string]string{
+				"log_level": "debug",
+				"api_key":   "secret123",
+			},
+			expected: map[string]interface{}{
+				"log_level": "debug",
+				"debug":     "false",
+				"region":    "us-east-1",
+				"api_key":   "secret123",
+			},
+		},
+		{
+			name: "CLI vars for all, including those without defaults",
+			cliVars: map[string]string{
+				"api_key":   "key",
+				"log_level": "warn",
+				"debug":     "true",
+				"region":    "eu-west-1",
+			},
+			expected: map[string]interface{}{
+				"api_key":   "key",
+				"log_level": "warn",
+				"debug":     "true",
+				"region":    "eu-west-1",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Replicate the merge logic from prepareComponentMode
+			varsInterface := make(map[string]interface{})
+			for _, v := range comp.Variables() {
+				if v.Default() != nil {
+					varsInterface[v.Name()] = v.Default()
+				}
+			}
+			for k, v := range tt.cliVars {
+				varsInterface[k] = v
+			}
+
+			// Verify the merged result
+			if len(varsInterface) != len(tt.expected) {
+				t.Errorf("expected %d vars, got %d: %v", len(tt.expected), len(varsInterface), varsInterface)
+			}
+			for key, expectedVal := range tt.expected {
+				actual, ok := varsInterface[key]
+				if !ok {
+					t.Errorf("expected key %q to be present", key)
+					continue
+				}
+				// Compare as strings since CLI vars are strings and defaults may be strings
+				if fmt.Sprintf("%v", actual) != fmt.Sprintf("%v", expectedVal) {
+					t.Errorf("key %q: expected %v, got %v", key, expectedVal, actual)
+				}
+			}
+		})
 	}
 }
 
