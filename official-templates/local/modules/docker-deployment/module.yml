@@ -33,7 +33,7 @@ inputs:
     description: Docker network to join
   liveness_probe:
     type: map
-    description: Health check configuration
+    description: Health check configuration (optional)
   log_driver:
     type: string
     description: Docker logging driver (e.g., "fluentd", "json-file")
@@ -43,8 +43,11 @@ inputs:
     description: Options for the Docker logging driver
 
 resources:
-  container:
+  # Container WITH health check (when liveness_probe is provided)
+  # Exposes the liveness_probe port to the host for service discovery/routing
+  container_hc:
     type: docker:container
+    when: "${inputs.liveness_probe != null}"
     properties:
       image: "${inputs.image}"
       name: "${inputs.name}"
@@ -52,24 +55,45 @@ resources:
       command: "${inputs.command}"
       entrypoint: "${inputs.entrypoint}"
       environment: "${inputs.environment}"
-      # Map cpu/memory to Docker resource constraints
+      ports:
+        - container: "${inputs.liveness_probe.port}"
+          host: "${inputs.liveness_probe.port}"
       resources:
         cpu: "${inputs.cpu}"
         memory: "${inputs.memory}"
-      # Convert liveness_probe to Docker healthcheck
       healthcheck:
         command: ["curl", "-f", "http://localhost:${inputs.liveness_probe.port}${inputs.liveness_probe.path}"]
         interval: 10s
-        timeout: 5s
-        retries: 3
+        timeout: 10s
+        retries: 18
+        start_period: 30s
       restart: unless-stopped
-      # Logging driver configuration (for forwarding container stdout)
+      resolve_localhost: true
+      log_driver: "${inputs.log_driver}"
+      log_options: "${inputs.log_driver_options}"
+
+  # Container WITHOUT health check (when liveness_probe is not provided)
+  container:
+    type: docker:container
+    when: "${inputs.liveness_probe == null}"
+    properties:
+      image: "${inputs.image}"
+      name: "${inputs.name}"
+      network: "${inputs.network}"
+      command: "${inputs.command}"
+      entrypoint: "${inputs.entrypoint}"
+      environment: "${inputs.environment}"
+      resources:
+        cpu: "${inputs.cpu}"
+        memory: "${inputs.memory}"
+      restart: unless-stopped
+      resolve_localhost: true
       log_driver: "${inputs.log_driver}"
       log_options: "${inputs.log_driver_options}"
 
 outputs:
   container_id:
-    value: "${resources.container.id}"
+    value: "${coalesce(resources.container_hc.id, resources.container.id)}"
     description: Docker container ID
   container_name:
     value: "${inputs.name}"

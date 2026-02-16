@@ -38,6 +38,8 @@ resources:
       auto_remove: false
       # Wait for container to complete
       wait: true
+      # Map localhost to Docker host so containers can reach host-bound services
+      resolve_localhost: true
 
 outputs:
   container_id:

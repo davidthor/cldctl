@@ -61,7 +61,7 @@ resources:
       network: "${inputs.network}"
       environment:
         MC_HOST_local: "http://${resources.container.environment.MINIO_ROOT_USER}:${resources.container.environment.MINIO_ROOT_PASSWORD}@minio-${inputs.name}:9000"
-      command: ["mc", "mb", "--ignore-existing", "local/${inputs.name}"]
+      command: ["mb", "--ignore-existing", "local/${inputs.name}"]
 
 outputs:
   endpoint:

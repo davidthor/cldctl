@@ -3,6 +3,7 @@ package native
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -101,17 +102,50 @@ func findExpressionSpans(s string) [][2]int {
 }
 
 // resolveReference resolves a dotted reference like "inputs.name" or "resources.container.outputs.port"
+// Also handles ternary expressions (a == b ? x : y) and equality comparisons (a == b).
 func resolveReference(ref string, ctx *EvalContext) (interface{}, error) {
-	parts := strings.Split(strings.TrimSpace(ref), ".")
+	trimmedRef := strings.TrimSpace(ref)
+
+	// Handle ternary expressions: condition ? trueExpr : falseExpr
+	if result, ok, err := tryResolveTernary(trimmedRef, ctx); ok {
+		return result, err
+	}
+
+	// Handle equality comparisons: a == b (returns bool)
+	if result, ok, err := tryResolveComparison(trimmedRef, ctx); ok {
+		return result, err
+	}
+
+	parts := strings.Split(trimmedRef, ".")
 	if len(parts) == 0 {
 		return nil, fmt.Errorf("empty reference")
 	}
 
 	// Handle string literals (single or double-quoted)
-	trimmedRef := strings.TrimSpace(ref)
 	if (strings.HasPrefix(trimmedRef, "'") && strings.HasSuffix(trimmedRef, "'")) ||
 		(strings.HasPrefix(trimmedRef, "\"") && strings.HasSuffix(trimmedRef, "\"")) {
 		return trimmedRef[1 : len(trimmedRef)-1], nil
+	}
+
+	// Handle numeric literals
+	if n, err := strconv.Atoi(trimmedRef); err == nil {
+		return n, nil
+	}
+	if f, err := strconv.ParseFloat(trimmedRef, 64); err == nil {
+		return f, nil
+	}
+
+	// Handle boolean literals
+	if trimmedRef == "true" {
+		return true, nil
+	}
+	if trimmedRef == "false" {
+		return false, nil
+	}
+
+	// Handle null literal
+	if trimmedRef == "null" {
+		return nil, nil
 	}
 
 	// Handle inline map literals like { KEY: 'value', OTHER: 'data' }
@@ -165,6 +199,156 @@ func resolveReference(ref string, ctx *EvalContext) (interface{}, error) {
 	default:
 		// Try as a function call
 		return evaluateFunction(ref, ctx)
+	}
+}
+
+// tryResolveTernary attempts to parse and evaluate a ternary expression: condition ? trueExpr : falseExpr.
+// Returns (result, true, nil) if the expression was a ternary; (nil, false, nil) otherwise.
+// Supports nested ternaries in the falseExpr branch.
+func tryResolveTernary(expr string, ctx *EvalContext) (interface{}, bool, error) {
+	// Find the first '?' that isn't inside quotes
+	qIdx := indexOutsideQuotes(expr, '?')
+	if qIdx < 0 {
+		return nil, false, nil
+	}
+
+	condExpr := strings.TrimSpace(expr[:qIdx])
+	rest := expr[qIdx+1:]
+
+	// Find the matching ':' for this ternary (respecting nested ternaries)
+	colonIdx := findTernaryColon(rest)
+	if colonIdx < 0 {
+		return nil, false, nil
+	}
+
+	trueExpr := strings.TrimSpace(rest[:colonIdx])
+	falseExpr := strings.TrimSpace(rest[colonIdx+1:])
+
+	// Evaluate the condition
+	condVal, err := resolveReference(condExpr, ctx)
+	if err != nil {
+		return nil, true, fmt.Errorf("ternary condition: %w", err)
+	}
+
+	if isTruthyExpr(condVal) {
+		result, err := resolveReference(trueExpr, ctx)
+		return result, true, err
+	}
+	result, err := resolveReference(falseExpr, ctx)
+	return result, true, err
+}
+
+// findTernaryColon finds the index of the ':' that separates the true and false
+// branches of a ternary expression, correctly skipping over nested ternaries and
+// quoted strings.
+func findTernaryColon(s string) int {
+	depth := 0
+	inSingle := false
+	inDouble := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+		case c == '?' && !inSingle && !inDouble:
+			depth++
+		case c == ':' && !inSingle && !inDouble:
+			if depth == 0 {
+				return i
+			}
+			depth--
+		}
+	}
+	return -1
+}
+
+// tryResolveComparison attempts to parse and evaluate equality/inequality expressions.
+// Supports: ==, !=. Returns (result, true, nil) if the expression was a comparison.
+func tryResolveComparison(expr string, ctx *EvalContext) (interface{}, bool, error) {
+	// Try == first, then !=
+	for _, op := range []string{"==", "!="} {
+		idx := indexOperatorOutsideQuotes(expr, op)
+		if idx < 0 {
+			continue
+		}
+
+		leftExpr := strings.TrimSpace(expr[:idx])
+		rightExpr := strings.TrimSpace(expr[idx+len(op):])
+
+		leftVal, err := resolveReference(leftExpr, ctx)
+		if err != nil {
+			return nil, true, fmt.Errorf("comparison left side: %w", err)
+		}
+		rightVal, err := resolveReference(rightExpr, ctx)
+		if err != nil {
+			return nil, true, fmt.Errorf("comparison right side: %w", err)
+		}
+
+		equal := fmt.Sprintf("%v", leftVal) == fmt.Sprintf("%v", rightVal)
+		if op == "!=" {
+			equal = !equal
+		}
+		return equal, true, nil
+	}
+	return nil, false, nil
+}
+
+// indexOutsideQuotes returns the index of the first occurrence of ch outside
+// single/double quotes, or -1 if not found.
+func indexOutsideQuotes(s string, ch byte) int {
+	inSingle := false
+	inDouble := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+		case c == ch && !inSingle && !inDouble:
+			return i
+		}
+	}
+	return -1
+}
+
+// indexOperatorOutsideQuotes returns the index of the first occurrence of a
+// multi-character operator (e.g. "==", "!=") outside quotes, or -1.
+func indexOperatorOutsideQuotes(s string, op string) int {
+	inSingle := false
+	inDouble := false
+	for i := 0; i <= len(s)-len(op); i++ {
+		c := s[i]
+		switch {
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+		case !inSingle && !inDouble && s[i:i+len(op)] == op:
+			return i
+		}
+	}
+	return -1
+}
+
+// isTruthyExpr determines whether a value is "truthy" for expression evaluation purposes.
+func isTruthyExpr(v interface{}) bool {
+	if v == nil {
+		return false
+	}
+	switch val := v.(type) {
+	case bool:
+		return val
+	case string:
+		return val != "" && val != "false" && val != "0"
+	case int:
+		return val != 0
+	case float64:
+		return val != 0
+	default:
+		return true
 	}
 }
 

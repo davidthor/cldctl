@@ -779,3 +779,298 @@ func TestResolveReference_MapLiteral(t *testing.T) {
 		t.Errorf("expected OTHER='test', got %v", resultMap["OTHER"])
 	}
 }
+
+// --- Comparison operator tests ---
+
+func TestResolveReference_EqualityTrue(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs:    map[string]interface{}{"key_type": "symmetric"},
+		Resources: map[string]*ResourceState{},
+	}
+
+	result, err := resolveReference("inputs.key_type == 'symmetric'", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != true {
+		t.Errorf("expected true, got %v", result)
+	}
+}
+
+func TestResolveReference_EqualityFalse(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs:    map[string]interface{}{"key_type": "rsa"},
+		Resources: map[string]*ResourceState{},
+	}
+
+	result, err := resolveReference("inputs.key_type == 'symmetric'", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != false {
+		t.Errorf("expected false, got %v", result)
+	}
+}
+
+func TestResolveReference_InequalityTrue(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs:    map[string]interface{}{"key_type": "rsa"},
+		Resources: map[string]*ResourceState{},
+	}
+
+	result, err := resolveReference("inputs.key_type != 'symmetric'", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != true {
+		t.Errorf("expected true, got %v", result)
+	}
+}
+
+func TestResolveReference_NumericComparison(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs:    map[string]interface{}{"key_size": 384},
+		Resources: map[string]*ResourceState{},
+	}
+
+	result, err := resolveReference("inputs.key_size == 384", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != true {
+		t.Errorf("expected true, got %v", result)
+	}
+}
+
+// --- Ternary operator tests ---
+
+func TestResolveReference_TernaryTrue(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs:    map[string]interface{}{"key_type": "rsa"},
+		Resources: map[string]*ResourceState{},
+	}
+
+	result, err := resolveReference("inputs.key_type == 'rsa' ? 'RSA_KEY' : 'OTHER'", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "RSA_KEY" {
+		t.Errorf("expected 'RSA_KEY', got %v", result)
+	}
+}
+
+func TestResolveReference_TernaryFalse(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs:    map[string]interface{}{"key_type": "symmetric"},
+		Resources: map[string]*ResourceState{},
+	}
+
+	result, err := resolveReference("inputs.key_type == 'rsa' ? 'RSA_KEY' : 'OTHER'", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "OTHER" {
+		t.Errorf("expected 'OTHER', got %v", result)
+	}
+}
+
+func TestResolveReference_NestedTernary(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs:    map[string]interface{}{"key_size": 521},
+		Resources: map[string]*ResourceState{},
+	}
+
+	result, err := resolveReference("inputs.key_size == 384 ? 'P-384' : inputs.key_size == 521 ? 'P-521' : 'P-256'", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "P-521" {
+		t.Errorf("expected 'P-521', got %v", result)
+	}
+}
+
+func TestResolveReference_NestedTernaryDefault(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs:    map[string]interface{}{"key_size": 256},
+		Resources: map[string]*ResourceState{},
+	}
+
+	result, err := resolveReference("inputs.key_size == 384 ? 'P-384' : inputs.key_size == 521 ? 'P-521' : 'P-256'", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "P-256" {
+		t.Errorf("expected 'P-256', got %v", result)
+	}
+}
+
+func TestEvaluateExpression_Ternary(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs:    map[string]interface{}{"key_type": "symmetric"},
+		Resources: map[string]*ResourceState{},
+	}
+
+	result, err := evaluateExpression("${inputs.key_type == 'symmetric' ? 'SYM' : 'ASYM'}", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "SYM" {
+		t.Errorf("expected 'SYM', got %v", result)
+	}
+}
+
+func TestEvaluateExpression_ComparisonInFullExpression(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs:    map[string]interface{}{"key_type": "rsa"},
+		Resources: map[string]*ResourceState{},
+	}
+
+	result, err := evaluateExpression("${inputs.key_type == 'rsa'}", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != true {
+		t.Errorf("expected true, got %v (%T)", result, result)
+	}
+}
+
+// --- Numeric literal tests ---
+
+func TestResolveReference_NumericLiteral(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs:    map[string]interface{}{},
+		Resources: map[string]*ResourceState{},
+	}
+
+	result, err := resolveReference("42", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != 42 {
+		t.Errorf("expected 42, got %v", result)
+	}
+}
+
+func TestResolveReference_BooleanLiteral(t *testing.T) {
+	ctx := &EvalContext{
+		Inputs:    map[string]interface{}{},
+		Resources: map[string]*ResourceState{},
+	}
+
+	result, err := resolveReference("true", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != true {
+		t.Errorf("expected true, got %v", result)
+	}
+}
+
+// --- isTruthy tests ---
+
+func TestIsTruthy(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  interface{}
+		expect bool
+	}{
+		{"nil is false", nil, false},
+		{"true bool", true, true},
+		{"false bool", false, false},
+		{"true string", "true", true},
+		{"false string", "false", false},
+		{"any other string", "hello", false},
+		{"empty string", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isTruthy(tt.input); got != tt.expect {
+				t.Errorf("isTruthy(%v) = %v, want %v", tt.input, got, tt.expect)
+			}
+		})
+	}
+}
+
+func TestIsTruthyExpr(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  interface{}
+		expect bool
+	}{
+		{"nil is false", nil, false},
+		{"true bool", true, true},
+		{"false bool", false, false},
+		{"non-empty string", "hello", true},
+		{"empty string", "", false},
+		{"false string", "false", false},
+		{"zero string", "0", false},
+		{"non-zero int", 42, true},
+		{"zero int", 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isTruthyExpr(tt.input); got != tt.expect {
+				t.Errorf("isTruthyExpr(%v) = %v, want %v", tt.input, got, tt.expect)
+			}
+		})
+	}
+}
+
+func TestNullLiteralComparison(t *testing.T) {
+	// Simulate the worker case: liveness_probe not in inputs (missing key)
+	ctx := &EvalContext{
+		Inputs:    map[string]interface{}{},
+		Resources: map[string]*ResourceState{},
+	}
+
+	// Test: inputs.liveness_probe != null (when key doesn't exist)
+	result, err := evaluateExpression("${inputs.liveness_probe != null}", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	t.Logf("missing key != null: result=%v (type %T)", result, result)
+	if isTruthy(result) {
+		t.Errorf("expected missing key != null to be falsy, but isTruthy returned true")
+	}
+
+	// Test: inputs.liveness_probe == null (when key doesn't exist)
+	result2, err := evaluateExpression("${inputs.liveness_probe == null}", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	t.Logf("missing key == null: result=%v (type %T)", result2, result2)
+	if !isTruthy(result2) {
+		t.Errorf("expected missing key == null to be truthy, but isTruthy returned false")
+	}
+
+	// Now test with the key present and set to a map (server case)
+	ctx2 := &EvalContext{
+		Inputs: map[string]interface{}{
+			"liveness_probe": map[string]interface{}{
+				"path": "/healthz",
+				"port": 3000,
+			},
+		},
+		Resources: map[string]*ResourceState{},
+	}
+
+	result3, err := evaluateExpression("${inputs.liveness_probe != null}", ctx2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	t.Logf("present key != null: result=%v (type %T)", result3, result3)
+	if !isTruthy(result3) {
+		t.Errorf("expected present key != null to be truthy, but isTruthy returned false")
+	}
+
+	result4, err := evaluateExpression("${inputs.liveness_probe == null}", ctx2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	t.Logf("present key == null: result=%v (type %T)", result4, result4)
+	if isTruthy(result4) {
+		t.Errorf("expected present key == null to be falsy, but isTruthy returned true")
+	}
+}

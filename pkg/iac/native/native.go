@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -99,6 +100,19 @@ func (p *Plugin) Apply(ctx context.Context, opts iac.RunOptions) (*iac.ApplyResu
 		if ctx.Err() != nil {
 			p.rollback(ctx, state)
 			return nil, ctx.Err()
+		}
+
+		// Evaluate when condition — skip resource if condition is false
+		if resource.When != "" {
+			condResult, err := evaluateExpression(resource.When, evalCtx)
+			if err != nil {
+				p.rollback(ctx, state)
+				return nil, fmt.Errorf("failed to evaluate when condition for resource %s: %w", name, err)
+			}
+
+			if !isTruthy(condResult) {
+				continue
+			}
 		}
 
 		resourceState, err := p.applyResource(ctx, name, resource, evalCtx, existingState, opts.Stdout, opts.Stderr)
@@ -378,6 +392,12 @@ func (p *Plugin) applyResource(ctx context.Context, name string, resource Resour
 		rs, err = p.applyProcess(ctx, name, props, existing, stdout, stderr)
 	case "exec":
 		rs, err = p.applyExec(ctx, name, props)
+	case "crypto:rsa_key":
+		rs, err = p.applyCryptoRSAKey(name, props)
+	case "crypto:ecdsa_key":
+		rs, err = p.applyCryptoECDSAKey(name, props)
+	case "crypto:symmetric_key":
+		rs, err = p.applyCryptoSymmetricKey(name, props)
 	default:
 		return nil, fmt.Errorf("unknown resource type: %s", resource.Type)
 	}
@@ -467,18 +487,21 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 
 	// Build desired options for comparison
 	opts := ContainerOptions{
-		Image:       desiredImage,
-		Name:        containerName,
-		Command:     getStringSlice(props, "command"),
-		Entrypoint:  getStringSlice(props, "entrypoint"),
-		Environment: getStringMap(props, "environment"),
-		Ports:       getPortMappings(props, "ports"),
-		Volumes:     getVolumeMounts(props, "volumes"),
-		Network:     getString(props, "network"),
-		Restart:     getString(props, "restart"),
-		LogDriver:   getString(props, "log_driver"),
-		LogOptions:  getStringMap(props, "log_options"),
-		Healthcheck: getHealthcheck(props, "healthcheck"),
+		Image:            desiredImage,
+		Name:             containerName,
+		Command:          getStringSlice(props, "command"),
+		Entrypoint:       getStringSlice(props, "entrypoint"),
+		Environment:      getStringMap(props, "environment"),
+		Ports:            getPortMappings(props, "ports"),
+		Volumes:          getVolumeMounts(props, "volumes"),
+		Network:          getString(props, "network"),
+		Restart:          getString(props, "restart"),
+		LogDriver:        getString(props, "log_driver"),
+		LogOptions:       getStringMap(props, "log_options"),
+		Healthcheck:      getHealthcheck(props, "healthcheck"),
+		ExtraHosts:       getStringSlice(props, "extra_hosts"),
+		ResolveLocalhost: getBool(props, "resolve_localhost"),
+		Wait:             getBool(props, "wait"),
 	}
 
 	// Check if container already exists and is running (from state)
@@ -844,6 +867,22 @@ func (p *Plugin) applyProcess(ctx context.Context, name string, props map[string
 	}, nil
 }
 
+// isTruthy determines whether a value returned by evaluateExpression is "true".
+// It handles booleans, the strings "true"/"false", and nil.
+func isTruthy(v interface{}) bool {
+	if v == nil {
+		return false
+	}
+	switch val := v.(type) {
+	case bool:
+		return val
+	case string:
+		return val == "true"
+	default:
+		return false
+	}
+}
+
 // Helper functions for type conversion
 
 func getString(props map[string]interface{}, key string) string {
@@ -853,6 +892,18 @@ func getString(props map[string]interface{}, key string) string {
 		}
 	}
 	return ""
+}
+
+func getBool(props map[string]interface{}, key string) bool {
+	if v, ok := props[key]; ok {
+		switch b := v.(type) {
+		case bool:
+			return b
+		case string:
+			return b == "true"
+		}
+	}
+	return false
 }
 
 func getStringSlice(props map[string]interface{}, key string) []string {
@@ -901,16 +952,8 @@ func getPortMappings(props map[string]interface{}, key string) []PortMapping {
 			for _, item := range arr {
 				if m, ok := item.(map[string]interface{}); ok {
 					pm := PortMapping{}
-					if container, ok := m["container"].(int); ok {
-						pm.ContainerPort = container
-					}
-					if host, ok := m["host"]; ok {
-						if hostInt, ok := host.(int); ok {
-							pm.HostPort = hostInt
-						} else if hostFloat, ok := host.(float64); ok {
-							pm.HostPort = int(hostFloat)
-						}
-					}
+					pm.ContainerPort = toInt(m["container"])
+					pm.HostPort = toInt(m["host"])
 					result = append(result, pm)
 				}
 			}
@@ -918,6 +961,24 @@ func getPortMappings(props map[string]interface{}, key string) []PortMapping {
 		}
 	}
 	return nil
+}
+
+// toInt converts various numeric types and string representations to int.
+func toInt(v interface{}) int {
+	if v == nil {
+		return 0
+	}
+	switch n := v.(type) {
+	case int:
+		return n
+	case float64:
+		return int(n)
+	case string:
+		if i, err := strconv.Atoi(n); err == nil {
+			return i
+		}
+	}
+	return 0
 }
 
 func getVolumeMounts(props map[string]interface{}, key string) []VolumeMount {
@@ -951,9 +1012,10 @@ func getHealthcheck(props map[string]interface{}, key string) *Healthcheck {
 	}
 
 	hc := &Healthcheck{
-		Command:  getStringSlice(m, "command"),
-		Interval: getString(m, "interval"),
-		Timeout:  getString(m, "timeout"),
+		Command:     getStringSlice(m, "command"),
+		Interval:    getString(m, "interval"),
+		Timeout:     getString(m, "timeout"),
+		StartPeriod: getString(m, "start_period"),
 	}
 
 	if retries, ok := m["retries"]; ok {

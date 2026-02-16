@@ -86,6 +86,11 @@ variables:
     description: "Logic functions driver: LOCAL, LAMBDA, or DISABLED"
     default: "LOCAL"
 
+# Observability - enables log collection and dashboard access via cldctl.
+# Twenty uses its own env vars for OTel metrics (not the standard OTEL_* names),
+# so we use expression-only mode and map them explicitly in the deployments.
+observability: true
+
 # Object storage for file uploads
 buckets:
   storage:
@@ -112,10 +117,17 @@ databases:
   postgres:
     type: postgres:^16
     migrations:
+      # The Twenty Docker image's entrypoint handles schema creation, extensions,
+      # TypeORM migrations, and upgrade commands when DISABLE_DB_MIGRATIONS != "true".
+      # We pass "echo done" as the command so after the entrypoint finishes setup,
+      # it exec's into a no-op and the container exits cleanly.
       image: twentycrm/twenty:latest
-      command: ["npx", "-y", "typeorm", "migration:run", "-d", "dist/database/typeorm/core/core.datasource"]
+      command: ["echo", "migrations complete"]
       environment:
         PG_DATABASE_URL: ${{ databases.postgres.url }}
+        REDIS_URL: ${{ databases.redis.url }}
+        APP_SECRET: ${{ encryptionKeys.app_secret.key }}
+        SERVER_URL: ${{ routes.public.url }}
 
   redis:
     type: redis:^7
@@ -135,7 +147,7 @@ deployments:
       SERVER_URL: ${{ routes.public.url }}
       # Security
       APP_SECRET: ${{ encryptionKeys.app_secret.keyBase64 }}
-      # Migrations are handled by a separate task on the database
+      # Migrations are handled by the database migration task
       DISABLE_DB_MIGRATIONS: "true"
       DISABLE_CRON_JOBS_REGISTRATION: "false"
       # Storage (S3-compatible object storage)
@@ -178,6 +190,9 @@ deployments:
       DEFAULT_SUBDOMAIN: ${{ variables.default_subdomain }}
       # Serverless/Logic Functions
       SERVERLESS_TYPE: ${{ variables.serverless_type }}
+      # Observability - Twenty's own OTel metrics config
+      METER_DRIVER: "opentelemetry"
+      OTLP_COLLECTOR_METRICS_ENDPOINT_URL: ${{ observability.endpoint }}/v1/metrics
     cpu: "1"
     memory: "2Gi"
     replicas: 1
@@ -246,6 +261,9 @@ deployments:
       DEFAULT_SUBDOMAIN: ${{ variables.default_subdomain }}
       # Serverless/Logic Functions
       SERVERLESS_TYPE: ${{ variables.serverless_type }}
+      # Observability - Twenty's own OTel metrics config
+      METER_DRIVER: "opentelemetry"
+      OTLP_COLLECTOR_METRICS_ENDPOINT_URL: ${{ observability.endpoint }}/v1/metrics
     cpu: "1"
     memory: "2Gi"
     replicas: 1

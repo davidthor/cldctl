@@ -212,10 +212,17 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 	// Add encryption keys
 	for _, ek := range comp.EncryptionKeys() {
 		node := NewNode(NodeTypeEncryptionKey, componentName, ek.Name())
-		node.SetInput("type", ek.Type())
-		node.SetInput("bits", ek.Bits())
-		node.SetInput("curve", ek.Curve())
-		node.SetInput("bytes", ek.Bytes())
+		node.SetInput("keyType", ek.Type())
+		// Compute a unified keySize that datacenter hooks can consume.
+		// RSA uses bits, ECDSA uses the curve name, symmetric uses byte count.
+		switch ek.Type() {
+		case "rsa":
+			node.SetInput("keySize", ek.Bits())
+		case "ecdsa":
+			node.SetInput("keySize", ek.Curve())
+		case "symmetric":
+			node.SetInput("keySize", ek.Bytes())
+		}
 
 		_ = b.graph.AddNode(node)
 	}
@@ -268,7 +275,9 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		node.SetInput("cpu", deploy.CPU())
 		node.SetInput("memory", deploy.Memory())
 		node.SetInput("replicas", deploy.Replicas())
-		node.SetInput("liveness_probe", deploy.LivenessProbe())
+		if probeMap := probeToMap(deploy.LivenessProbe()); probeMap != nil {
+			node.SetInput("liveness_probe", probeMap)
+		}
 
 		// Set working directory: explicit value or default to component directory
 		if deploy.WorkingDirectory() != "" {
@@ -541,6 +550,39 @@ func (b *Builder) AddComponent(componentName string, comp component.Component) e
 		}
 	}
 
+	// Scan migration task environment variables for expression dependencies.
+	// Migration tasks may reference resources beyond their parent database
+	// (e.g., ${{ databases.redis.url }}) and need those nodes complete before running.
+	// We skip references to the task's own parent database since that dependency
+	// is already established in the first pass with the correct relationship.
+	for _, db := range comp.Databases() {
+		if db.Migrations() == nil {
+			continue
+		}
+		migNodeID := fmt.Sprintf("%s/%s/%s", componentName, NodeTypeTask, db.Name()+"-migration")
+		migNode := b.graph.GetNode(migNodeID)
+		if migNode == nil {
+			continue
+		}
+		parentDBPrefix := "databases." + db.Name() + "."
+		for _, value := range db.Migrations().Environment() {
+			// Skip values that only reference the parent database - that dependency
+			// is already established in the first pass with the correct relationship.
+			deps := extractDependencies(value)
+			referencesOnlyParent := true
+			for _, dep := range deps {
+				if !strings.HasPrefix(dep, parentDBPrefix) {
+					referencesOnlyParent = false
+					break
+				}
+			}
+			if len(deps) > 0 && referencesOnlyParent {
+				continue
+			}
+			b.addEnvDependencies(componentName, migNode, value)
+		}
+	}
+
 	return nil
 }
 
@@ -572,8 +614,12 @@ func (b *Builder) addEnvDependencies(componentName string, node *Node, value str
 			node.AddDependency(dbUserNode.ID)
 			dbUserNode.AddDependent(node.ID)
 
-			// Also depend on any task nodes that depend on the database.
+			// Also depend on any task nodes that depend on the database
+			// (skip self to avoid cycles when a migration task references its own database).
 			for _, dependentID := range depNode.DependedOnBy {
+				if dependentID == node.ID {
+					continue
+				}
 				taskNode := b.graph.GetNode(dependentID)
 				if taskNode != nil && taskNode.Type == NodeTypeTask {
 					node.AddDependency(dependentID)
@@ -597,7 +643,11 @@ func (b *Builder) addEnvDependencies(componentName string, node *Node, value str
 		// Also depend on any task nodes that depend on this resource.
 		// This ensures tasks (e.g., database migrations) complete before
 		// workloads that consume the same resource start.
+		// Skip self to avoid cycles when a migration task references its own database.
 		for _, dependentID := range depNode.DependedOnBy {
+			if dependentID == node.ID {
+				continue
+			}
 			taskNode := b.graph.GetNode(dependentID)
 			if taskNode != nil && taskNode.Type == NodeTypeTask {
 				node.AddDependency(dependentID)
@@ -846,10 +896,15 @@ func (b *Builder) AddComponentWithInstances(componentName string, comp component
 	// Add encryption keys (shared by default)
 	for _, ek := range comp.EncryptionKeys() {
 		node := NewNode(NodeTypeEncryptionKey, componentName, ek.Name())
-		node.SetInput("type", ek.Type())
-		node.SetInput("bits", ek.Bits())
-		node.SetInput("curve", ek.Curve())
-		node.SetInput("bytes", ek.Bytes())
+		node.SetInput("keyType", ek.Type())
+		switch ek.Type() {
+		case "rsa":
+			node.SetInput("keySize", ek.Bits())
+		case "ecdsa":
+			node.SetInput("keySize", ek.Curve())
+		case "symmetric":
+			node.SetInput("keySize", ek.Bytes())
+		}
 		node.Instances = nodeInstances
 		_ = b.graph.AddNode(node)
 	}
@@ -927,7 +982,9 @@ func (b *Builder) AddComponentWithInstances(componentName string, comp component
 			node.SetInput("cpu", deploy.CPU())
 			node.SetInput("memory", deploy.Memory())
 			node.SetInput("replicas", deploy.Replicas())
-			node.SetInput("liveness_probe", deploy.LivenessProbe())
+			if probeMap := probeToMap(deploy.LivenessProbe()); probeMap != nil {
+				node.SetInput("liveness_probe", probeMap)
+			}
 			if deploy.WorkingDirectory() != "" {
 				node.SetInput("workingDirectory", resolveBuildContext(compDir, deploy.WorkingDirectory()))
 			} else {
@@ -1283,6 +1340,26 @@ func (b *Builder) resolveDepReference(componentName, ref string) string {
 	}
 
 	return fmt.Sprintf("%s/%s/%s", componentName, nodeType, resourceName)
+}
+
+// probeToMap converts a Probe interface to a map[string]interface{} suitable for
+// passing through the expression evaluator. Returns nil if the probe is nil.
+func probeToMap(p component.Probe) map[string]interface{} {
+	if p == nil {
+		return nil
+	}
+	m := map[string]interface{}{
+		"path":                  p.Path(),
+		"port":                  p.Port(),
+		"command":               p.Command(),
+		"tcp_port":              p.TCPPort(),
+		"initial_delay_seconds": p.InitialDelaySeconds(),
+		"period_seconds":        p.PeriodSeconds(),
+		"timeout_seconds":       p.TimeoutSeconds(),
+		"success_threshold":     p.SuccessThreshold(),
+		"failure_threshold":     p.FailureThreshold(),
+	}
+	return m
 }
 
 // resolveBuildContext resolves a build context path to an absolute path.

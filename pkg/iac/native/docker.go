@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -18,6 +19,21 @@ import (
 	"github.com/docker/go-connections/nat"
 )
 
+// resolveLocalhostRe matches "localhost" only when used as a standalone hostname,
+// not as part of a subdomain (e.g., "app.localhost" should NOT be replaced).
+// It matches "localhost" preceded by "://", "@", or start-of-string — but not by
+// a dot or alphanumeric character.
+var resolveLocalhostRe = regexp.MustCompile(`(^|[/@])localhost\b`)
+
+// replaceLocalhostWithDockerHost replaces standalone "localhost" references with
+// "host.docker.internal" while preserving subdomain patterns like "app.localhost".
+func replaceLocalhostWithDockerHost(s string) string {
+	return resolveLocalhostRe.ReplaceAllStringFunc(s, func(match string) string {
+		prefix := match[:len(match)-len("localhost")]
+		return prefix + "host.docker.internal"
+	})
+}
+
 // DockerClient wraps the Docker SDK client.
 type DockerClient struct {
 	client *client.Client
@@ -25,18 +41,21 @@ type DockerClient struct {
 
 // ContainerOptions defines options for creating a container.
 type ContainerOptions struct {
-	Image       string
-	Name        string
-	Command     []string
-	Entrypoint  []string
-	Environment map[string]string
-	Ports       []PortMapping
-	Volumes     []VolumeMount
-	Network     string
-	Restart     string
-	Healthcheck *Healthcheck
-	LogDriver   string            // Docker logging driver (e.g., "fluentd", "json-file")
-	LogOptions  map[string]string // Options for the logging driver
+	Image            string
+	Name             string
+	Command          []string
+	Entrypoint       []string
+	Environment      map[string]string
+	Ports            []PortMapping
+	Volumes          []VolumeMount
+	Network          string
+	Restart          string
+	Healthcheck      *Healthcheck
+	LogDriver        string            // Docker logging driver (e.g., "fluentd", "json-file")
+	LogOptions       map[string]string // Options for the logging driver
+	ExtraHosts       []string          // Additional /etc/hosts entries (e.g., "host.docker.internal:host-gateway")
+	ResolveLocalhost bool              // Replace "localhost" in env var values with "host.docker.internal"
+	Wait             bool              // Wait for container to exit before returning (for one-shot tasks)
 }
 
 // PortMapping defines a port mapping.
@@ -55,10 +74,11 @@ type VolumeMount struct {
 
 // Healthcheck defines a health check.
 type Healthcheck struct {
-	Command  []string
-	Interval string
-	Timeout  string
-	Retries  int
+	Command     []string
+	Interval    string
+	Timeout     string
+	Retries     int
+	StartPeriod string
 }
 
 // ContainerInfo contains container information.
@@ -97,9 +117,12 @@ func (d *DockerClient) RunContainer(ctx context.Context, opts ContainerOptions) 
 		reader.Close()
 	}
 
-	// Build environment slice
+	// Build environment slice, optionally replacing standalone localhost with host.docker.internal
 	env := make([]string, 0, len(opts.Environment))
 	for k, v := range opts.Environment {
+		if opts.ResolveLocalhost {
+			v = replaceLocalhostWithDockerHost(v)
+		}
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
 
@@ -158,12 +181,32 @@ func (d *DockerClient) RunContainer(ctx context.Context, opts ContainerOptions) 
 		if opts.Healthcheck.Retries > 0 {
 			hc.Retries = opts.Healthcheck.Retries
 		}
+		if opts.Healthcheck.StartPeriod != "" {
+			if d, err := time.ParseDuration(opts.Healthcheck.StartPeriod); err == nil {
+				hc.StartPeriod = d
+			}
+		}
 		config.Healthcheck = hc
 	}
 
 	hostConfig := &container.HostConfig{
 		PortBindings: portBindings,
 		Binds:        binds,
+		ExtraHosts:   opts.ExtraHosts,
+	}
+
+	if opts.ResolveLocalhost {
+		// Ensure host.docker.internal is resolvable inside the container
+		hasHostGateway := false
+		for _, h := range hostConfig.ExtraHosts {
+			if strings.HasPrefix(h, "host.docker.internal:") {
+				hasHostGateway = true
+				break
+			}
+		}
+		if !hasHostGateway {
+			hostConfig.ExtraHosts = append(hostConfig.ExtraHosts, "host.docker.internal:host-gateway")
+		}
 	}
 
 	if opts.Restart != "" {
@@ -206,6 +249,33 @@ func (d *DockerClient) RunContainer(ctx context.Context, opts ContainerOptions) 
 		}
 	}
 
+	// If Wait is true, block until the container exits (for one-shot tasks like migrations)
+	if opts.Wait {
+		statusCh, errCh := d.client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+		select {
+		case err := <-errCh:
+			if err != nil {
+				return resp.ID, fmt.Errorf("error waiting for container: %w", err)
+			}
+		case status := <-statusCh:
+			if status.StatusCode != 0 {
+				// Get logs for error message
+				logs, _ := d.client.ContainerLogs(ctx, resp.ID, container.LogsOptions{
+					ShowStdout: true,
+					ShowStderr: true,
+				})
+				if logs != nil {
+					output, _ := io.ReadAll(logs)
+					logs.Close()
+					return resp.ID, fmt.Errorf("container exited with code %d: %s", status.StatusCode, string(output))
+				}
+				return resp.ID, fmt.Errorf("container exited with code %d", status.StatusCode)
+			}
+		case <-ctx.Done():
+			return resp.ID, ctx.Err()
+		}
+	}
+
 	return resp.ID, nil
 }
 
@@ -226,9 +296,16 @@ func (d *DockerClient) waitForHealthy(ctx context.Context, containerID string, h
 		retries = hc.Retries
 	}
 
-	// Give the container a brief moment to start up before the first check
+	// Respect start_period: wait before counting health check failures
+	startDelay := 500 * time.Millisecond
+	if hc.StartPeriod != "" {
+		if parsed, err := time.ParseDuration(hc.StartPeriod); err == nil && parsed > startDelay {
+			startDelay = parsed
+		}
+	}
+
 	select {
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(startDelay):
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -506,11 +583,12 @@ func (d *DockerClient) Exec(ctx context.Context, command []string, workDir strin
 
 // RunOneShotOptions defines options for a one-shot container.
 type RunOneShotOptions struct {
-	Image       string
-	Command     []string
-	Environment map[string]string
-	Network     string
-	WorkDir     string
+	Image            string
+	Command          []string
+	Environment      map[string]string
+	Network          string
+	WorkDir          string
+	ResolveLocalhost bool // Replace "localhost" in env var values with "host.docker.internal"
 }
 
 // RunOneShot runs a command in a temporary Docker container and returns the output.
@@ -530,6 +608,9 @@ func (d *DockerClient) RunOneShot(ctx context.Context, opts RunOneShotOptions) (
 	// Build environment variables
 	var envList []string
 	for k, v := range opts.Environment {
+		if opts.ResolveLocalhost {
+			v = replaceLocalhostWithDockerHost(v)
+		}
 		envList = append(envList, fmt.Sprintf("%s=%s", k, v))
 	}
 
@@ -545,6 +626,9 @@ func (d *DockerClient) RunOneShot(ctx context.Context, opts RunOneShotOptions) (
 
 	// Create host config
 	hostConfig := &container.HostConfig{}
+	if opts.ResolveLocalhost {
+		hostConfig.ExtraHosts = []string{"host.docker.internal:host-gateway"}
+	}
 
 	// Create network config
 	var networkConfig *network.NetworkingConfig

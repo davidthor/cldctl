@@ -1,0 +1,30 @@
+# Native module for generating symmetric encryption keys
+plugin: native
+type: crypto
+
+inputs:
+  name:
+    type: string
+    required: true
+    description: Key identifier
+  key_size:
+    type: number
+    description: Key size in bytes (e.g. 16 for 128-bit, 32 for 256-bit)
+    default: 32
+
+resources:
+  symmetric_key:
+    type: crypto:symmetric_key
+    properties:
+      name: "${inputs.name}"
+      bits: "${coalesce(inputs.key_size, 32)}"
+
+outputs:
+  key:
+    value: "${resources.symmetric_key.key}"
+    sensitive: true
+    description: Symmetric key (hex encoded)
+  keyBase64:
+    value: "${resources.symmetric_key.key_base64}"
+    sensitive: true
+    description: Symmetric key in base64

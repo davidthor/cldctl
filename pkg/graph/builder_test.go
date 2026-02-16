@@ -1001,11 +1001,11 @@ encryptionKeys:
 	if symNode.Type != NodeTypeEncryptionKey {
 		t.Errorf("expected encryptionKey type, got %s", symNode.Type)
 	}
-	if symNode.Inputs["type"] != "symmetric" {
-		t.Errorf("expected type 'symmetric', got %v", symNode.Inputs["type"])
+	if symNode.Inputs["keyType"] != "symmetric" {
+		t.Errorf("expected keyType 'symmetric', got %v", symNode.Inputs["keyType"])
 	}
-	if symNode.Inputs["bytes"] != 32 {
-		t.Errorf("expected bytes 32, got %v", symNode.Inputs["bytes"])
+	if symNode.Inputs["keySize"] != 32 {
+		t.Errorf("expected keySize 32, got %v", symNode.Inputs["keySize"])
 	}
 
 	// Verify RSA key node
@@ -1013,11 +1013,11 @@ encryptionKeys:
 	if rsaNode == nil {
 		t.Fatal("expected encryptionKey/signing node to exist")
 	}
-	if rsaNode.Inputs["type"] != "rsa" {
-		t.Errorf("expected type 'rsa', got %v", rsaNode.Inputs["type"])
+	if rsaNode.Inputs["keyType"] != "rsa" {
+		t.Errorf("expected keyType 'rsa', got %v", rsaNode.Inputs["keyType"])
 	}
-	if rsaNode.Inputs["bits"] != 2048 {
-		t.Errorf("expected bits 2048, got %v", rsaNode.Inputs["bits"])
+	if rsaNode.Inputs["keySize"] != 2048 {
+		t.Errorf("expected keySize 2048, got %v", rsaNode.Inputs["keySize"])
 	}
 }
 
@@ -1544,17 +1544,23 @@ deployments:
 		t.Fatal("expected all three encryptionKey nodes to exist")
 	}
 
-	if symNode.Inputs["type"] != "symmetric" {
-		t.Errorf("expected symmetric type, got %v", symNode.Inputs["type"])
+	if symNode.Inputs["keyType"] != "symmetric" {
+		t.Errorf("expected keyType 'symmetric', got %v", symNode.Inputs["keyType"])
 	}
-	if rsaNode.Inputs["type"] != "rsa" {
-		t.Errorf("expected rsa type, got %v", rsaNode.Inputs["type"])
+	if symNode.Inputs["keySize"] != 32 {
+		t.Errorf("expected keySize 32, got %v", symNode.Inputs["keySize"])
 	}
-	if ecdsaNode.Inputs["type"] != "ecdsa" {
-		t.Errorf("expected ecdsa type, got %v", ecdsaNode.Inputs["type"])
+	if rsaNode.Inputs["keyType"] != "rsa" {
+		t.Errorf("expected keyType 'rsa', got %v", rsaNode.Inputs["keyType"])
 	}
-	if ecdsaNode.Inputs["curve"] != "P-256" {
-		t.Errorf("expected curve P-256, got %v", ecdsaNode.Inputs["curve"])
+	if rsaNode.Inputs["keySize"] != 2048 {
+		t.Errorf("expected keySize 2048, got %v", rsaNode.Inputs["keySize"])
+	}
+	if ecdsaNode.Inputs["keyType"] != "ecdsa" {
+		t.Errorf("expected keyType 'ecdsa', got %v", ecdsaNode.Inputs["keyType"])
+	}
+	if ecdsaNode.Inputs["keySize"] != "P-256" {
+		t.Errorf("expected keySize 'P-256', got %v", ecdsaNode.Inputs["keySize"])
 	}
 
 	// Deployment should depend on app_secret and signing (referenced in env), not auth (not referenced)

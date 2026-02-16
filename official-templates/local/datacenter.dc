@@ -165,25 +165,45 @@ environment {
     }
   }
   
-  # Encryption key hook - generate cryptographic keys
+  # Encryption key hook - RSA key pairs
   encryptionKey {
-    when = node.inputs.keyType == "rsa" || node.inputs.keyType == "ecdsa"
+    when = node.inputs.keyType == "rsa"
     
-    module "asymmetric_key" {
+    module "rsa_key" {
       plugin = "native"
-      build  = "./modules/encryption-key"
+      build  = "./modules/encryption-key-rsa"
       inputs = {
         name     = "${environment.name}-${node.component}-${node.name}"
-        key_type = node.inputs.keyType
         key_size = node.inputs.keySize
       }
     }
     
     outputs = {
-      privateKey       = module.asymmetric_key.privateKey
-      publicKey        = module.asymmetric_key.publicKey
-      privateKeyBase64 = module.asymmetric_key.privateKeyBase64
-      publicKeyBase64  = module.asymmetric_key.publicKeyBase64
+      privateKey       = module.rsa_key.privateKey
+      publicKey        = module.rsa_key.publicKey
+      privateKeyBase64 = module.rsa_key.privateKeyBase64
+      publicKeyBase64  = module.rsa_key.publicKeyBase64
+    }
+  }
+  
+  # Encryption key hook - ECDSA key pairs
+  encryptionKey {
+    when = node.inputs.keyType == "ecdsa"
+    
+    module "ecdsa_key" {
+      plugin = "native"
+      build  = "./modules/encryption-key-ecdsa"
+      inputs = {
+        name     = "${environment.name}-${node.component}-${node.name}"
+        key_size = node.inputs.keySize
+      }
+    }
+    
+    outputs = {
+      privateKey       = module.ecdsa_key.privateKey
+      publicKey        = module.ecdsa_key.publicKey
+      privateKeyBase64 = module.ecdsa_key.privateKeyBase64
+      publicKeyBase64  = module.ecdsa_key.publicKeyBase64
     }
   }
   
@@ -193,10 +213,9 @@ environment {
     
     module "symmetric_key" {
       plugin = "native"
-      build  = "./modules/encryption-key"
+      build  = "./modules/encryption-key-symmetric"
       inputs = {
         name     = "${environment.name}-${node.component}-${node.name}"
-        key_type = "symmetric"
         key_size = node.inputs.keySize
       }
     }

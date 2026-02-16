@@ -1,0 +1,36 @@
+# Native module for generating RSA key pairs
+plugin: native
+type: crypto
+
+inputs:
+  name:
+    type: string
+    required: true
+    description: Key identifier
+  key_size:
+    type: number
+    description: Key size in bits (2048 or 4096)
+    default: 2048
+
+resources:
+  rsa_key:
+    type: crypto:rsa_key
+    properties:
+      name: "${inputs.name}"
+      bits: "${coalesce(inputs.key_size, 2048)}"
+
+outputs:
+  privateKey:
+    value: "${resources.rsa_key.private_key_pem}"
+    sensitive: true
+    description: Private key in PEM format
+  publicKey:
+    value: "${resources.rsa_key.public_key_pem}"
+    description: Public key in PEM format
+  privateKeyBase64:
+    value: "${resources.rsa_key.private_key_base64}"
+    sensitive: true
+    description: Private key in base64
+  publicKeyBase64:
+    value: "${resources.rsa_key.public_key_base64}"
+    description: Public key in base64

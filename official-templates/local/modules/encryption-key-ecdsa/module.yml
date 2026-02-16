@@ -1,0 +1,36 @@
+# Native module for generating ECDSA key pairs
+plugin: native
+type: crypto
+
+inputs:
+  name:
+    type: string
+    required: true
+    description: Key identifier
+  key_size:
+    type: number
+    description: Curve bit size (256, 384, or 521)
+    default: 256
+
+resources:
+  ecdsa_key:
+    type: crypto:ecdsa_key
+    properties:
+      name: "${inputs.name}"
+      curve: "${inputs.key_size == 384 ? 'P-384' : inputs.key_size == 521 ? 'P-521' : 'P-256'}"
+
+outputs:
+  privateKey:
+    value: "${resources.ecdsa_key.private_key_pem}"
+    sensitive: true
+    description: Private key in PEM format
+  publicKey:
+    value: "${resources.ecdsa_key.public_key_pem}"
+    description: Public key in PEM format
+  privateKeyBase64:
+    value: "${resources.ecdsa_key.private_key_base64}"
+    sensitive: true
+    description: Private key in base64
+  publicKeyBase64:
+    value: "${resources.ecdsa_key.public_key_base64}"
+    description: Public key in base64

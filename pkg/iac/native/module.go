@@ -34,6 +34,7 @@ type InputDef struct {
 // Resource defines a native resource.
 type Resource struct {
 	Type       string                 `yaml:"type"`
+	When       string                 `yaml:"when,omitempty"`
 	Properties map[string]interface{} `yaml:"properties"`
 	DependsOn  []string               `yaml:"depends_on"`
 	Destroy    *DestroyCommand        `yaml:"destroy,omitempty"`

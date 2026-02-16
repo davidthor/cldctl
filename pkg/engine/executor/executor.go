@@ -2535,6 +2535,34 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 				}
 				return debugUnresolved(fmt.Sprintf("variable %q not provided", varName))
 
+			case "encryptionKeys":
+				if len(parts) < 3 {
+					return debugUnresolved("malformed encryptionKeys expression (expected encryptionKeys.<name>.<output>)")
+				}
+				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeEncryptionKey, parts[1])
+				depNode, ok := e.graph.Nodes[nodeID]
+				if !ok || depNode.Outputs == nil {
+					return debugUnresolved(fmt.Sprintf("encryptionKey %q not found or has no outputs", parts[1]))
+				}
+				if val, ok := depNode.Outputs[parts[2]]; ok {
+					return fmt.Sprintf("%v", val)
+				}
+				return debugUnresolved(fmt.Sprintf("encryptionKey %q has no output %q", parts[1], parts[2]))
+
+			case "smtp":
+				if len(parts) < 3 {
+					return debugUnresolved("malformed smtp expression (expected smtp.<name>.<output>)")
+				}
+				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeSMTP, parts[1])
+				depNode, ok := e.graph.Nodes[nodeID]
+				if !ok || depNode.Outputs == nil {
+					return debugUnresolved(fmt.Sprintf("smtp %q not found or has no outputs", parts[1]))
+				}
+				if val, ok := depNode.Outputs[parts[2]]; ok {
+					return fmt.Sprintf("%v", val)
+				}
+				return debugUnresolved(fmt.Sprintf("smtp %q has no output %q", parts[1], parts[2]))
+
 			case "dependencies":
 				// Resolve cross-component dependency outputs.
 				// Format: dependencies.<depAlias>.outputs.<outputKey>
