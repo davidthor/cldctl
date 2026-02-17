@@ -65,8 +65,11 @@ resources:
 
 outputs:
   endpoint:
+    value: "http://minio-${inputs.name}:9000"
+    description: S3-compatible endpoint URL (Docker network)
+  host_endpoint:
     value: "http://localhost:${resources.container.ports[0].host}"
-    description: S3-compatible endpoint URL
+    description: S3-compatible endpoint URL (host access)
   bucket:
     value: "${inputs.name}"
     description: Bucket name

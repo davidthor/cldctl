@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/davidthor/cldctl/pkg/iac"
@@ -24,6 +25,13 @@ func init() {
 type Plugin struct {
 	docker  *DockerClient
 	process *ProcessManager
+
+	// portRegistry maps "containerName:containerPort" → hostPort.
+	// Populated when Docker containers are created or found running,
+	// used by resolve_to_localhost to rewrite container-network URLs
+	// to localhost URLs for host-based processes.
+	portRegistry   map[string]int
+	portRegistryMu sync.Mutex
 }
 
 // NewPlugin creates a new native plugin instance.
@@ -34,9 +42,51 @@ func NewPlugin() (*Plugin, error) {
 	}
 
 	return &Plugin{
-		docker:  docker,
-		process: NewProcessManager(),
+		docker:       docker,
+		process:      NewProcessManager(),
+		portRegistry: make(map[string]int),
 	}, nil
+}
+
+// registerContainerPorts records port mappings from a Docker container so that
+// process-based workloads can resolve container-network URLs to localhost.
+func (p *Plugin) registerContainerPorts(containerName string, ports []interface{}) {
+	p.portRegistryMu.Lock()
+	defer p.portRegistryMu.Unlock()
+	for _, port := range ports {
+		if pm, ok := port.(map[string]interface{}); ok {
+			containerPort := 0
+			hostPort := 0
+			if v, ok := pm["container"]; ok {
+				containerPort = toInt(v)
+			}
+			if v, ok := pm["host"]; ok {
+				hostPort = toInt(v)
+			}
+			if containerPort > 0 && hostPort > 0 {
+				key := fmt.Sprintf("%s:%d", containerName, containerPort)
+				p.portRegistry[key] = hostPort
+			}
+		}
+	}
+}
+
+// resolveContainerRefsToLocalhost replaces Docker container-name:port references
+// in environment variable values with localhost:hostPort using the port registry.
+// This is the inverse of resolve_localhost: it converts Docker-network URLs to
+// host-accessible URLs for workloads running directly on the host.
+func (p *Plugin) resolveContainerRefsToLocalhost(env map[string]string) map[string]string {
+	p.portRegistryMu.Lock()
+	defer p.portRegistryMu.Unlock()
+
+	result := make(map[string]string, len(env))
+	for k, v := range env {
+		for containerPortKey, hostPort := range p.portRegistry {
+			v = strings.ReplaceAll(v, containerPortKey, fmt.Sprintf("localhost:%d", hostPort))
+		}
+		result[k] = v
+	}
+	return result
 }
 
 func (p *Plugin) Name() string {
@@ -115,7 +165,7 @@ func (p *Plugin) Apply(ctx context.Context, opts iac.RunOptions) (*iac.ApplyResu
 			}
 		}
 
-		resourceState, err := p.applyResource(ctx, name, resource, evalCtx, existingState, opts.Stdout, opts.Stderr)
+		resourceState, err := p.applyResource(ctx, name, resource, evalCtx, existingState, opts.Stdout, opts.Stderr, opts.OnProgress)
 		if err != nil {
 			// Rollback on failure
 			p.rollback(ctx, state)
@@ -371,7 +421,7 @@ func resolveDestroyCommand(dc *DestroyCommand, evalCtx *EvalContext) (*ResolvedD
 	return resolved, nil
 }
 
-func (p *Plugin) applyResource(ctx context.Context, name string, resource Resource, evalCtx *EvalContext, existing *State, stdout, stderr io.Writer) (*ResourceState, error) {
+func (p *Plugin) applyResource(ctx context.Context, name string, resource Resource, evalCtx *EvalContext, existing *State, stdout, stderr io.Writer, onProgress func(string)) (*ResourceState, error) {
 	// Resolve properties with expressions
 	props, err := resolveProperties(resource.Properties, evalCtx)
 	if err != nil {
@@ -381,7 +431,7 @@ func (p *Plugin) applyResource(ctx context.Context, name string, resource Resour
 	var rs *ResourceState
 	switch resource.Type {
 	case "docker:container":
-		rs, err = p.applyDockerContainer(ctx, name, props, existing)
+		rs, err = p.applyDockerContainer(ctx, name, props, existing, onProgress)
 	case "docker:network":
 		rs, err = p.applyDockerNetwork(ctx, name, props, existing)
 	case "docker:volume":
@@ -481,7 +531,7 @@ func (p *Plugin) rollback(ctx context.Context, state *State) {
 	}
 }
 
-func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props map[string]interface{}, existing *State) (*ResourceState, error) {
+func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props map[string]interface{}, existing *State, onProgress func(string)) (*ResourceState, error) {
 	containerName := getString(props, "name")
 	desiredImage := getString(props, "image")
 
@@ -502,7 +552,9 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 		ExtraHosts:       getStringSlice(props, "extra_hosts"),
 		ResolveLocalhost: getBool(props, "resolve_localhost"),
 		Wait:             getBool(props, "wait"),
+		OnProgress:       onProgress,
 	}
+
 
 	// Check if container already exists and is running (from state)
 	if existing != nil {
@@ -512,6 +564,10 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 				if err == nil && running {
 					// Check if container config matches what we want
 					if p.docker.ContainerMatchesConfig(ctx, containerID, opts) {
+						// Register port mappings from existing container for resolve_to_localhost
+						if ports, ok := rs.Outputs["ports"].([]interface{}); ok {
+							p.registerContainerPorts(containerName, ports)
+						}
 						// Container still running with same config, reuse it
 						return rs, nil
 					}
@@ -525,21 +581,23 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 	// Also check by container name in case state was lost but container exists
 	// This handles orphaned containers from failed previous runs
 	if containerName != "" {
-		if existingID, _ := p.docker.GetContainerByName(ctx, containerName); existingID != "" {
+			if existingID, _ := p.docker.GetContainerByName(ctx, containerName); existingID != "" {
 			running, _ := p.docker.IsContainerRunning(ctx, existingID)
 			if running && p.docker.ContainerMatchesConfig(ctx, existingID, opts) {
 				// Existing container matches config, reuse it
 				info, err := p.docker.InspectContainer(ctx, existingID)
 				if err == nil {
-				return &ResourceState{
-					Type:       "docker:container",
-					ID:         existingID,
-					Properties: props,
-					Outputs: map[string]interface{}{
-						"container_id": existingID,
-						"ports":        buildPortsArray(opts.Ports, info.Ports),
-					},
-				}, nil
+					portsArray := buildPortsArray(opts.Ports, info.Ports)
+					p.registerContainerPorts(containerName, portsArray)
+					return &ResourceState{
+						Type:       "docker:container",
+						ID:         existingID,
+						Properties: props,
+						Outputs: map[string]interface{}{
+							"container_id": existingID,
+							"ports":        portsArray,
+						},
+					}, nil
 				}
 			}
 			// Config changed or container not running, remove it
@@ -560,13 +618,16 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 		return nil, fmt.Errorf("failed to inspect container: %w", err)
 	}
 
+	portsArray := buildPortsArray(opts.Ports, info.Ports)
+	p.registerContainerPorts(containerName, portsArray)
+
 	return &ResourceState{
 		Type:       "docker:container",
 		ID:         containerID,
 		Properties: props,
 		Outputs: map[string]interface{}{
 			"container_id": containerID,
-			"ports":        buildPortsArray(opts.Ports, info.Ports),
+			"ports":        portsArray,
 			"environment":  opts.Environment, // Include environment for dependent resources
 			"name":         containerName,
 		},
@@ -792,6 +853,10 @@ func (p *Plugin) applyExec(ctx context.Context, name string, props map[string]in
 			WorkDir:     workDir,
 		})
 	} else {
+		// Resolve Docker container-network URLs to localhost for host-based execution
+		if getBool(props, "resolve_to_localhost") {
+			env = p.resolveContainerRefsToLocalhost(env)
+		}
 		// Run on host
 		output, err = p.docker.Exec(ctx, command, workDir, env)
 	}
@@ -824,6 +889,11 @@ func (p *Plugin) applyProcess(ctx context.Context, name string, props map[string
 
 	// Get environment variables first
 	env := getStringMap(props, "environment")
+
+	// Resolve Docker container-network URLs to localhost for host-based processes
+	if getBool(props, "resolve_to_localhost") {
+		env = p.resolveContainerRefsToLocalhost(env)
+	}
 
 	// Parse readiness check if present
 	// Skip readiness check entirely when the endpoint port is 0 (no service exposed)
@@ -939,7 +1009,11 @@ func getStringMap(props map[string]interface{}, key string) map[string]string {
 		case map[string]interface{}:
 			result := make(map[string]string, len(m))
 			for k, val := range m {
-				result[k], _ = val.(string)
+				if s, ok := val.(string); ok {
+					result[k] = s
+				} else if val != nil {
+					result[k] = fmt.Sprintf("%v", val)
+				}
 			}
 			return result
 		case map[string]string:

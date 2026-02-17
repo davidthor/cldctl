@@ -191,6 +191,40 @@ func TestApplyCryptoSymmetricKey_BitsAsString(t *testing.T) {
 	assert.Len(t, hexKey, 64, "expected 64 hex chars for 256-bit key")
 }
 
+func TestApplyCryptoSymmetricKey_BytesProperty(t *testing.T) {
+	p := &Plugin{}
+	rs, err := p.applyCryptoSymmetricKey("test-bytes", map[string]interface{}{
+		"name":  "test-bytes",
+		"bytes": 32,
+	})
+	require.NoError(t, err)
+
+	hexKey := rs.Outputs["key"].(string)
+	assert.Len(t, hexKey, 64, "expected 64 hex chars for 32-byte key")
+
+	decoded, err := base64.StdEncoding.DecodeString(rs.Outputs["key_base64"].(string))
+	require.NoError(t, err)
+	assert.Len(t, decoded, 32, "expected 32 bytes")
+}
+
+func TestApplyCryptoSymmetricKey_BytesTakesPrecedenceOverBits(t *testing.T) {
+	p := &Plugin{}
+	rs, err := p.applyCryptoSymmetricKey("test-precedence", map[string]interface{}{
+		"name":  "test-precedence",
+		"bytes": 16,
+		"bits":  256,
+	})
+	require.NoError(t, err)
+
+	// bytes=16 should win over bits=256
+	hexKey := rs.Outputs["key"].(string)
+	assert.Len(t, hexKey, 32, "expected 32 hex chars for 16-byte key (bytes takes precedence)")
+
+	decoded, err := base64.StdEncoding.DecodeString(rs.Outputs["key_base64"].(string))
+	require.NoError(t, err)
+	assert.Len(t, decoded, 16, "expected 16 bytes")
+}
+
 func TestApplyCryptoKeys_UniquePerCall(t *testing.T) {
 	p := &Plugin{}
 

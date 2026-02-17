@@ -1,4 +1,13 @@
-# Native module for running PostgreSQL in Docker
+# Native module for running a shared PostgreSQL server in Docker.
+#
+# This module creates a single persistent PostgreSQL instance at the
+# datacenter level, shared across all environments. Individual databases
+# are created per-environment by the docker-postgres-database module.
+#
+# Because the volume and container live at the datacenter level, data
+# survives environment destroy/recreate cycles. Re-deploying an
+# environment only runs incremental migrations (seconds instead of
+# minutes).
 plugin: native
 type: docker
 
@@ -6,15 +15,7 @@ inputs:
   name:
     type: string
     required: true
-    description: Container name
-  version:
-    type: string
-    default: "16"
-    description: PostgreSQL version
-  database:
-    type: string
-    required: true
-    description: Database name to create
+    description: Container and volume name for the shared PostgreSQL server
   network:
     type: string
     required: true
@@ -22,7 +23,7 @@ inputs:
   port:
     type: number
     default: 5432
-    description: Host port to expose PostgreSQL on
+    description: Host port to expose PostgreSQL on (0 for dynamic)
 
 resources:
   volume:
@@ -34,21 +35,20 @@ resources:
     type: docker:container
     depends_on: [volume]
     properties:
-      image: "pgvector/pgvector:pg${inputs.version}"
+      image: "pgvector/pgvector:pg16"
       name: "${inputs.name}"
       network: "${inputs.network}"
       environment:
-        POSTGRES_DB: "${inputs.database}"
         POSTGRES_USER: "postgres"
         POSTGRES_PASSWORD: "localdevpassword"
       ports:
         - container: 5432
-          host: 0
+          host: "${inputs.port}"
       volumes:
         - name: "${inputs.name}-data"
           path: /var/lib/postgresql/data
       healthcheck:
-        command: ["pg_isready", "-U", "postgres", "-d", "${inputs.database}"]
+        command: ["pg_isready", "-U", "postgres"]
         interval: 2s
         timeout: 3s
         retries: 15
@@ -64,24 +64,9 @@ outputs:
   host_port:
     value: "${resources.container.ports[0].host}"
     description: Database port on host (for host-based access)
-  database:
-    value: "${inputs.database}"
-    description: Database name
-  username:
-    value: "postgres"
-    description: Database username
-  password:
-    value: "localdevpassword"
-    sensitive: true
-    description: Database password
-  url:
-    value: "postgresql://postgres:localdevpassword@${inputs.name}:5432/${inputs.database}"
-    sensitive: true
-    description: Full connection URL (Docker network)
-  host_url:
-    value: "postgresql://postgres:localdevpassword@localhost:${resources.container.ports[0].host}/${inputs.database}"
-    sensitive: true
-    description: Full connection URL (host access)
+  container_name:
+    value: "${inputs.name}"
+    description: Container name (for docker exec commands)
   container_id:
     value: "${resources.container.id}"
     description: Docker container ID

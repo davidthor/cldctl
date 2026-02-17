@@ -1,7 +1,9 @@
 package native
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -56,6 +59,7 @@ type ContainerOptions struct {
 	ExtraHosts       []string          // Additional /etc/hosts entries (e.g., "host.docker.internal:host-gateway")
 	ResolveLocalhost bool              // Replace "localhost" in env var values with "host.docker.internal"
 	Wait             bool              // Wait for container to exit before returning (for one-shot tasks)
+	OnProgress       func(string)      // Optional callback for sub-status updates (e.g., "pulling image...", "health check 5/30")
 }
 
 // PortMapping defines a port mapping.
@@ -98,6 +102,102 @@ func NewDockerClient() (*DockerClient, error) {
 	return &DockerClient{client: cli}, nil
 }
 
+// reportProgress calls the OnProgress callback if set.
+func reportProgress(cb func(string), msg string) {
+	if cb != nil {
+		cb(msg)
+	}
+}
+
+// dockerPullProgress represents a single line from the Docker image pull JSON stream.
+type dockerPullProgress struct {
+	Status         string `json:"status"`
+	ID             string `json:"id"`
+	ProgressDetail struct {
+		Current int64 `json:"current"`
+		Total   int64 `json:"total"`
+	} `json:"progressDetail"`
+}
+
+// pullImageWithProgress pulls a Docker image and reports download progress via the callback.
+func (d *DockerClient) pullImageWithProgress(ctx context.Context, imageName string, onProgress func(string)) error {
+	reader, err := d.client.ImagePull(ctx, imageName, image.PullOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to pull image %s: %w", imageName, err)
+	}
+	defer reader.Close()
+
+	if onProgress == nil {
+		_, _ = io.Copy(io.Discard, reader)
+		return nil
+	}
+
+	// Parse the Docker JSON progress stream to report layer-level progress.
+	// Each line is a JSON object with status, id, and progressDetail.
+	layerTotal := make(map[string]int64)   // layer ID -> total bytes
+	layerDone := make(map[string]int64)    // layer ID -> downloaded bytes
+	layerComplete := make(map[string]bool) // layer ID -> fully downloaded
+
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		var p dockerPullProgress
+		if err := json.Unmarshal(scanner.Bytes(), &p); err != nil {
+			continue
+		}
+
+		if p.ID == "" {
+			continue
+		}
+
+		switch p.Status {
+		case "Downloading":
+			if p.ProgressDetail.Total > 0 {
+				layerTotal[p.ID] = p.ProgressDetail.Total
+				layerDone[p.ID] = p.ProgressDetail.Current
+			}
+		case "Download complete", "Pull complete", "Already exists":
+			layerComplete[p.ID] = true
+			if t, ok := layerTotal[p.ID]; ok {
+				layerDone[p.ID] = t
+			}
+		case "Pulling fs layer", "Waiting":
+			if _, exists := layerTotal[p.ID]; !exists {
+				layerTotal[p.ID] = 0
+			}
+		}
+
+		// Compute aggregate progress
+		totalLayers := len(layerTotal)
+		if totalLayers == 0 {
+			continue
+		}
+
+		completedLayers := 0
+		for id := range layerTotal {
+			if layerComplete[id] {
+				completedLayers++
+			}
+		}
+
+		var totalBytes, doneBytes int64
+		for id, t := range layerTotal {
+			totalBytes += t
+			doneBytes += layerDone[id]
+		}
+
+		if totalBytes > 0 {
+			pct := int(float64(doneBytes) / float64(totalBytes) * 100)
+			onProgress(fmt.Sprintf("pulling image… %d%% (%d/%d layers)", pct, completedLayers, totalLayers))
+		} else {
+			onProgress(fmt.Sprintf("pulling image… (%d/%d layers)", completedLayers, totalLayers))
+		}
+	}
+
+	return nil
+}
+
 // RunContainer creates and starts a container.
 func (d *DockerClient) RunContainer(ctx context.Context, opts ContainerOptions) (string, error) {
 	// Check if image exists locally first
@@ -109,12 +209,10 @@ func (d *DockerClient) RunContainer(ctx context.Context, opts ContainerOptions) 
 
 	// Only pull if image doesn't exist locally
 	if !imageExists {
-		reader, err := d.client.ImagePull(ctx, opts.Image, image.PullOptions{})
-		if err != nil {
-			return "", fmt.Errorf("failed to pull image %s: %w", opts.Image, err)
+		reportProgress(opts.OnProgress, "pulling image…")
+		if err := d.pullImageWithProgress(ctx, opts.Image, opts.OnProgress); err != nil {
+			return "", err
 		}
-		_, _ = io.Copy(io.Discard, reader)
-		reader.Close()
 	}
 
 	// Build environment slice, optionally replacing standalone localhost with host.docker.internal
@@ -161,6 +259,13 @@ func (d *DockerClient) RunContainer(ctx context.Context, opts ContainerOptions) 
 		Cmd:          opts.Command,
 		Entrypoint:   opts.Entrypoint,
 		ExposedPorts: exposedPorts,
+	}
+
+	// For wait-mode containers (tasks), enable attach so we can stream
+	// stdout/stderr lines as progress regardless of the log driver.
+	if opts.Wait {
+		config.AttachStdout = true
+		config.AttachStderr = true
 	}
 
 	// Apply healthcheck to container config if provided
@@ -228,13 +333,35 @@ func (d *DockerClient) RunContainer(ctx context.Context, opts ContainerOptions) 
 	}
 
 	// Create container
+	reportProgress(opts.OnProgress, "starting container…")
 	resp, err := d.client.ContainerCreate(ctx, config, hostConfig, networkConfig, nil, opts.Name)
 	if err != nil {
 		return "", fmt.Errorf("failed to create container: %w", err)
 	}
 
+	// For wait-mode containers (tasks), attach to stdout/stderr BEFORE starting
+	// so we capture all output from the very beginning. The attach stream provides
+	// direct access to the container's stdio regardless of the log driver.
+	var attachResp dockertypes.HijackedResponse
+	var attachOk bool
+	if opts.Wait {
+		ar, err := d.client.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+			Stream: true,
+			Stdout: true,
+			Stderr: true,
+		})
+		if err == nil {
+			attachResp = ar
+			attachOk = true
+			go streamAttachOutput(ar.Reader, opts.OnProgress)
+		}
+	}
+
 	// Start container
 	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		if attachOk {
+			attachResp.Close()
+		}
 		_ = d.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 		return "", fmt.Errorf("failed to start container: %w", err)
 	}
@@ -243,7 +370,10 @@ func (d *DockerClient) RunContainer(ctx context.Context, opts ContainerOptions) 
 	// before returning. This ensures downstream resources (e.g. databaseUser)
 	// can safely connect to the service inside the container.
 	if opts.Healthcheck != nil && len(opts.Healthcheck.Command) > 0 {
-		if err := d.waitForHealthy(ctx, resp.ID, opts.Healthcheck); err != nil {
+		if err := d.waitForHealthy(ctx, resp.ID, opts.Healthcheck, opts.OnProgress); err != nil {
+			if attachOk {
+				attachResp.Close()
+			}
 			_ = d.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 			return "", fmt.Errorf("container failed health check: %w", err)
 		}
@@ -252,27 +382,25 @@ func (d *DockerClient) RunContainer(ctx context.Context, opts ContainerOptions) 
 	// If Wait is true, block until the container exits (for one-shot tasks like migrations)
 	if opts.Wait {
 		statusCh, errCh := d.client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+		var waitErr error
 		select {
 		case err := <-errCh:
 			if err != nil {
-				return resp.ID, fmt.Errorf("error waiting for container: %w", err)
+				waitErr = fmt.Errorf("error waiting for container: %w", err)
 			}
 		case status := <-statusCh:
 			if status.StatusCode != 0 {
-				// Get logs for error message
-				logs, _ := d.client.ContainerLogs(ctx, resp.ID, container.LogsOptions{
-					ShowStdout: true,
-					ShowStderr: true,
-				})
-				if logs != nil {
-					output, _ := io.ReadAll(logs)
-					logs.Close()
-					return resp.ID, fmt.Errorf("container exited with code %d: %s", status.StatusCode, string(output))
-				}
-				return resp.ID, fmt.Errorf("container exited with code %d", status.StatusCode)
+				waitErr = fmt.Errorf("container exited with code %d", status.StatusCode)
 			}
 		case <-ctx.Done():
-			return resp.ID, ctx.Err()
+			waitErr = ctx.Err()
+		}
+
+		if attachOk {
+			attachResp.Close()
+		}
+		if waitErr != nil {
+			return resp.ID, waitErr
 		}
 	}
 
@@ -282,8 +410,9 @@ func (d *DockerClient) RunContainer(ctx context.Context, opts ContainerOptions) 
 // waitForHealthy polls the container's health status until it reports "healthy",
 // using the healthcheck's interval and retries to determine the polling cadence
 // and timeout. If the container exits or the context is cancelled, it returns
-// an error immediately.
-func (d *DockerClient) waitForHealthy(ctx context.Context, containerID string, hc *Healthcheck) error {
+// an error immediately. The onProgress callback (may be nil) receives periodic
+// sub-status messages such as "health check 5/30".
+func (d *DockerClient) waitForHealthy(ctx context.Context, containerID string, hc *Healthcheck, onProgress func(string)) error {
 	interval := 2 * time.Second
 	if hc.Interval != "" {
 		if parsed, err := time.ParseDuration(hc.Interval); err == nil {
@@ -304,6 +433,8 @@ func (d *DockerClient) waitForHealthy(ctx context.Context, containerID string, h
 		}
 	}
 
+	reportProgress(onProgress, fmt.Sprintf("health check 0/%d", retries))
+
 	select {
 	case <-time.After(startDelay):
 	case <-ctx.Done():
@@ -311,6 +442,8 @@ func (d *DockerClient) waitForHealthy(ctx context.Context, containerID string, h
 	}
 
 	for i := 0; i < retries; i++ {
+		reportProgress(onProgress, fmt.Sprintf("health check %d/%d", i+1, retries))
+
 		info, err := d.client.ContainerInspect(ctx, containerID)
 		if err != nil {
 			return fmt.Errorf("failed to inspect container: %w", err)
@@ -318,6 +451,9 @@ func (d *DockerClient) waitForHealthy(ctx context.Context, containerID string, h
 
 		// If the container has stopped, there's no point waiting
 		if info.State != nil && !info.State.Running {
+			if logs := d.tailContainerLogs(ctx, containerID, "50"); logs != "" {
+				return fmt.Errorf("container exited while waiting for health check (exit code %d):\n%s", info.State.ExitCode, logs)
+			}
 			return fmt.Errorf("container exited while waiting for health check (exit code %d)", info.State.ExitCode)
 		}
 
@@ -327,16 +463,24 @@ func (d *DockerClient) waitForHealthy(ctx context.Context, containerID string, h
 			case "healthy":
 				return nil
 			case "unhealthy":
-				// Gather the last log entry for a useful error message
+				// Gather the last health check log entry
 				lastLog := ""
 				if len(info.State.Health.Log) > 0 {
 					last := info.State.Health.Log[len(info.State.Health.Log)-1]
 					lastLog = strings.TrimSpace(last.Output)
 				}
+
+				// Fetch container application logs for debugging context
+				containerLogs := d.tailContainerLogs(ctx, containerID, "50")
+
+				msg := "container reported unhealthy"
 				if lastLog != "" {
-					return fmt.Errorf("container reported unhealthy: %s", lastLog)
+					msg += ": " + lastLog
 				}
-				return fmt.Errorf("container reported unhealthy")
+				if containerLogs != "" {
+					msg += "\n\nContainer logs:\n" + containerLogs
+				}
+				return fmt.Errorf("%s", msg)
 			}
 			// "starting" — keep waiting
 		}
@@ -348,7 +492,113 @@ func (d *DockerClient) waitForHealthy(ctx context.Context, containerID string, h
 		}
 	}
 
-	return fmt.Errorf("timed out after %d health check attempts", retries)
+	// Build an informative error that includes both health-check output
+	// (the command Docker ran) and the container's application logs.
+	msg := fmt.Sprintf("timed out after %d health check attempts", retries)
+
+	// Try to surface the last health-check command output (e.g. "curl: not found")
+	info, inspectErr := d.client.ContainerInspect(ctx, containerID)
+	if inspectErr == nil && info.State != nil && info.State.Health != nil && len(info.State.Health.Log) > 0 {
+		last := info.State.Health.Log[len(info.State.Health.Log)-1]
+		if hcOutput := strings.TrimSpace(last.Output); hcOutput != "" {
+			msg += fmt.Sprintf("\n\nLast health check output (exit code %d):\n%s", last.ExitCode, hcOutput)
+		} else if last.ExitCode != 0 {
+			msg += fmt.Sprintf("\n\nLast health check exited with code %d (no output)", last.ExitCode)
+		}
+	}
+
+	if logs := d.tailContainerLogs(ctx, containerID, "50"); logs != "" {
+		msg += "\n\nContainer logs:\n" + logs
+	}
+
+	return fmt.Errorf("%s", msg)
+}
+
+// tailContainerLogs fetches the last N lines of a container's stdout/stderr.
+// It returns an empty string (and no error) if logs cannot be retrieved.
+func (d *DockerClient) tailContainerLogs(ctx context.Context, containerID string, lines string) string {
+	logs, err := d.client.ContainerLogs(ctx, containerID, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Tail:       lines,
+	})
+	if err != nil || logs == nil {
+		return ""
+	}
+	defer logs.Close()
+
+	output, err := io.ReadAll(logs)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+// streamAttachOutput reads lines from a Docker container attach stream and
+// reports the latest non-empty line via onProgress. The attach reader provides
+// direct access to the container's stdout/stderr regardless of the log driver,
+// so this works even when fluentd or other non-local log drivers are configured.
+//
+// The Docker multiplexed stream uses an 8-byte header per frame:
+//
+//	[stream_type(1)][0][0][0][payload_size(4 big-endian)]
+//
+// This function uses stdcopy-compatible header parsing to extract clean text.
+func streamAttachOutput(reader io.Reader, onProgress func(string)) {
+	if onProgress == nil || reader == nil {
+		return
+	}
+
+	header := make([]byte, 8)
+	for {
+		// Read the 8-byte Docker multiplex header
+		_, err := io.ReadFull(reader, header)
+		if err != nil {
+			return // stream closed (container exited) or error
+		}
+
+		// Payload size is big-endian uint32 in bytes 4-7
+		size := uint32(header[4])<<24 | uint32(header[5])<<16 | uint32(header[6])<<8 | uint32(header[7])
+		if size == 0 || size > 1<<20 {
+			continue // skip empty or suspiciously large frames
+		}
+
+		payload := make([]byte, size)
+		_, err = io.ReadFull(reader, payload)
+		if err != nil {
+			return
+		}
+
+		// Extract the last non-empty line from this frame
+		line := lastNonEmptyLine(string(payload))
+		if line != "" {
+			reportProgress(onProgress, line)
+		}
+	}
+}
+
+// lastNonEmptyLine returns the last non-empty, printable line from text.
+func lastNonEmptyLine(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+
+	// Take the last line
+	if idx := strings.LastIndex(text, "\n"); idx >= 0 {
+		text = strings.TrimSpace(text[idx+1:])
+	}
+
+	// Strip non-printable characters
+	var b strings.Builder
+	b.Grow(len(text))
+	for _, r := range text {
+		if r >= 32 && r != 127 {
+			b.WriteRune(r)
+		}
+	}
+
+	return b.String()
 }
 
 // InspectContainer returns information about a container.

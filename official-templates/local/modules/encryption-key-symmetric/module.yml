@@ -17,7 +17,7 @@ resources:
     type: crypto:symmetric_key
     properties:
       name: "${inputs.name}"
-      bits: "${coalesce(inputs.key_size, 32)}"
+      bytes: "${coalesce(inputs.key_size, 32)}"
 
 outputs:
   key:

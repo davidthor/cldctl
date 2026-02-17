@@ -45,10 +45,16 @@ type ResourceInfo struct {
 	EndTime      time.Time
 	Error        error
 	Message      string
+	// MessageTime records when Message was last updated. Used to detect
+	// stale log lines and show a cleaner status for long-silent tasks.
+	MessageTime time.Time
 	// InferredConfig stores detected configuration for debugging
 	InferredConfig map[string]string
 	// Logs stores captured output for debugging failures
 	Logs string
+	// lastPrintedMsg tracks the last sub-status emitted in non-dynamic mode
+	// to avoid printing duplicate lines.
+	lastPrintedMsg string
 }
 
 // ProgressTable displays deployment progress.
@@ -71,6 +77,11 @@ type ProgressTable struct {
 	// subsequent redraws can move the cursor back to overwrite them.
 	tableLines int
 
+	// termWidth is the detected terminal width (columns). Used to truncate
+	// status messages so lines don't wrap and break the dynamic table.
+	// Zero means unknown (no truncation applied).
+	termWidth int
+
 	// tickerStop signals the background refresh goroutine to stop.
 	tickerStop chan struct{}
 }
@@ -82,8 +93,15 @@ type ProgressTable struct {
 // output or non-interactive terminals break the in-place redraw.
 func NewProgressTable(w io.Writer) *ProgressTable {
 	dynamic := false
+	tw := 0
 	if f, ok := w.(*os.File); ok {
-		dynamic = term.IsTerminal(int(f.Fd()))
+		fd := int(f.Fd())
+		dynamic = term.IsTerminal(fd)
+		if dynamic {
+			if width, _, err := term.GetSize(fd); err == nil && width > 0 {
+				tw = width
+			}
+		}
 	}
 
 	// Disable dynamic rendering when debug output or CI would interfere.
@@ -99,6 +117,7 @@ func NewProgressTable(w io.Writer) *ProgressTable {
 		writer:    w,
 		startTime: time.Now(),
 		dynamic:   dynamic,
+		termWidth: tw,
 	}
 }
 
@@ -169,7 +188,10 @@ func (p *ProgressTable) UpdateStatus(id string, status ResourceStatus, message s
 	}
 
 	res.Status = status
-	res.Message = message
+	if message != res.Message {
+		res.Message = message
+		res.MessageTime = time.Now()
+	}
 
 	if status == StatusInProgress && res.StartTime.IsZero() {
 		res.StartTime = time.Now()
@@ -314,20 +336,46 @@ func (p *ProgressTable) PrintUpdate(id string) {
 	var statusStr string
 	switch res.Status {
 	case StatusInProgress:
-		statusStr = fmt.Sprintf("%s Starting %s/%s...", p.statusIcon(res.Status), res.Type, res.Name)
+		if res.Message != "" {
+			// Sub-status update — deduplicate to avoid flooding CI logs.
+			// For health checks, only print every 10th attempt after the first.
+			msg := res.Message
+			if msg == res.lastPrintedMsg {
+				return
+			}
+			// Throttle health check attempts in CI: only print 1st, every 10th, and last
+			if strings.HasPrefix(msg, "health check ") && res.lastPrintedMsg != "" && strings.HasPrefix(res.lastPrintedMsg, "health check ") {
+				// Extract attempt number to decide whether to print
+				var attempt, total int
+				if _, err := fmt.Sscanf(msg, "health check %d/%d", &attempt, &total); err == nil {
+					if attempt != 1 && attempt != total && attempt%10 != 0 {
+						return
+					}
+				}
+			}
+			res.lastPrintedMsg = msg
+			statusStr = fmt.Sprintf("  %s %s/%s %s", p.statusIcon(res.Status), res.Type, res.Name, msg)
+		} else {
+			if res.lastPrintedMsg == "" {
+				res.lastPrintedMsg = "_started"
+				statusStr = fmt.Sprintf("  %s Starting %s/%s...", p.statusIcon(res.Status), res.Type, res.Name)
+			} else {
+				return // Already printed the starting message
+			}
+		}
 	case StatusCompleted:
 		duration := ""
 		if !res.EndTime.IsZero() && !res.StartTime.IsZero() {
 			duration = fmt.Sprintf(" (%s)", res.EndTime.Sub(res.StartTime).Round(time.Millisecond))
 		}
-		statusStr = fmt.Sprintf("%s %s/%s completed%s", p.statusIcon(res.Status), res.Type, res.Name, duration)
+		statusStr = fmt.Sprintf("  %s %s/%s completed%s", p.statusIcon(res.Status), res.Type, res.Name, duration)
 	case StatusFailed:
-		statusStr = fmt.Sprintf("%s %s/%s failed", p.statusIcon(res.Status), res.Type, res.Name)
+		statusStr = fmt.Sprintf("  %s %s/%s failed", p.statusIcon(res.Status), res.Type, res.Name)
 		if res.Error != nil {
 			statusStr += fmt.Sprintf(": %v", res.Error)
 		}
 	case StatusSkipped:
-		statusStr = fmt.Sprintf("%s %s/%s skipped", p.statusIcon(res.Status), res.Type, res.Name)
+		statusStr = fmt.Sprintf("  %s %s/%s skipped", p.statusIcon(res.Status), res.Type, res.Name)
 	default:
 		return // Don't print pending/waiting updates
 	}
@@ -494,6 +542,14 @@ func (p *ProgressTable) renderTableLocked() {
 		}
 	}
 
+	// ---- compute available width for status description ----
+	// Layout: "  {icon}  {label}  {desc}{deps}"
+	// Icon is 1 visible char; spacing is 2+2+2 = 6 chars.
+	prefixWidth := 7 + maxLabelLen // 2 + 1(icon) + 2 + label + 2
+	if multiComp {
+		prefixWidth += maxCompLen + 2
+	}
+
 	// ---- render each resource row ----
 	for _, id := range p.order {
 		res := p.resources[id]
@@ -501,6 +557,16 @@ func (p *ProgressTable) renderTableLocked() {
 		label := res.Type + "/" + res.Name
 		desc := p.statusDescription(res)
 		deps := p.dependencyColumn(res)
+
+		// Truncate status description to prevent line wrapping
+		if p.termWidth > 0 && res.Status == StatusInProgress {
+			depsVisLen := visibleLen(deps)
+			maxDescVisible := p.termWidth - prefixWidth - depsVisLen
+			if maxDescVisible < 20 {
+				maxDescVisible = 20
+			}
+			desc = truncateAnsi(desc, maxDescVisible)
+		}
 
 		if multiComp {
 			compName := colorDim + fmt.Sprintf("%-*s", maxCompLen, res.Component) + colorReset
@@ -704,7 +770,17 @@ func (p *ProgressTable) statusDescription(res *ResourceInfo) string {
 				elapsed = fmt.Sprintf(" (%s)", d)
 			}
 		}
-		return colorYellow + verb + "..." + elapsed + colorReset
+		subStatus := ""
+		if res.Message != "" {
+			// If the log line hasn't changed for >10s, dim it to indicate
+			// the process is still running but producing no new output.
+			if !res.MessageTime.IsZero() && time.Since(res.MessageTime) > 10*time.Second {
+				subStatus = colorReset + colorDim + " " + res.Message + colorReset + colorYellow
+			} else {
+				subStatus = " " + res.Message
+			}
+		}
+		return colorYellow + verb + "..." + subStatus + elapsed + colorReset
 	case StatusCompleted:
 		duration := ""
 		if !res.EndTime.IsZero() && !res.StartTime.IsZero() {
@@ -746,6 +822,66 @@ func (p *ProgressTable) isCascadedFailure(res *ResourceInfo) bool {
 	return strings.HasPrefix(errMsg, "dependency ") ||
 		strings.HasPrefix(errMsg, "deployment stopped:") ||
 		errMsg == "cancelled"
+}
+
+// ---------------------------------------------------------------------------
+// ANSI-aware string helpers
+// ---------------------------------------------------------------------------
+
+// visibleLen returns the number of visible characters in a string that may
+// contain ANSI escape sequences. ANSI sequences are zero-width.
+func visibleLen(s string) int {
+	n := 0
+	inEsc := false
+	for _, r := range s {
+		if inEsc {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEsc = false
+			}
+			continue
+		}
+		if r == '\033' {
+			inEsc = true
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+// truncateAnsi truncates an ANSI-colored string to maxVisible visible
+// characters, appending "…" if truncated. It preserves ANSI sequences
+// (which are zero-width) and ensures a trailing reset code.
+func truncateAnsi(s string, maxVisible int) string {
+	if maxVisible <= 0 || visibleLen(s) <= maxVisible {
+		return s
+	}
+
+	var b strings.Builder
+	vis := 0
+	inEsc := false
+	for _, r := range s {
+		if inEsc {
+			b.WriteRune(r)
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEsc = false
+			}
+			continue
+		}
+		if r == '\033' {
+			inEsc = true
+			b.WriteRune(r)
+			continue
+		}
+		if vis >= maxVisible-1 { // reserve 1 char for "…"
+			b.WriteRune('…')
+			b.WriteString(colorReset)
+			return b.String()
+		}
+		b.WriteRune(r)
+		vis++
+	}
+	return b.String()
 }
 
 // ---------------------------------------------------------------------------

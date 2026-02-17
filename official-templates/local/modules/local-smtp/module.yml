@@ -31,11 +31,14 @@ resources:
 
 outputs:
   host:
-    value: "localhost"
-    description: SMTP host
+    value: "${inputs.name}"
+    description: SMTP host (container name for Docker network access)
   port:
+    value: "1025"
+    description: SMTP port (internal container port)
+  host_port:
     value: "${resources.container.ports[0].host}"
-    description: SMTP port
+    description: SMTP port on host (for host-based access)
   username:
     value: ""
     description: SMTP username (none required for MailHog)

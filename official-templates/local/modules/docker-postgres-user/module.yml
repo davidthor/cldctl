@@ -31,7 +31,7 @@ inputs:
     description: Username for the new database role
   admin_user:
     type: string
-    default: "app"
+    default: "postgres"
     description: Admin user on the PostgreSQL container (used to run CREATE ROLE)
   host:
     type: string
@@ -65,11 +65,15 @@ resources:
         - >-
           DO $$ BEGIN
             PERFORM pg_advisory_xact_lock(hashtext('cldctl_create_role'));
-            BEGIN
-              CREATE ROLE "${inputs.username}" LOGIN PASSWORD 'localdev_${inputs.username}' SUPERUSER;
-            EXCEPTION WHEN duplicate_object THEN
-              ALTER ROLE "${inputs.username}" WITH PASSWORD 'localdev_${inputs.username}' SUPERUSER;
-            END;
+            IF '${inputs.username}' = '${inputs.admin_user}' THEN
+              RAISE NOTICE 'consumer name matches admin user "%", skipping role creation', '${inputs.admin_user}';
+            ELSE
+              BEGIN
+                CREATE ROLE "${inputs.username}" LOGIN PASSWORD 'localdev_${inputs.username}' SUPERUSER;
+              EXCEPTION WHEN duplicate_object THEN
+                ALTER ROLE "${inputs.username}" WITH PASSWORD 'localdev_${inputs.username}' SUPERUSER;
+              END;
+            END IF;
             EXECUTE format('GRANT ALL PRIVILEGES ON DATABASE %I TO %I', current_database(), '${inputs.username}');
             EXECUTE format('GRANT ALL ON SCHEMA public TO %I', '${inputs.username}');
           END $$;

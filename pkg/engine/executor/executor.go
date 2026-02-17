@@ -719,8 +719,23 @@ func (e *Executor) executeApply(ctx context.Context, change *planner.ResourceCha
 
 	e.stateMu.Unlock()
 
+	// Build a sub-status progress callback that forwards messages from the
+	// IaC plugin back to the CLI progress table as intermediate "running" events.
+	var hookOnProgress func(string)
+	if e.options.OnProgress != nil && change.Node != nil {
+		hookOnProgress = func(msg string) {
+			e.options.OnProgress(ProgressEvent{
+				NodeID:   change.Node.ID,
+				NodeName: change.Node.Name,
+				NodeType: string(change.Node.Type),
+				Status:   "running",
+				Message:  msg,
+			})
+		}
+	}
+
 	// Find the matching hook from datacenter and execute all its modules
-	hookResult, err := e.executeHookModules(ctx, change.Node, envState.Name, compState, logBuf)
+	hookResult, err := e.executeHookModules(ctx, change.Node, envState.Name, compState, logBuf, hookOnProgress)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to execute hook: %w", err)
 		result.Success = false
@@ -783,7 +798,8 @@ type hookExecutionResult struct {
 // executeHookModules finds the matching hook, executes ALL its modules (not just the first),
 // allows cross-module references in inputs, evaluates hook outputs including nested objects,
 // and auto-populates read/write fallback outputs for database hooks.
-func (e *Executor) executeHookModules(ctx context.Context, node *graph.Node, envName string, compState *types.ComponentState, logBuf *bytes.Buffer) (*hookExecutionResult, error) {
+// onProgress (may be nil) forwards sub-status messages from plugins to the caller.
+func (e *Executor) executeHookModules(ctx context.Context, node *graph.Node, envName string, compState *types.ComponentState, logBuf *bytes.Buffer, onProgress func(string)) (*hookExecutionResult, error) {
 	dc := e.options.Datacenter
 	if dc == nil {
 		return nil, fmt.Errorf("no datacenter configuration provided")
@@ -882,6 +898,7 @@ func (e *Executor) executeHookModules(ctx context.Context, node *graph.Node, env
 			Environment:  map[string]string{},
 			Stdout:       logBuf,
 			Stderr:       logBuf,
+			OnProgress:   onProgress,
 		}
 
 		applyResult, err := plugin.Apply(ctx, runOpts)
@@ -2348,6 +2365,25 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 
 	exprPattern := regexp.MustCompile(`\$\{\{\s*([^}]+)\s*\}\}`)
 
+	// applyPipeFuncs processes pipe functions (e.g., "| default 'fallback'")
+	// on a resolved string value. Supported functions: default.
+	applyPipeFuncs := func(value string, pipeFuncs []string) string {
+		for _, pipeStr := range pipeFuncs {
+			fields := strings.Fields(strings.TrimSpace(pipeStr))
+			if len(fields) == 0 {
+				continue
+			}
+			funcName := fields[0]
+			switch funcName {
+			case "default":
+				if len(fields) >= 2 && value == "" {
+					value = strings.Trim(fields[1], `"'`)
+				}
+			}
+		}
+		return value
+	}
+
 	resolveStr := func(strVal string) string {
 		if !strings.Contains(strVal, "${{") {
 			return strVal
@@ -2355,7 +2391,17 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 		return exprPattern.ReplaceAllStringFunc(strVal, func(match string) string {
 			inner := match[3 : len(match)-2]
 			inner = strings.TrimSpace(inner)
-			parts := strings.Split(inner, ".")
+
+			// Split pipe functions from the reference path.
+			// E.g., "smtp.email.username | default 'unused'" → ref="smtp.email.username", pipes=["default 'unused'"]
+			pipeParts := strings.Split(inner, "|")
+			refStr := strings.TrimSpace(pipeParts[0])
+			var pipeFuncs []string
+			for _, p := range pipeParts[1:] {
+				pipeFuncs = append(pipeFuncs, strings.TrimSpace(p))
+			}
+
+			parts := strings.Split(refStr, ".")
 
 			if len(parts) < 2 {
 				return match // Malformed expression — preserve as-is
@@ -2367,10 +2413,13 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 			debugUnresolved := func(reason string) string {
 				if os.Getenv("CLDCTL_DEBUG") != "" {
 					fmt.Fprintf(os.Stderr, "[debug] unresolved expression %s in %s/%s: %s\n",
-						inner, node.Type, node.Name, reason)
+						refStr, node.Type, node.Name, reason)
 				}
 				return ""
 			}
+
+			// Resolve the reference, then apply any pipe functions.
+			resolved := func() string {
 
 			resourceType := parts[0]
 			switch resourceType {
@@ -2666,6 +2715,9 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 			default:
 				return debugUnresolved(fmt.Sprintf("unknown expression prefix %q", resourceType))
 			}
+
+			}() // end resolved func
+			return applyPipeFuncs(resolved, pipeFuncs)
 		})
 	}
 
@@ -2858,6 +2910,13 @@ func (e *Executor) lookupServicePortForTarget(componentName, targetName, targetT
 func (e *Executor) evaluateInputExpression(expr string, node *graph.Node, envName string, dcVars map[string]interface{}) interface{} {
 	expr = trimSpace(expr)
 
+	// Handle static HCL map literals (no interpolation needed)
+	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") && !strings.Contains(expr, "${") {
+		if parsed := parseHCLMapLiteral(expr); parsed != nil {
+			return parsed
+		}
+	}
+
 	// Handle string interpolation ${...}
 	if strings.Contains(expr, "${") {
 		result := expr
@@ -2890,6 +2949,17 @@ func (e *Executor) evaluateInputExpression(expr string, node *graph.Node, envNam
 				result = strings.ReplaceAll(result, "${variable."+k+"}", s)
 			}
 		}
+
+		// After interpolation, check if the result is an HCL-style map literal
+		// (e.g., inline map inputs from the datacenter stored as source text).
+		// Parse it back into a Go map so downstream consumers get the correct type.
+		trimmedResult := strings.TrimSpace(result)
+		if strings.HasPrefix(trimmedResult, "{") && strings.HasSuffix(trimmedResult, "}") {
+			if parsed := parseHCLMapLiteral(trimmedResult); parsed != nil {
+				return parsed
+			}
+		}
+
 		return result
 	}
 
@@ -3084,6 +3154,57 @@ func trimQuotes(s string) string {
 		return s[1 : len(s)-1]
 	}
 	return s
+}
+
+// parseHCLMapLiteral parses an HCL-style map literal string into a Go map.
+// Handles the format produced when inline map literals from datacenter HCL
+// are stored as source text and later interpolated:
+//
+//	{
+//	  key = "value"
+//	  key-with-hyphens = "other"
+//	}
+//
+// Returns nil if the string is not a valid HCL map literal.
+func parseHCLMapLiteral(s string) map[string]interface{} {
+	s = strings.TrimSpace(s)
+	if len(s) < 2 || s[0] != '{' || s[len(s)-1] != '}' {
+		return nil
+	}
+
+	inner := strings.TrimSpace(s[1 : len(s)-1])
+	if inner == "" {
+		return make(map[string]interface{})
+	}
+
+	result := make(map[string]interface{})
+	lines := strings.Split(inner, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		eqIdx := strings.Index(line, "=")
+		if eqIdx < 0 {
+			return nil
+		}
+
+		key := strings.TrimSpace(line[:eqIdx])
+		val := strings.TrimSpace(line[eqIdx+1:])
+
+		// Strip quotes from value
+		if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
+			val = val[1 : len(val)-1]
+		}
+
+		result[key] = val
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func trimSpace(s string) string {

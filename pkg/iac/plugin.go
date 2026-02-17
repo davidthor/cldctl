@@ -105,6 +105,10 @@ type RunOptions struct {
 	// Stdout/Stderr for command output
 	Stdout io.Writer
 	Stderr io.Writer
+
+	// OnProgress reports sub-status updates during long-running operations
+	// (e.g., "pulling image...", "health check 5/30"). May be nil.
+	OnProgress func(message string)
 }
 
 // VolumeMount defines a volume mount for module execution.

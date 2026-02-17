@@ -107,9 +107,24 @@ func (p *Plugin) applyCryptoECDSAKey(name string, props map[string]interface{}) 
 }
 
 // applyCryptoSymmetricKey generates a random symmetric key and returns hex + base64 outputs.
+// Accepts either "bytes" (key size in bytes) or "bits" (key size in bits). "bytes" takes
+// precedence when both are provided. Defaults to 256 bits (32 bytes).
 func (p *Plugin) applyCryptoSymmetricKey(name string, props map[string]interface{}) (*ResourceState, error) {
-	bits := 256
-	if v, ok := props["bits"]; ok {
+	byteLen := 32 // default: 256 bits = 32 bytes
+
+	if v, ok := props["bytes"]; ok {
+		switch b := v.(type) {
+		case int:
+			byteLen = b
+		case float64:
+			byteLen = int(b)
+		case string:
+			if n, err := strconv.Atoi(b); err == nil {
+				byteLen = n
+			}
+		}
+	} else if v, ok := props["bits"]; ok {
+		bits := 256
 		switch b := v.(type) {
 		case int:
 			bits = b
@@ -120,9 +135,9 @@ func (p *Plugin) applyCryptoSymmetricKey(name string, props map[string]interface
 				bits = n
 			}
 		}
+		byteLen = bits / 8
 	}
 
-	byteLen := bits / 8
 	if byteLen < 1 {
 		byteLen = 32
 	}

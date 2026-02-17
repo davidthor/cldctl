@@ -36,6 +36,7 @@ resources:
       # Determine command based on framework if not specified
       command: "${coalesce(inputs.command, framework_command(inputs.framework))}"
       environment: "${inputs.environment}"
+      resolve_to_localhost: true
       # Readiness check against the service port (skipped when port is 0).
       # Uses TCP instead of HTTP to avoid triggering on-demand page
       # compilation in dev servers (e.g. Next.js Turbopack). An HTTP

@@ -1,0 +1,78 @@
+# Native module for creating a PostgreSQL database inside a shared server.
+#
+# This module runs CREATE DATABASE inside an existing PostgreSQL container
+# using `docker exec`. It is idempotent: if the database already exists,
+# the command is a no-op.
+#
+# On destroy, this module does nothing — the database and its data are
+# intentionally preserved so that re-deploying the environment skips
+# expensive migrations. The data is only lost when the datacenter-level
+# PostgreSQL server is destroyed (i.e., `cldctl destroy datacenter`).
+plugin: native
+type: docker
+
+inputs:
+  container_name:
+    type: string
+    required: true
+    description: Name of the shared PostgreSQL Docker container
+  database:
+    type: string
+    required: true
+    description: Database name to create (should be unique per environment)
+  host:
+    type: string
+    required: true
+    description: Database host for output URLs (usually the container name)
+  port:
+    type: string
+    default: "5432"
+    description: Database port for output URLs (internal container port)
+  admin_user:
+    type: string
+    default: "postgres"
+    description: Admin user on the PostgreSQL container
+  admin_password:
+    type: string
+    default: "localdevpassword"
+    description: Admin user password
+
+resources:
+  create_db:
+    type: exec
+    properties:
+      command:
+        - "docker"
+        - "exec"
+        - "${inputs.container_name}"
+        - "sh"
+        - "-c"
+        - >-
+          psql -U ${inputs.admin_user} -tc
+          "SELECT 1 FROM pg_database WHERE datname='${inputs.database}'"
+          | grep -q 1
+          || psql -U ${inputs.admin_user} -c 'CREATE DATABASE "${inputs.database}"'
+    # No destroy command — database data is intentionally preserved across
+    # environment lifecycle to avoid re-running expensive migrations.
+
+outputs:
+  host:
+    value: "${inputs.host}"
+    description: Database host (container name for Docker network access)
+  port:
+    value: "${inputs.port}"
+    description: Database port (internal container port)
+  database:
+    value: "${inputs.database}"
+    description: Database name
+  username:
+    value: "${inputs.admin_user}"
+    description: Database username
+  password:
+    value: "${inputs.admin_password}"
+    sensitive: true
+    description: Database password
+  url:
+    value: "postgresql://${inputs.admin_user}:${inputs.admin_password}@${inputs.host}:${inputs.port}/${inputs.database}"
+    sensitive: true
+    description: Full connection URL (Docker network)

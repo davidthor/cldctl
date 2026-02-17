@@ -340,6 +340,12 @@ func (e *Engine) Deploy(ctx context.Context, opts DeployOptions) (*DeployResult,
 	for k, v := range dcState.Variables {
 		dcVars[k] = v
 	}
+	// Fill in defaults from the schema for any unset variables
+	for _, v := range dc.Variables() {
+		if _, ok := dcVars[v.Name()]; !ok && v.Default() != nil {
+			dcVars[v.Name()] = v.Default()
+		}
+	}
 
 	// Build component routes map for the executor
 	var componentRoutes map[string]map[string]executor.RouteOverride
@@ -1903,6 +1909,16 @@ func (e *Engine) ResolveDependencies(ctx context.Context, opts DeployOptions) ([
 		dcVars = make(map[string]interface{})
 		for k, v := range dcState.Variables {
 			dcVars[k] = v
+		}
+		// Fill in defaults from the schema for any unset variables
+		if dcState.Version != "" {
+			if dc, err := e.loadDatacenterConfig(dcState.Version); err == nil && dc != nil {
+				for _, v := range dc.Variables() {
+					if _, ok := dcVars[v.Name()]; !ok && v.Default() != nil {
+						dcVars[v.Name()] = v.Default()
+					}
+				}
+			}
 		}
 		dcModuleOutputs = make(map[string]map[string]interface{})
 		for modName, modState := range dcState.Modules {

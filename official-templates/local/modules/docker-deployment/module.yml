@@ -33,7 +33,7 @@ inputs:
     description: Docker network to join
   liveness_probe:
     type: map
-    description: Health check configuration (optional)
+    description: "Health check configuration (optional). Fields: path, port, initial_delay_seconds, period_seconds, timeout_seconds, failure_threshold"
   log_driver:
     type: string
     description: Docker logging driver (e.g., "fluentd", "json-file")
@@ -44,7 +44,12 @@ inputs:
 
 resources:
   # Container WITH health check (when liveness_probe is provided)
-  # Exposes the liveness_probe port to the host for service discovery/routing
+  # Exposes the liveness_probe port to the host for service discovery/routing.
+  # Health check timing is derived from the probe configuration:
+  #   interval     = period_seconds        (default: 2s)
+  #   timeout      = timeout_seconds       (default: 5s)
+  #   retries      = failure_threshold     (default: 18)
+  #   start_period = initial_delay_seconds (default: 2s)
   container_hc:
     type: docker:container
     when: "${inputs.liveness_probe != null}"
@@ -62,13 +67,12 @@ resources:
         cpu: "${inputs.cpu}"
         memory: "${inputs.memory}"
       healthcheck:
-        command: ["curl", "-f", "http://localhost:${inputs.liveness_probe.port}${inputs.liveness_probe.path}"]
-        interval: 10s
-        timeout: 10s
-        retries: 18
-        start_period: 30s
+        command: ["wget", "-q", "--spider", "http://127.0.0.1:${inputs.liveness_probe.port}${inputs.liveness_probe.path}"]
+        interval: "${inputs.liveness_probe.period_seconds != 0 ? inputs.liveness_probe.period_seconds : 2}s"
+        timeout: "${inputs.liveness_probe.timeout_seconds != 0 ? inputs.liveness_probe.timeout_seconds : 5}s"
+        retries: "${inputs.liveness_probe.failure_threshold != 0 ? inputs.liveness_probe.failure_threshold : 18}"
+        start_period: "${inputs.liveness_probe.initial_delay_seconds != 0 ? inputs.liveness_probe.initial_delay_seconds : 2}s"
       restart: unless-stopped
-      resolve_localhost: true
       log_driver: "${inputs.log_driver}"
       log_options: "${inputs.log_driver_options}"
 
@@ -87,7 +91,6 @@ resources:
         cpu: "${inputs.cpu}"
         memory: "${inputs.memory}"
       restart: unless-stopped
-      resolve_localhost: true
       log_driver: "${inputs.log_driver}"
       log_options: "${inputs.log_driver_options}"
 

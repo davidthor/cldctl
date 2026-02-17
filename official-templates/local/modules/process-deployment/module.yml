@@ -50,6 +50,7 @@ resources:
       # Use provided command or extract from Dockerfile
       command: "${coalesce(inputs.command, dockerfile_cmd(inputs.context, inputs.dockerfile))}"
       environment: "${inputs.environment}"
+      resolve_to_localhost: true
       runtime: "${inputs.runtime}"
       # Readiness check based on service port (skipped when port is 0)
       readiness:

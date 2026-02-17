@@ -33,6 +33,7 @@ resources:
       working_dir: "${inputs.context}"
       command: "${inputs.command}"
       environment: "${inputs.environment}"
+      resolve_to_localhost: true
 
 outputs:
   id:

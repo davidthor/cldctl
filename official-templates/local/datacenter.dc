@@ -15,6 +15,12 @@ variable "host" {
   default     = "localhost"
 }
 
+variable "postgres_name" {
+  description = "Container name for the shared PostgreSQL server"
+  type        = string
+  default     = "cldctl-postgres"
+}
+
 # Create a shared Docker network for all environments
 module "network" {
   plugin = "native"
@@ -24,29 +30,46 @@ module "network" {
   }
 }
 
+# Shared PostgreSQL server for all environments.
+# Each environment creates its own database inside this server.
+# Data persists across environment destroy/recreate cycles so
+# re-deploys only run incremental migrations (seconds vs minutes).
+module "postgres" {
+  plugin = "native"
+  build  = "./modules/docker-postgres-server"
+  inputs = {
+    name    = variable.postgres_name
+    network = variable.network_name
+    port    = 0  # Dynamic host port
+  }
+}
+
 environment {
   # Database hook - PostgreSQL
+  # Creates a database inside the shared datacenter-level PostgreSQL server.
+  # The database name is scoped to environment/component/name so different
+  # environments don't collide. Data persists when the environment is destroyed
+  # because the shared server (and its volume) lives at the datacenter level.
   database {
     when = element(split(":", node.inputs.type), 0) == "postgres"
     
-    module "postgres" {
+    module "postgres_db" {
       plugin = "native"
-      build  = "./modules/docker-postgres"
+      build  = "./modules/docker-postgres-database"
       inputs = {
-        name     = "${environment.name}-${node.component}-${node.name}"
-        version  = coalesce(try(element(split(":", node.inputs.type), 1), null), "16")
-        database = node.name
-        network  = variable.network_name
+        container_name = variable.postgres_name
+        database       = "${environment.name}-${node.component}-${node.name}"
+        host           = variable.postgres_name
       }
     }
     
     outputs = {
-      host     = module.postgres.host
-      port     = module.postgres.port
-      database = module.postgres.database
-      username = module.postgres.username
-      password = module.postgres.password
-      url      = module.postgres.url
+      host     = module.postgres_db.host
+      port     = module.postgres_db.port
+      database = module.postgres_db.database
+      username = module.postgres_db.username
+      password = module.postgres_db.password
+      url      = module.postgres_db.url
     }
   }
   
@@ -98,6 +121,7 @@ environment {
   }
   
   # Task hook - run one-time containers (e.g., database migrations with Docker image)
+  # Logs are forwarded to the OTEL collector via fluentd so `cldctl logs` works.
   task {
     when = node.inputs.image != null
     
@@ -110,6 +134,12 @@ environment {
         command     = node.inputs.command
         network     = variable.network_name
         environment = node.inputs.environment
+        log_driver  = "fluentd"
+        log_driver_options = {
+          fluentd-address = "localhost:24224"
+          fluentd-async   = "true"
+          tag             = "${environment.name}.${node.component}.${node.name}"
+        }
       }
     }
     
@@ -249,6 +279,7 @@ environment {
   # Covers both built images (${{ builds.*.image }}) and pre-built images (image: nginx).
   # The executor resolves ${{ builds.*.image }} expressions before hook matching,
   # so node.inputs.image is populated in either case.
+  # Logs are forwarded to the OTEL collector via fluentd so `cldctl logs` works.
   deployment {
     when = node.inputs.image != null
     
@@ -265,6 +296,12 @@ environment {
         memory         = node.inputs.memory
         network        = variable.network_name
         liveness_probe = node.inputs.liveness_probe
+        log_driver     = "fluentd"
+        log_driver_options = {
+          fluentd-address = "localhost:24224"
+          fluentd-async   = "true"
+          tag             = "${environment.name}.${node.component}.${node.name}"
+        }
       }
     }
     
@@ -411,7 +448,7 @@ environment {
 
   
   # Database user hook - grant per-consumer credentials for PostgreSQL databases.
-  # Creates a dedicated role on the existing postgres container for each consumer
+  # Creates a dedicated role on the shared postgres server for each consumer
   # (deployment, function, cronjob) that references the database. Redis uses
   # shared AUTH and doesn't support per-user credentials, so this hook only
   # matches postgres. Non-matching databases fall back to pass-through
@@ -423,10 +460,10 @@ environment {
       plugin = "native"
       build  = "./modules/docker-postgres-user"
       inputs = {
-        # The parent postgres container follows the naming convention from
-        # the database hook above: ${environment}-${component}-${dbName}
-        container_name = "${environment.name}-${node.component}-${node.inputs.database}"
-        database       = node.inputs.database
+        # Shared datacenter-level PostgreSQL container
+        container_name = variable.postgres_name
+        # Database name is scoped per environment (matches the database hook)
+        database       = "${environment.name}-${node.component}-${node.inputs.database}"
         username       = node.inputs.consumer
         # host and port are injected by the executor from the parent database
         # node's outputs, so the databaseUser URL uses the actual allocated port

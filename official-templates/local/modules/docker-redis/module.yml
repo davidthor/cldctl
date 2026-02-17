@@ -49,14 +49,20 @@ resources:
 
 outputs:
   host:
-    value: "localhost"
-    description: Redis host
+    value: "${inputs.name}"
+    description: Redis host (container name for Docker network access)
   port:
+    value: "6379"
+    description: Redis port (internal container port)
+  host_port:
     value: "${resources.container.ports[0].host}"
-    description: Redis port on host (dynamically allocated)
+    description: Redis port on host (for host-based access)
   url:
+    value: "redis://${inputs.name}:6379"
+    description: Full connection URL (Docker network)
+  host_url:
     value: "redis://localhost:${resources.container.ports[0].host}"
-    description: Full connection URL
+    description: Full connection URL (host access)
   container_id:
     value: "${resources.container.id}"
     description: Docker container ID

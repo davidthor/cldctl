@@ -22,6 +22,13 @@ inputs:
     type: map
     default: {}
     description: Environment variables
+  log_driver:
+    type: string
+    description: Docker logging driver (e.g., "fluentd", "json-file")
+  log_driver_options:
+    type: map
+    default: {}
+    description: Options for the Docker logging driver
 
 resources:
   container:
@@ -38,8 +45,8 @@ resources:
       auto_remove: false
       # Wait for container to complete
       wait: true
-      # Map localhost to Docker host so containers can reach host-bound services
-      resolve_localhost: true
+      log_driver: "${inputs.log_driver}"
+      log_options: "${inputs.log_driver_options}"
 
 outputs:
   container_id:
