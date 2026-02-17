@@ -166,7 +166,7 @@ and the dependency edges between them.
 Examples:
   # Inspect a local component
   cldctl inspect component ./my-app
-  cldctl inspect component -f cloud.component.yml
+  cldctl inspect component -f cld.yml
 
   # Inspect an OCI component image
   cldctl inspect component ghcr.io/myorg/app:v1
@@ -227,7 +227,7 @@ Examples:
 	}
 
 	cmd.Flags().BoolVar(&expand, "expand", false, "Expand dependency components to show their nodes")
-	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to cloud.component.yml if not in default location")
+	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to cld.yml if not in default location")
 
 	return cmd
 }

@@ -5,12 +5,12 @@ description: "Developer-focused application bundles in cldctl"
 
 # Components
 
-Components are developer-focused application bundles defined in an `cloud.component.yml` file. They describe what your application needs without specifying how infrastructure should be provisioned.
+Components are developer-focused application bundles defined in an `cld.yml` file. They describe what your application needs without specifying how infrastructure should be provisioned.
 
 ## File Structure
 
 ```yaml
-# cloud.component.yml
+# cld.yml
 # Component name is determined by the OCI tag at build time
 # README.md (if present) is bundled into the artifact for registry documentation
 
@@ -107,7 +107,7 @@ deployments:
 ## Complete Example
 
 ```yaml
-# my-app/cloud.component.yml
+# my-app/cld.yml
 
 variables:
   log_level:

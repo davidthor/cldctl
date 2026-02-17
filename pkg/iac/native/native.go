@@ -531,15 +531,15 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 				// Existing container matches config, reuse it
 				info, err := p.docker.InspectContainer(ctx, existingID)
 				if err == nil {
-					return &ResourceState{
-						Type:       "docker:container",
-						ID:         existingID,
-						Properties: props,
-						Outputs: map[string]interface{}{
-							"container_id": existingID,
-							"ports":        buildPortsArray(info.Ports),
-						},
-					}, nil
+				return &ResourceState{
+					Type:       "docker:container",
+					ID:         existingID,
+					Properties: props,
+					Outputs: map[string]interface{}{
+						"container_id": existingID,
+						"ports":        buildPortsArray(opts.Ports, info.Ports),
+					},
+				}, nil
 				}
 			}
 			// Config changed or container not running, remove it
@@ -566,27 +566,31 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 		Properties: props,
 		Outputs: map[string]interface{}{
 			"container_id": containerID,
-			"ports":        buildPortsArray(info.Ports),
+			"ports":        buildPortsArray(opts.Ports, info.Ports),
 			"environment":  opts.Environment, // Include environment for dependent resources
 			"name":         containerName,
 		},
 	}, nil
 }
 
-// buildPortsArray converts Docker inspect ports (map like {"80/tcp": 55123}) into an array
-// format [{"container": 80, "host": 55123}] that expressions like ${resources.proxy.ports[0].host}
-// can navigate.
-func buildPortsArray(inspectPorts map[string]int) []interface{} {
+// buildPortsArray converts Docker inspect ports into an ordered array matching the
+// original port declarations. This is critical because module outputs reference ports
+// by array index (e.g., ${resources.container.ports[0].host}), so the order must be
+// deterministic and match the YAML declaration order.
+//
+// declaredPorts provides the declaration order; inspectPorts provides the actual
+// host port assignments from Docker.
+func buildPortsArray(declaredPorts []PortMapping, inspectPorts map[string]int) []interface{} {
 	var result []interface{}
-	for portProto, hostPort := range inspectPorts {
-		// Parse container port from "80/tcp" format
-		containerPort := 0
-		parts := strings.SplitN(portProto, "/", 2)
-		if len(parts) > 0 {
-			_, _ = fmt.Sscanf(parts[0], "%d", &containerPort)
+	for _, pm := range declaredPorts {
+		protocol := pm.Protocol
+		if protocol == "" {
+			protocol = "tcp"
 		}
+		key := fmt.Sprintf("%d/%s", pm.ContainerPort, protocol)
+		hostPort := inspectPorts[key]
 		result = append(result, map[string]interface{}{
-			"container": containerPort,
+			"container": pm.ContainerPort,
 			"host":      hostPort,
 		})
 	}

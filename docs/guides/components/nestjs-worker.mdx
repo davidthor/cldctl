@@ -195,7 +195,7 @@ deployments:
 
 ```
 nestjs-worker/
-├── cloud.component.yml
+├── cld.yml
 ├── Dockerfile
 ├── src/
 │   ├── api/
@@ -258,7 +258,7 @@ For cost-effective worker fleets, you can use the `runtime` property instead of 
 The datacenter provisions VMs (EC2, Droplets, etc.) and bootstraps the runtime environment:
 
 ```yaml
-# cloud.component.yml (dev base - runs locally)
+# cld.yml (dev base - runs locally)
 databases:
   queue:
     type: redis:^7
@@ -272,8 +272,8 @@ deployments:
 ```
 
 ```yaml
-# cloud.component.prod.yml (production - runs on VMs)
-extends: cloud.component.yml
+# cld.prod.yml (production - runs on VMs)
+extends: ./cld.yml
 
 deployments:
   worker:

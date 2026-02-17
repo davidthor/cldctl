@@ -48,7 +48,7 @@ This example demonstrates:
 Encapsulates database infrastructure with a connection pooling proxy:
 
 ```yaml
-# database/cloud.component.yml
+# database/cld.yml
 name: shared-database
 
 variables:
@@ -88,7 +88,7 @@ services:
 Public-facing app that depends on the database:
 
 ```yaml
-# app/cloud.component.yml
+# app/cld.yml
 name: main-app
 
 dependencies:
@@ -119,7 +119,7 @@ routes:
 Internal app sharing the same database:
 
 ```yaml
-# admin/cloud.component.yml
+# admin/cld.yml
 name: admin-panel
 
 dependencies:

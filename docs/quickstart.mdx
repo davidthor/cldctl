@@ -35,9 +35,9 @@ mkdir my-app && cd my-app
 
 ### 2. Create the Component File
 
-Create an `cloud.component.yml` file that describes your application:
+Create an `cld.yml` file that describes your application:
 
-```yaml cloud.component.yml
+```yaml cld.yml
 # Define Docker image builds
 builds:
   api:
@@ -127,7 +127,7 @@ cldctl up
 ```
 
 This will:
-1. Parse your `cloud.component.yml`
+1. Parse your `cld.yml`
 2. Create a local development environment
 3. Build and deploy your application with all dependencies
 4. Watch for changes and auto-reload

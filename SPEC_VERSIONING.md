@@ -682,13 +682,13 @@ Provide tooling to upgrade configurations:
 
 ```bash
 # Check current version and suggest upgrades
-cldctl component check-version ./cloud.component.yml
+cldctl component check-version ./cld.yml
 
 # Upgrade to latest version
-cldctl component upgrade ./cloud.component.yml --to v2
+cldctl component upgrade ./cld.yml --to v2
 
 # Preview upgrade without modifying file
-cldctl component upgrade ./cloud.component.yml --to v2 --dry-run
+cldctl component upgrade ./cld.yml --to v2 --dry-run
 ```
 
 ### Upgrade Implementation

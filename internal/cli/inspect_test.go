@@ -309,7 +309,7 @@ func TestExtractComponentName(t *testing.T) {
 			ref:  "./my-component",
 			resolved: resolver.ResolvedComponent{
 				Type: resolver.ReferenceTypeLocal,
-				Path: "/Users/test/my-component/cloud.component.yml",
+				Path: "/Users/test/my-component/cld.yml",
 			},
 			want: "my-component",
 		},

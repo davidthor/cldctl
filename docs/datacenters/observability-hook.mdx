@@ -113,7 +113,7 @@ The engine merges attributes from three sources (later values override earlier o
 
 1. **Auto-generated**: `service.namespace` (component name), `deployment.environment` (environment name), `service.type` (resource type)
 2. **Datacenter hook** `attributes` output
-3. **Component** `attributes` (from the `observability` block in `cloud.component.yml`)
+3. **Component** `attributes` (from the `observability` block in `cld.yml`)
 
 The merged result is available to component authors via `${{ observability.attributes }}`.
 

@@ -41,7 +41,7 @@ flowchart TD
 Consider an application with third-party service dependencies:
 
 ```yaml
-# my-app/cloud.component.yml
+# my-app/cld.yml
 dependencies:
   clerk: ghcr.io/myorg/clerk:v1
   stripe: ghcr.io/myorg/stripe:v1
@@ -71,7 +71,7 @@ routes:
 Each dependency is a lightweight pass-through component that centralizes configuration:
 
 ```yaml
-# clerk/cloud.component.yml
+# clerk/cld.yml
 variables:
   publishable_key:
     description: "Clerk publishable key"
@@ -225,7 +225,7 @@ cldctl deploy component ghcr.io/myorg/app:v1.0.0 -e preview-42 --auto-approve
 If all of a dependency's required variables have default values, no prompting or explicit `--var` flags are needed. The dependency deploys silently. This is common for configuration like feature flags or optional analytics:
 
 ```yaml
-# posthog/cloud.component.yml
+# posthog/cld.yml
 variables:
   key:
     description: "PostHog project API key"
@@ -240,7 +240,7 @@ variables:
 A common pattern for third-party SaaS dependencies is the **pass-through component** -- a component with no deployments, databases, or infrastructure. It exists solely to centralize configuration and expose it as outputs:
 
 ```yaml
-# anthropic/cloud.component.yml
+# anthropic/cld.yml
 variables:
   api_key:
     description: "Anthropic API key"
@@ -280,16 +280,16 @@ This prevents accidentally breaking a running environment by removing shared inf
 Dependencies can themselves have dependencies. cldctl resolves the full transitive closure:
 
 ```yaml
-# app/cloud.component.yml
+# app/cld.yml
 dependencies:
   api: ghcr.io/myorg/api:v1
 
-# api/cloud.component.yml
+# api/cld.yml
 dependencies:
   shared-db: ghcr.io/myorg/shared-db:v1
   auth: ghcr.io/myorg/auth:v1
 
-# auth/cloud.component.yml
+# auth/cld.yml
 dependencies:
   clerk: ghcr.io/myorg/clerk:v1
 ```

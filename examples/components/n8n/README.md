@@ -152,7 +152,7 @@ After deployment:
 
 ## Upgrading
 
-To upgrade n8n, update the image tag in `cloud.component.yml`:
+To upgrade n8n, update the image tag in `cld.yml`:
 
 ```yaml
 deployments:

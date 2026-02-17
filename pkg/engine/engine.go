@@ -1757,11 +1757,11 @@ func evaluateModuleExpression(expr string, dcVars map[string]interface{}, module
 // findComponentFile looks for a component config file in the given directory.
 // Returns the path to the file if found, or empty string if not.
 func findComponentFile(dir string) string {
-	ymlFile := filepath.Join(dir, "cloud.component.yml")
+	ymlFile := filepath.Join(dir, "cld.yml")
 	if _, err := os.Stat(ymlFile); err == nil {
 		return ymlFile
 	}
-	yamlFile := filepath.Join(dir, "cloud.component.yaml")
+	yamlFile := filepath.Join(dir, "cld.yaml")
 	if _, err := os.Stat(yamlFile); err == nil {
 		return yamlFile
 	}
@@ -1770,7 +1770,7 @@ func findComponentFile(dir string) string {
 
 // loadComponentConfig resolves a component OCI reference to a local file path.
 // Resolution order: unified artifact registry (local cache) → remote OCI pull.
-// Returns the local path to the cloud.component.yml file.
+// Returns the local path to the cld.yml file.
 func (e *Engine) loadComponentConfig(ctx context.Context, ref string) (string, error) {
 	// Check the unified artifact registry first (like docker run).
 	reg, err := registry.NewRegistry()
@@ -1791,7 +1791,7 @@ func (e *Engine) loadComponentConfig(ctx context.Context, ref string) (string, e
 
 // loadComponentFromOCI pulls a component artifact from a remote OCI registry,
 // caches it locally, registers it in the unified artifact registry, and returns
-// the local path to the cloud.component.yml file.
+// the local path to the cld.yml file.
 func (e *Engine) loadComponentFromOCI(ctx context.Context, ref string) (string, error) {
 	compDir, err := registry.CachePathForRef(ref)
 	if err != nil {
@@ -1815,7 +1815,7 @@ func (e *Engine) loadComponentFromOCI(ctx context.Context, ref string) (string, 
 	compFile := findComponentFile(compDir)
 	if compFile == "" {
 		os.RemoveAll(compDir)
-		return "", fmt.Errorf("no cloud.component.yml or cloud.component.yaml found in pulled artifact: %s", ref)
+		return "", fmt.Errorf("no cld.yml or cld.yaml found in pulled artifact: %s", ref)
 	}
 
 	// Calculate size
@@ -1868,7 +1868,7 @@ type DependencyInfo struct {
 	// OCIRef is the OCI reference for the dependency component.
 	OCIRef string
 
-	// LocalPath is the resolved local file path to the cloud.component.yml.
+	// LocalPath is the resolved local file path to the cld.yml.
 	LocalPath string
 
 	// Component is the loaded component schema.

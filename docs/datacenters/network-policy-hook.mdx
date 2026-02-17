@@ -66,7 +66,7 @@ The networkPolicy hook has **no required outputs**. It is a fire-and-forget reso
 This component automatically generates a `networkPolicy/api--auth` node:
 
 ```yaml
-# cloud.component.yml
+# cld.yml
 deployments:
   auth:
     image: auth-service:latest
@@ -132,7 +132,7 @@ This section walks through the complete flow: a component that triggers implicit
 Consider a component with three deployments where `api` talks to both `auth` and `cache`:
 
 ```yaml
-# cloud.component.yml
+# cld.yml
 databases:
   main:
     type: postgres:16
@@ -422,7 +422,7 @@ NetworkPolicy nodes are also created for cross-component service references. Whe
 Suppose you have two components — `frontend` depends on `backend`:
 
 ```yaml
-# frontend/cloud.component.yml
+# frontend/cld.yml
 dependencies:
   backend:
     image: myorg/backend:latest
@@ -435,7 +435,7 @@ deployments:
 ```
 
 ```yaml
-# backend/cloud.component.yml
+# backend/cld.yml
 deployments:
   api:
     image: ${{ builds.api.image }}

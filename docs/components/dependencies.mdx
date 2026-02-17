@@ -165,7 +165,7 @@ cldctl automatically manages the dependency graph:
 ### Auth Service (Dependency)
 
 ```yaml
-# auth-service/cloud.component.yml
+# auth-service/cld.yml
 
 variables:
   jwt_secret:
@@ -207,7 +207,7 @@ outputs:
 ### Main Application (Dependent)
 
 ```yaml
-# my-app/cloud.component.yml
+# my-app/cld.yml
 
 dependencies:
   auth: ghcr.io/myorg/auth-service:v1.0.0
@@ -255,7 +255,7 @@ routes:
 ### Auth Service with CORS (Using Dependents)
 
 ```yaml
-# auth-service/cloud.component.yml (updated to support CORS)
+# auth-service/cld.yml (updated to support CORS)
 
 deployments:
   api:

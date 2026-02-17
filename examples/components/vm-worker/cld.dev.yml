@@ -1,7 +1,7 @@
 # Dev variant - runs locally with hot-reloading
-# Usage: cldctl up -c cloud.component.dev.yml
+# Usage: cldctl up -c cld.dev.yml
 
-extends: cloud.component.yml
+extends: cld.yml
 
 deployments:
   worker:

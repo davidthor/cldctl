@@ -1,5 +1,5 @@
 # Production extension: adds Docker build and overrides command
-extends: ./cloud.component.yml
+extends: ./cld.yml
 
 builds:
   api:

@@ -43,12 +43,12 @@ Examples:
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := "cloud.component.yml"
+			path := "cld.yml"
 			if len(args) > 0 {
 				if strings.HasSuffix(args[0], ".yml") || strings.HasSuffix(args[0], ".yaml") {
 					path = args[0]
 				} else {
-					path = filepath.Join(args[0], "cloud.component.yml")
+					path = filepath.Join(args[0], "cld.yml")
 				}
 			}
 			if file != "" {
@@ -65,7 +65,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to cloud.component.yml if not in default location")
+	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to cld.yml if not in default location")
 
 	return cmd
 }

@@ -152,13 +152,13 @@ func (r *resolver) resolveLocal(ctx context.Context, ref string) (ResolvedCompon
 		return ResolvedComponent{}, fmt.Errorf("path not found: %w", err)
 	}
 
-	// If directory, look for cloud.component.yml
+	// If directory, look for cld.yml
 	if info.IsDir() {
-		componentFile := filepath.Join(absPath, "cloud.component.yml")
+		componentFile := filepath.Join(absPath, "cld.yml")
 		if _, err := os.Stat(componentFile); err != nil {
-			componentFile = filepath.Join(absPath, "cloud.component.yaml")
+			componentFile = filepath.Join(absPath, "cld.yaml")
 			if _, err := os.Stat(componentFile); err != nil {
-				return ResolvedComponent{}, fmt.Errorf("no cloud.component.yml found in %s", absPath)
+				return ResolvedComponent{}, fmt.Errorf("no cld.yml found in %s", absPath)
 			}
 		}
 		absPath = componentFile
@@ -199,7 +199,7 @@ func (r *resolver) resolveOCI(ctx context.Context, ref string) (ResolvedComponen
 	digestFile := filepath.Join(componentDir, ".digest")
 
 	// Check if already cached
-	componentFile := filepath.Join(componentDir, "cloud.component.yml")
+	componentFile := filepath.Join(componentDir, "cld.yml")
 	if _, err := os.Stat(componentFile); err == nil {
 		// Cache exists - check if we need to update by comparing digests
 		needsUpdate := false
@@ -255,12 +255,12 @@ func (r *resolver) resolveOCI(ctx context.Context, ref string) (ResolvedComponen
 		_ = os.WriteFile(digestFile, []byte(remoteDigest), 0644)
 	}
 
-	// Find cloud.component.yml in pulled content
-	componentFile = filepath.Join(componentDir, "cloud.component.yml")
+	// Find cld.yml in pulled content
+	componentFile = filepath.Join(componentDir, "cld.yml")
 	if _, err := os.Stat(componentFile); err != nil {
-		componentFile = filepath.Join(componentDir, "cloud.component.yaml")
+		componentFile = filepath.Join(componentDir, "cld.yaml")
 		if _, err := os.Stat(componentFile); err != nil {
-			return ResolvedComponent{}, fmt.Errorf("no cloud.component.yml found in pulled artifact")
+			return ResolvedComponent{}, fmt.Errorf("no cld.yml found in pulled artifact")
 		}
 	}
 
@@ -328,11 +328,11 @@ func (r *resolver) resolveGit(ctx context.Context, ref string) (ResolvedComponen
 		componentDir = filepath.Join(repoDir, subPath)
 	}
 
-	componentFile := filepath.Join(componentDir, "cloud.component.yml")
+	componentFile := filepath.Join(componentDir, "cld.yml")
 	if _, err := os.Stat(componentFile); err != nil {
-		componentFile = filepath.Join(componentDir, "cloud.component.yaml")
+		componentFile = filepath.Join(componentDir, "cld.yaml")
 		if _, err := os.Stat(componentFile); err != nil {
-			return ResolvedComponent{}, fmt.Errorf("no cloud.component.yml found at %s", componentDir)
+			return ResolvedComponent{}, fmt.Errorf("no cld.yml found at %s", componentDir)
 		}
 	}
 

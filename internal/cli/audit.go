@@ -150,13 +150,13 @@ func resolveComponentFile(ref string) (string, error) {
 		}
 
 		if info.IsDir() {
-			for _, name := range []string{"cloud.component.yml", "cloud.component.yaml"} {
+			for _, name := range []string{"cld.yml", "cld.yaml"} {
 				f := filepath.Join(absPath, name)
 				if _, err := os.Stat(f); err == nil {
 					return f, nil
 				}
 			}
-			return "", fmt.Errorf("no cloud.component.yml found in %s", absPath)
+			return "", fmt.Errorf("no cld.yml found in %s", absPath)
 		}
 
 		return absPath, nil
@@ -173,14 +173,14 @@ func resolveComponentFile(ref string) (string, error) {
 		return "", fmt.Errorf("component %q not found in local cache; try: cldctl pull component %s", ref, ref)
 	}
 
-	for _, name := range []string{"cloud.component.yml", "cloud.component.yaml"} {
+	for _, name := range []string{"cld.yml", "cld.yaml"} {
 		f := filepath.Join(entry.CachePath, name)
 		if _, err := os.Stat(f); err == nil {
 			return f, nil
 		}
 	}
 
-	return "", fmt.Errorf("no cloud.component.yml found in cached artifact for %s", ref)
+	return "", fmt.Errorf("no cld.yml found in cached artifact for %s", ref)
 }
 
 // printComponentResourceKeys lists all resource keys a component defines.

@@ -65,7 +65,7 @@ This contract allows components to be portable across any datacenter that implem
 
 ## File Specifications
 
-### 1. Component File (`cloud.component.yml`)
+### 1. Component File (`cld.yml`)
 
 The component file describes an application bundle using a docker-compose-like syntax. Developers define what their application needs without specifying how infrastructure should be provisioned.
 
@@ -79,7 +79,7 @@ The component file describes an application bundle using a docker-compose-like s
 
 #### File Location
 
-- Default: `cloud.component.yml` in the project root
+- Default: `cld.yml` in the project root
 - Can be specified explicitly via CLI
 
 #### Top-Level Structure
@@ -2430,7 +2430,7 @@ components:
 
 ### Developer Workflow
 
-1. **Write**: Create an `cloud.component.yml` file describing the application
+1. **Write**: Create an `cld.yml` file describing the application
 2. **Build**: Build the component into a portable OCI artifact
 3. **Test**: Create ephemeral environments for testing
 4. **Deploy**: Deploy to shared environments (staging, production)
@@ -2555,7 +2555,7 @@ cldctl build component <path> -t <repo:tag> [options]
 
 | Argument | Description                                                        |
 | -------- | ------------------------------------------------------------------ |
-| `<path>` | Path to the component directory (containing `cloud.component.yml`) |
+| `<path>` | Path to the component directory (containing `cld.yml`) |
 
 **Options:**
 
@@ -2563,7 +2563,7 @@ cldctl build component <path> -t <repo:tag> [options]
 | -------------------------------- | ---------------------------------------------------------------------------- |
 | `-t, --tag <repo:tag>`           | Tag for the root component artifact (required)                               |
 | `--artifact-tag <name=repo:tag>` | Override tag for a specific child artifact (can be specified multiple times) |
-| `-f, --file <path>`              | Path to cloud.component.yml if not in the default location                   |
+| `-f, --file <path>`              | Path to cld.yml if not in the default location                   |
 | `--platform <platform>`          | Target platform for container builds (e.g., `linux/amd64`, `linux/arm64`)    |
 | `--no-cache`                     | Disable build cache for container builds                                     |
 | `--yes, -y`                      | Non-interactive mode: skip confirmation prompts (for CI/CD)                  |
@@ -2661,7 +2661,7 @@ cldctl build component . -t ghcr.io/myorg/myapp:v1.0.0 --platform linux/amd64
 cldctl build component . -t ghcr.io/myorg/myapp:$CI_COMMIT_SHA --yes
 
 # Build from specific file
-cldctl build component ./services/api -f cloud.component.production.yml -t ghcr.io/myorg/api:v1.0.0
+cldctl build component ./services/api -f cld.production.yml -t ghcr.io/myorg/api:v1.0.0
 ```
 
 ### Tag Commands
@@ -2948,7 +2948,7 @@ The `--config` flag accepts two formats:
 
    When deploying from an OCI image, the pre-built container images embedded in the artifact are used directly.
 
-2. **Local path**: Path to a directory containing `cloud.component.yml` (for development)
+2. **Local path**: Path to a directory containing `cld.yml` (for development)
    ```bash
    cldctl deploy component ./services/web-app -e staging
    ```
@@ -4156,7 +4156,7 @@ When a component or datacenter is built, source references (`build:` blocks) are
 
 #### Component: Source vs Compiled Form
 
-**Source Form (cloud.component.yml - developer writes this):**
+**Source Form (cld.yml - developer writes this):**
 
 ```yaml
 name: my-app
@@ -4307,7 +4307,7 @@ cldctl up [config-ref] [options]
 When no `config-ref` is provided, cldctl searches the current directory for (in order):
 
 1. `environment.yml` or `environment.yaml` - Environment configuration
-2. `cloud.component.yml` or `cloud.component.yaml` - Component configuration
+2. `cld.yml` or `cld.yaml` - Component configuration
 
 If a component config is found, cldctl creates a minimal environment with just that component.
 
@@ -4316,7 +4316,7 @@ If a component config is found, cldctl creates a minimal environment with just t
 | File                  | Purpose                                         |
 | --------------------- | ----------------------------------------------- |
 | `environment.yml`     | Environment configuration (multiple components) |
-| `cloud.component.yml` | Component configuration (single component)      |
+| `cld.yml` | Component configuration (single component)      |
 
 **Behavior (Attached Mode - Default):**
 
@@ -4331,7 +4331,7 @@ If a component config is found, cldctl creates a minimal environment with just t
 $ cldctl up
 
 Detecting configuration...
-Found: ./cloud.component.yml (component: web-app)
+Found: ./cld.yml (component: web-app)
 
 Creating ephemeral environment: web-app-a1b2c3
 Datacenter: aws-production (from state backend)
@@ -4376,7 +4376,7 @@ With `-d`, cldctl exits after the environment is ready, leaving it running:
 $ cldctl up -d
 
 Detecting configuration...
-Found: ./cloud.component.yml (component: web-app)
+Found: ./cld.yml (component: web-app)
 
 Creating ephemeral environment: web-app-a1b2c3
 Datacenter: aws-production (from state backend)

@@ -10,7 +10,7 @@ import (
 func loadComponent(t *testing.T, yaml string) component.Component {
 	t.Helper()
 	loader := component.NewLoader()
-	comp, err := loader.LoadFromBytes([]byte(yaml), "/tmp/test/cloud.component.yml")
+	comp, err := loader.LoadFromBytes([]byte(yaml), "/tmp/test/cld.yml")
 	if err != nil {
 		t.Fatalf("failed to load component: %v", err)
 	}

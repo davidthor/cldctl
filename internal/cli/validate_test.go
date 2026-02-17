@@ -78,7 +78,7 @@ func TestValidateComponentCmd_InvalidComponent(t *testing.T) {
 	invalidYAML := `
 this is not: valid yaml: [
 `
-	err := os.WriteFile(filepath.Join(dir, "cloud.component.yml"), []byte(invalidYAML), 0644)
+	err := os.WriteFile(filepath.Join(dir, "cld.yml"), []byte(invalidYAML), 0644)
 	if err != nil {
 		t.Fatalf("failed to create file: %v", err)
 	}

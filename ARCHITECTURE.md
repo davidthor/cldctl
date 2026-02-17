@@ -331,7 +331,7 @@ The versioning system allows cldctl to support multiple versions of component an
 Each configuration file can optionally declare its schema version. If not specified, the loader infers the version based on the file structure.
 
 ```yaml
-# cloud.component.yml
+# cld.yml
 version: v1 # Optional, defaults to latest stable
 name: my-app
 # ...

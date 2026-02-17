@@ -38,13 +38,13 @@ cldctl provides **true self-service**: developers can create environments and de
 
 ```mermaid
 graph LR
-    A[Component<br/>cloud.component.yml] --> C[cldctl]
+    A[Component<br/>cld.yml] --> C[cldctl]
     B[Datacenter<br/>datacenter.hcl] --> C
     C --> D[Environment]
     D --> E[Cloud Resources]
 ```
 
-1. **Developers** write `cloud.component.yml` files describing their application's needs (databases, deployments, routes)
+1. **Developers** write `cld.yml` files describing their application's needs (databases, deployments, routes)
 2. **Platform engineers** write `datacenter.hcl` files defining how those needs are fulfilled (AWS RDS, Kubernetes, etc.)
 3. **cldctl** matches component requirements to datacenter hooks, orchestrating deployments across any infrastructure
 
@@ -83,7 +83,7 @@ This contract allows components to be **portable across any datacenter** that im
 
 Here's a simple web application with a database:
 
-```yaml cloud.component.yml
+```yaml cld.yml
 builds:
   api:
     context: ./api

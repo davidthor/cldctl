@@ -35,9 +35,9 @@ The `up` command supports two modes:
 
 ### Component Mode (`-c`)
 
-Deploys a single component from a `cloud.component.yml` file:
+Deploys a single component from a `cld.yml` file:
 
-1. **Parses** your `cloud.component.yml` file
+1. **Parses** your `cld.yml` file
 2. **Resolves** dependencies and prompts for missing variables
 3. **Creates** a local development environment
 4. **Provisions** all required resources (databases, etc.) in parallel
@@ -47,9 +47,9 @@ Deploys a single component from a `cloud.component.yml` file:
 
 ### Environment Mode (`-e`)
 
-Deploys all components defined in a `cloud.environment.yml` file:
+Deploys all components defined in a `cldenv.yml` file:
 
-1. **Parses** your `cloud.environment.yml` file
+1. **Parses** your `cldenv.yml` file
 2. **Resolves** environment variables from OS env vars, `.env` files, and defaults
 3. **Loads** all component configurations
 4. **Creates** a local development environment
@@ -59,14 +59,14 @@ Deploys all components defined in a `cloud.environment.yml` file:
 ### Auto-Detection
 
 When neither `-c` nor `-e` is provided, the command auto-detects by looking in the
-current directory for `cloud.component.yml` first, then `cloud.environment.yml`.
+current directory for `cld.yml` first, then `cldenv.yml`.
 
 ## Examples
 
 ### Component Mode
 
 ```bash
-# Start from current directory (auto-detect cloud.component.yml)
+# Start from current directory (auto-detect cld.yml)
 cldctl up
 
 # Specify component path
@@ -88,13 +88,13 @@ cldctl up -c ./my-app -d local \
 
 ```bash
 # Deploy from an environment file
-cldctl up -e cloud.environment.yml
+cldctl up -e cldenv.yml
 
 # Environment file in a subdirectory
 cldctl up -e ./envs/dev.yml -d local
 
 # With variable overrides
-cldctl up -e cloud.environment.yml --var stripe_key=sk_test_123
+cldctl up -e cldenv.yml --var stripe_key=sk_test_123
 ```
 
 ### Background Mode

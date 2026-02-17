@@ -120,7 +120,7 @@ ${{ dependents.*.services.*.url | join "," }}
 1. **Frontend declares dependency:**
 
 ```yaml
-# frontend-app/cloud.component.yml
+# frontend-app/cld.yml
 name: frontend-app
 
 dependencies:
@@ -148,12 +148,12 @@ CORS_ORIGINS=https://frontend-app.staging.example.com
 When multiple frontends depend on the API:
 
 ```yaml
-# frontend-app/cloud.component.yml
+# frontend-app/cld.yml
 dependencies:
   api:
     component: ghcr.io/myorg/api-with-cors:v1.0.0
 
-# admin-app/cloud.component.yml  
+# admin-app/cld.yml  
 dependencies:
   api:
     component: ghcr.io/myorg/api-with-cors:v1.0.0

@@ -6,7 +6,7 @@ This file provides guidance for AI coding assistants working on the cldctl codeb
 
 cldctl is a Go CLI tool for deploying portable cloud-native applications. The architecture separates concerns between:
 
-1. **Components** (`cloud.component.yml`) - Developer-focused application definitions
+1. **Components** (`cld.yml`) - Developer-focused application definitions
 2. **Datacenters** (`datacenter.dc`) - Platform engineer infrastructure templates  
 3. **Environments** - Deployed instances combining components with datacenters
 
@@ -97,9 +97,9 @@ cldctl rollout promote my-app -e production --instance canary  # Collapse to sin
 cldctl rollout rollback my-app -e production --instance canary  # Remove canary instance
 
 # Local development (up command)
-cldctl up                                         # Auto-detect cloud.component.yml or cloud.environment.yml in CWD
+cldctl up                                         # Auto-detect cld.yml or cldenv.yml in CWD
 cldctl up -c ./my-app -d local                    # Component mode: deploy single component
-cldctl up -e cloud.environment.yml -d local       # Environment mode: deploy all components from env file
+cldctl up -e cldenv.yml -d local       # Environment mode: deploy all components from env file
 cldctl up -c ./my-app --name my-feature -d local  # Named environment
 cldctl up -c ./my-app -d local --route-subdomain main=cool  # Custom route subdomain (component mode only)
 cldctl up -e ./envs/dev.yml --var key=secret      # Environment mode with variable overrides
@@ -142,7 +142,7 @@ cldctl deploy component myapp:latest -e staging  # uses my-dc from config
 
 ### Automatic Dependency Deployment
 
-When deploying a component that declares `dependencies` in its `cloud.component.yml`, cldctl automatically resolves and deploys any dependency components not already present in the target environment. This applies to both `deploy component` and `up` commands.
+When deploying a component that declares `dependencies` in its `cld.yml`, cldctl automatically resolves and deploys any dependency components not already present in the target environment. This applies to both `deploy component` and `up` commands.
 
 - Dependencies are resolved **transitively** (dependency of a dependency is also deployed).
 - Dependencies already deployed in the environment are **skipped** (not updated).
@@ -169,7 +169,7 @@ When deploying a component that declares `dependencies` in its `cloud.component.
 | `examples/` | Example component configurations |
 | `official-templates/` | Official datacenter templates (local, startup, do-k8s, do-app-platform, do-vms, aws-ecs, aws-lambda, aws-k8s, aws-vms, gcp-cloud-run, gcp-k8s, gcp-vms) |
 
-## Component Authoring (cloud.component.yml)
+## Component Authoring (cld.yml)
 
 Components describe application requirements using YAML with `${{ }}` expressions.
 Component names are determined by the OCI tag at build time (e.g., `ghcr.io/org/my-app:v1`).
@@ -191,7 +191,7 @@ Use **deployments** for:
 ### Next.js Application (Recommended Pattern)
 
 ```yaml
-# cloud.component.yml - Next.js apps should use functions
+# cld.yml - Next.js apps should use functions
 # Routes can point directly to functions - no service wrapper needed
 databases:
   main:
@@ -216,7 +216,7 @@ routes:
 ### Traditional Deployment Pattern
 
 ```yaml
-# cloud.component.yml - For long-running services with Docker builds
+# cld.yml - For long-running services with Docker builds
 builds:
   api:
     context: ./api
@@ -236,18 +236,18 @@ services:
 ### Dev/Prod with Extends
 
 ```yaml
-# cloud.component.yml (dev base - process-based, no Docker)
+# cld.yml (dev base - process-based, no Docker)
 deployments:
   api:
     command: ["npm", "run", "dev"]
-    workingDirectory: ./backend  # optional, defaults to cloud.component.yml dir
+    workingDirectory: ./backend  # optional, defaults to cld.yml dir
     environment:
       DATABASE_URL: ${{ databases.main.url }}
 ```
 
 ```yaml
-# cloud.component.prod.yml (production - extends dev, adds Docker build)
-extends: ./cloud.component.yml
+# cld.prod.yml (production - extends dev, adds Docker build)
+extends: ./cld.yml
 
 builds:
   api:

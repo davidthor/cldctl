@@ -6,13 +6,13 @@ import (
 	"testing"
 )
 
-// Helper to create a temporary component directory with cloud.component.yml
+// Helper to create a temporary component directory with cld.yml
 func createTempComponent(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
-	err := os.WriteFile(filepath.Join(dir, "cloud.component.yml"), []byte(content), 0644)
+	err := os.WriteFile(filepath.Join(dir, "cld.yml"), []byte(content), 0644)
 	if err != nil {
-		t.Fatalf("failed to create cloud.component.yml: %v", err)
+		t.Fatalf("failed to create cld.yml: %v", err)
 	}
 	return dir
 }

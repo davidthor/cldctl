@@ -205,7 +205,7 @@ Examples:
 
 				compFile := findComponentFile(compDir)
 				if compFile == "" {
-					return fmt.Errorf("no cloud.component.yml found in artifact %s", imageRef)
+					return fmt.Errorf("no cld.yml found in artifact %s", imageRef)
 				}
 				componentPath = compFile
 				fmt.Printf("[pull] Cached %s\n", imageRef)
@@ -989,7 +989,7 @@ func deriveComponentName(source string, isLocalPath bool) string {
 	if isLocalPath {
 		// Remove trailing slashes
 		source = strings.TrimRight(source, "/")
-		// If it's a file path (cloud.component.yml), get the parent directory
+		// If it's a file path (cld.yml), get the parent directory
 		if strings.HasSuffix(source, ".yml") || strings.HasSuffix(source, ".yaml") {
 			source = filepath.Dir(source)
 		}
@@ -1029,11 +1029,11 @@ func deriveComponentName(source string, isLocalPath bool) string {
 // findComponentFile looks for a component config file in the given directory.
 // Returns the path to the file if found, or empty string if not.
 func findComponentFile(dir string) string {
-	ymlFile := filepath.Join(dir, "cloud.component.yml")
+	ymlFile := filepath.Join(dir, "cld.yml")
 	if _, err := os.Stat(ymlFile); err == nil {
 		return ymlFile
 	}
-	yamlFile := filepath.Join(dir, "cloud.component.yaml")
+	yamlFile := filepath.Join(dir, "cld.yaml")
 	if _, err := os.Stat(yamlFile); err == nil {
 		return yamlFile
 	}

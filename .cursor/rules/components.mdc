@@ -1,12 +1,12 @@
 ---
-description: Guidelines for authoring cldctl component configurations (cloud.component.yml)
-globs: "**/cloud.component.yml,**/cloud.component.yaml,**/components/**/*.yml,**/components/**/*.yaml"
+description: Guidelines for authoring cldctl component configurations (cld.yml)
+globs: "**/cld.yml,**/cld.yaml,**/components/**/*.yml,**/components/**/*.yaml"
 alwaysApply: false
 ---
 
 # Component Authoring Guidelines
 
-Components are developer-focused application bundles in `cloud.component.yml` files that describe what an application needs without specifying infrastructure details.
+Components are developer-focused application bundles in `cld.yml` files that describe what an application needs without specifying infrastructure details.
 
 ## File Structure
 
@@ -168,7 +168,7 @@ Deployments without `image` run as host processes (no Docker required):
 deployments:
   api:
     command: ["npm", "run", "dev"]
-    workingDirectory: ./backend  # optional, defaults to cloud.component.yml dir
+    workingDirectory: ./backend  # optional, defaults to cld.yml dir
     environment:
       DATABASE_URL: ${{ databases.main.url }}
 ```
@@ -202,7 +202,7 @@ Datacenters route deployments with `runtime` (and no `image`) to VM provisioning
 Use `extends` to inherit from a base component and override specific fields:
 
 ```yaml
-# cloud.component.yml (dev base - process-based)
+# cld.yml (dev base - process-based)
 deployments:
   api:
     command: ["npm", "run", "dev"]
@@ -211,8 +211,8 @@ deployments:
 ```
 
 ```yaml
-# cloud.component.prod.yml (production - extends dev)
-extends: ./cloud.component.yml
+# cld.prod.yml (production - extends dev)
+extends: ./cld.yml
 
 builds:
   api:

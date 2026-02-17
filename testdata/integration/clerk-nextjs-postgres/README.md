@@ -78,7 +78,7 @@ go test -tags=integration -v -run "Validation" ./testdata/integration/...
 
 ```
 clerk-nextjs-postgres/
-├── cloud.component.yml    # Component definition
+├── cld.yml    # Component definition
 ├── environment.yml        # Environment configuration
 ├── app/                   # Next.js application
 │   ├── package.json

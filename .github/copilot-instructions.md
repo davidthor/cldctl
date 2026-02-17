@@ -4,7 +4,7 @@
 
 cldctl is a Go CLI tool for deploying portable cloud-native applications. It uses a three-tier architecture:
 
-- **Components** (`cloud.component.yml`): Developer-focused application bundles describing what an app needs
+- **Components** (`cld.yml`): Developer-focused application bundles describing what an app needs
 - **Datacenters** (`datacenter.dc`): Platform engineer infrastructure templates defining how resources are provisioned
 - **Environments**: Deployed instances of components in datacenters
 
@@ -16,7 +16,7 @@ cldctl/
 ├── internal/cli/        # CLI commands (Cobra)
 ├── pkg/
 │   ├── schema/          # Config parsing (component, datacenter, environment)
-│   │   ├── component/   # cloud.component.yml parsing
+│   │   ├── component/   # cld.yml parsing
 │   │   │   ├── v1/      # Version-specific schema
 │   │   │   └── internal/ # Internal representation
 │   │   └── datacenter/  # datacenter.dc parsing
@@ -65,7 +65,7 @@ type StateReader interface {
 }
 ```
 
-## Component Configuration (cloud.component.yml)
+## Component Configuration (cld.yml)
 
 Components use YAML with `${{ }}` expressions.
 
@@ -147,7 +147,7 @@ variables:
 ### Dev/Prod with Extends
 
 ```yaml
-# cloud.component.yml (dev base - runs as a local process)
+# cld.yml (dev base - runs as a local process)
 deployments:
   api:
     command: ["npm", "run", "dev"]
@@ -156,8 +156,8 @@ deployments:
 ```
 
 ```yaml
-# cloud.component.prod.yml (production - adds Docker build)
-extends: cloud.component.yml
+# cld.prod.yml (production - adds Docker build)
+extends: cld.yml
 
 builds:
   api:

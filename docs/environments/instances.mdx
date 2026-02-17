@@ -11,7 +11,7 @@ Instances enable progressive delivery patterns like canary releases, blue-green 
 
 - **Single instance** (default): One instance at weight 100, fully backwards compatible
 - **Multiple instances**: e.g., `stable` at 90% + `canary` at 10%, each deploys its own per-instance resources
-- **Components are unaware**: `cloud.component.yml` never mentions instances or weights
+- **Components are unaware**: `cld.yml` never mentions instances or weights
 - **Environments control instances**: The environment file or CLI declares instances
 - **Datacenters define correlation**: Hooks determine how instances are provisioned and traffic is split
 

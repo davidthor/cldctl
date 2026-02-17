@@ -93,8 +93,8 @@ func TestUpCmd_LongDescription(t *testing.T) {
 
 	expectedPhrases := []string{
 		"local development",
-		"cloud.component.yml",
-		"cloud.environment.yml",
+		"cld.yml",
+		"cldenv.yml",
 		"provisions all required resources",
 		"file changes",
 	}
@@ -259,7 +259,7 @@ variables:
   region:
     description: "AWS region"
     default: "us-east-1"
-`), "/tmp/test/cloud.component.yml")
+`), "/tmp/test/cld.yml")
 	if err != nil {
 		t.Fatalf("failed to load component: %v", err)
 	}

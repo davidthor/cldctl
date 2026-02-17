@@ -361,10 +361,10 @@ func TestClerkNextJSPostgres_EnvironmentValidation(t *testing.T) {
 		t.Fatalf("Environment file not found: %s", envFile)
 	}
 
-	// Check cloud.component.yml exists
-	componentFile := filepath.Join(testDir, "cloud.component.yml")
+	// Check cld.yml exists
+	componentFile := filepath.Join(testDir, "cld.yml")
 	if _, err := os.Stat(componentFile); err != nil {
-		t.Fatalf("cloud.component.yml not found: %s", componentFile)
+		t.Fatalf("cld.yml not found: %s", componentFile)
 	}
 
 	// Check Dockerfile exists

@@ -49,7 +49,7 @@ This example demonstrates:
 The foundational service with no dependencies:
 
 ```yaml
-# auth/cloud.component.yml
+# auth/cld.yml
 name: auth-service
 
 variables:
@@ -94,7 +94,7 @@ routes:
 Depends on Auth for token validation:
 
 ```yaml
-# orders/cloud.component.yml
+# orders/cld.yml
 name: orders-service
 
 dependencies:
@@ -132,7 +132,7 @@ services:
 Also depends on Auth:
 
 ```yaml
-# products/cloud.component.yml
+# products/cld.yml
 name: products-service
 
 dependencies:
@@ -175,7 +175,7 @@ services:
 Aggregates all services:
 
 ```yaml
-# gateway/cloud.component.yml
+# gateway/cld.yml
 name: api-gateway
 
 dependencies:

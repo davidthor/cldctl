@@ -75,10 +75,10 @@ components:
 
 ### 2. Dependent Application
 
-In your application's `cloud.component.yml`, declare Stripe as a dependency and access outputs:
+In your application's `cld.yml`, declare Stripe as a dependency and access outputs:
 
 ```yaml
-# shop/cloud.component.yml
+# shop/cld.yml
 
 dependencies:
   stripe:
@@ -162,7 +162,7 @@ routes:
 For a Next.js app using `@stripe/stripe-js` and `stripe`:
 
 ```yaml
-# nextjs-shop/cloud.component.yml
+# nextjs-shop/cld.yml
 
 dependencies:
   stripe:

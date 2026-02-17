@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -109,7 +110,7 @@ func TestFindObservabilityQueryConfig_NotReady(t *testing.T) {
 	}
 }
 
-func TestFindDashboardURL_Found(t *testing.T) {
+func TestFindObservabilityConfig_Found(t *testing.T) {
 	envState := &types.EnvironmentState{
 		Name: "test-env",
 		Components: map[string]*types.ComponentState{
@@ -127,28 +128,28 @@ func TestFindDashboardURL_Found(t *testing.T) {
 		},
 	}
 
-	url, err := findDashboardURL(envState)
+	cfg, err := findObservabilityConfig(envState)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if url != "http://localhost:3000" {
-		t.Errorf("expected http://localhost:3000, got %q", url)
+	if cfg.DashboardURL != "http://localhost:3000" {
+		t.Errorf("expected http://localhost:3000, got %q", cfg.DashboardURL)
 	}
 }
 
-func TestFindDashboardURL_NotFound(t *testing.T) {
+func TestFindObservabilityConfig_NotFound(t *testing.T) {
 	envState := &types.EnvironmentState{
 		Name:       "test-env",
 		Components: map[string]*types.ComponentState{},
 	}
 
-	_, err := findDashboardURL(envState)
+	_, err := findObservabilityConfig(envState)
 	if err == nil {
 		t.Fatal("expected error when no observability resource found")
 	}
 }
 
-func TestFindDashboardURL_MissingURL(t *testing.T) {
+func TestFindObservabilityConfig_MissingURL(t *testing.T) {
 	envState := &types.EnvironmentState{
 		Name: "test-env",
 		Components: map[string]*types.ComponentState{
@@ -164,9 +165,72 @@ func TestFindDashboardURL_MissingURL(t *testing.T) {
 		},
 	}
 
-	_, err := findDashboardURL(envState)
+	_, err := findObservabilityConfig(envState)
 	if err == nil {
 		t.Fatal("expected error when dashboard_url is missing")
+	}
+}
+
+func TestBuildDashboardURL_Loki(t *testing.T) {
+	cfg := &observabilityConfig{
+		DashboardURL:  "http://localhost:64829",
+		QueryType:     "loki",
+		QueryEndpoint: "http://localhost:64830",
+	}
+
+	result := buildDashboardURL(cfg, "twenty-dev")
+
+	// Should produce a Grafana Explore URL with Loki query
+	if !strings.Contains(result, "http://localhost:64829/explore") {
+		t.Errorf("expected Grafana Explore URL, got %q", result)
+	}
+	if !strings.Contains(result, "schemaVersion=1") {
+		t.Errorf("expected schemaVersion parameter, got %q", result)
+	}
+	if !strings.Contains(result, "deployment_environment") {
+		t.Errorf("expected deployment_environment in query, got %q", result)
+	}
+	if !strings.Contains(result, "twenty-dev") {
+		t.Errorf("expected environment name in query, got %q", result)
+	}
+}
+
+func TestBuildDashboardURL_UnknownQueryType(t *testing.T) {
+	cfg := &observabilityConfig{
+		DashboardURL: "https://cloudwatch.aws.amazon.com/dashboard/my-env",
+		QueryType:    "cloudwatch",
+	}
+
+	result := buildDashboardURL(cfg, "production")
+
+	// Should fall back to the base dashboard URL
+	if result != "https://cloudwatch.aws.amazon.com/dashboard/my-env" {
+		t.Errorf("expected base dashboard URL, got %q", result)
+	}
+}
+
+func TestBuildDashboardURL_NoQueryType(t *testing.T) {
+	cfg := &observabilityConfig{
+		DashboardURL: "http://localhost:3000",
+	}
+
+	result := buildDashboardURL(cfg, "staging")
+
+	// Should fall back to the base dashboard URL
+	if result != "http://localhost:3000" {
+		t.Errorf("expected base dashboard URL, got %q", result)
+	}
+}
+
+func TestBuildGrafanaExploreURL_TrailingSlash(t *testing.T) {
+	result := buildGrafanaExploreURL("http://localhost:3000/", "my-env")
+
+	// Should not have double slashes
+	if strings.Contains(result, "//explore") {
+		t.Errorf("expected no double slash before /explore, got %q", result)
+	}
+	if !strings.Contains(result, "http://localhost:3000/explore") {
+		t.Errorf("expected clean URL, got %q", result)
 	}
 }
 

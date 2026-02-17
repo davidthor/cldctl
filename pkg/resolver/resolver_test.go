@@ -58,7 +58,7 @@ func TestDetectReferenceType(t *testing.T) {
 		},
 		{
 			name:     "yaml file extension",
-			ref:      "cloud.component.yaml",
+			ref:      "cld.yaml",
 			expected: ReferenceTypeLocal,
 		},
 
@@ -195,12 +195,12 @@ func TestResolveLocal(t *testing.T) {
 	componentContent := `name: test-component
 version: v1
 `
-	componentPath := filepath.Join(tmpDir, "cloud.component.yml")
+	componentPath := filepath.Join(tmpDir, "cld.yml")
 	if err := os.WriteFile(componentPath, []byte(componentContent), 0644); err != nil {
 		t.Fatalf("Failed to create component file: %v", err)
 	}
 
-	t.Run("resolve directory with cloud.component.yml", func(t *testing.T) {
+	t.Run("resolve directory with cld.yml", func(t *testing.T) {
 		resolver := NewResolver(Options{
 			AllowLocal: true,
 		})
@@ -257,7 +257,7 @@ version: v1
 
 		_, err = resolver.Resolve(context.Background(), emptyDir)
 		if err == nil {
-			t.Error("Expected error for directory without cloud.component.yml")
+			t.Error("Expected error for directory without cld.yml")
 		}
 	})
 
@@ -291,8 +291,8 @@ func TestResolveAll(t *testing.T) {
 	componentContent := `name: test-component
 version: v1
 `
-	_ = os.WriteFile(filepath.Join(tmpDir1, "cloud.component.yml"), []byte(componentContent), 0644)
-	_ = os.WriteFile(filepath.Join(tmpDir2, "cloud.component.yml"), []byte(componentContent), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir1, "cld.yml"), []byte(componentContent), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir2, "cld.yml"), []byte(componentContent), 0644)
 
 	resolver := NewResolver(Options{
 		AllowLocal: true,
@@ -350,7 +350,7 @@ func TestResolvedComponent(t *testing.T) {
 	rc := ResolvedComponent{
 		Reference: "./my-component",
 		Type:      ReferenceTypeLocal,
-		Path:      "/absolute/path/to/cloud.component.yml",
+		Path:      "/absolute/path/to/cld.yml",
 		Version:   "v1.0.0",
 		Digest:    "sha256:abc123",
 		Metadata: map[string]string{

@@ -136,7 +136,7 @@ Proceed with deployment? [Y/n]:
 
 ## Automatic Dependency Deployment
 
-When a component declares dependencies on other components (via the `dependencies` field in `cloud.component.yml`), cldctl will automatically deploy any dependencies that are not already present in the target environment. Dependencies are resolved transitively -- if dependency A depends on dependency B, both will be deployed.
+When a component declares dependencies on other components (via the `dependencies` field in `cld.yml`), cldctl will automatically deploy any dependencies that are not already present in the target environment. Dependencies are resolved transitively -- if dependency A depends on dependency B, both will be deployed.
 
 ```
 $ cldctl deploy component myapp:latest -e staging

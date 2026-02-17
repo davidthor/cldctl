@@ -20,7 +20,7 @@ graph LR
     E --> F[Monitor]
 ```
 
-1. **Write**: Create your application with an `cloud.component.yml` file
+1. **Write**: Create your application with an `cld.yml` file
 2. **Local Dev**: Use `cldctl up` for rapid iteration
 3. **Build**: Build portable OCI artifacts
 4. **Push**: Push to a container registry
@@ -45,7 +45,7 @@ cldctl up --name feature-branch
 ```
 
 `cldctl up` will:
-- Parse your `cloud.component.yml`
+- Parse your `cld.yml`
 - Provision databases and other resources locally
 - Build your application containers
 - Watch for file changes and auto-reload
@@ -56,7 +56,7 @@ A typical cldctl project structure:
 
 ```
 my-app/
-├── cloud.component.yml           # Component definition
+├── cld.yml           # Component definition
 ├── api/
 │   ├── Dockerfile
 │   ├── package.json

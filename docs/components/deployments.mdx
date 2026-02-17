@@ -75,7 +75,7 @@ For local development, deployments can run directly on the host without Docker:
 deployments:
   api:
     command: ["npm", "run", "dev"]
-    workingDirectory: ./backend  # Optional, defaults to cloud.component.yml directory
+    workingDirectory: ./backend  # Optional, defaults to cld.yml directory
 ```
 
 ## Runtime Property
@@ -294,7 +294,7 @@ services:
 ## VM Worker Example (Dev/Prod with Runtime)
 
 ```yaml
-# cloud.component.yml (dev base)
+# cld.yml (dev base)
 databases:
   queue:
     type: redis:^7
@@ -308,8 +308,8 @@ deployments:
 ```
 
 ```yaml
-# cloud.component.prod.yml (production - runs on VMs)
-extends: cloud.component.yml
+# cld.prod.yml (production - runs on VMs)
+extends: ./cld.yml
 
 deployments:
   worker:

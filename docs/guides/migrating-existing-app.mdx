@@ -25,12 +25,12 @@ Import does **not** provision or modify cloud resources. It records existing inf
 
 ## Step 1: Define Your Components
 
-Even though the infrastructure already exists, cldctl needs a component definition to understand **what** the application requires. Create a `cloud.component.yml` in each project.
+Even though the infrastructure already exists, cldctl needs a component definition to understand **what** the application requires. Create a `cld.yml` in each project.
 
 ### Frontend Component
 
 ```yaml
-# frontend/cloud.component.yml
+# frontend/cld.yml
 dependencies:
   api:
     component: ghcr.io/acme/api
@@ -61,7 +61,7 @@ The `dependencies` block declares that the frontend depends on the API component
 ### API Component
 
 ```yaml
-# api/cloud.component.yml
+# api/cld.yml
 variables:
   jwt_secret:
     description: "JWT signing secret"
@@ -533,7 +533,7 @@ Resources not included in the mapping file are simply absent from state. A subse
 
 | Step | Command | What It Does |
 |------|---------|-------------|
-| 1 | Write `cloud.component.yml` + `cldctl build component` | Define and package each component |
+| 1 | Write `cld.yml` + `cldctl build component` | Define and package each component |
 | 2 | `cldctl audit component` + `cldctl audit datacenter --modules` | Discover resource keys and IaC addresses |
 | 3 | Write mapping YAML files | Map resource keys to IaC addresses to cloud resource IDs |
 | 4 | `cldctl deploy datacenter --import-file` | Deploy datacenter, importing root + environment modules |

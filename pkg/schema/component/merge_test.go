@@ -172,11 +172,11 @@ services:
     deployment: api
     port: 3000
 `
-	err := os.WriteFile(filepath.Join(dir, "cloud.component.yml"), []byte(base), 0644)
+	err := os.WriteFile(filepath.Join(dir, "cld.yml"), []byte(base), 0644)
 	require.NoError(t, err)
 
 	// Write extending file
-	ext := `extends: ./cloud.component.yml
+	ext := `extends: ./cld.yml
 builds:
   api:
     context: .
@@ -185,7 +185,7 @@ deployments:
     image: "${{ builds.api.image }}"
     command: ["npm", "start"]
 `
-	extPath := filepath.Join(dir, "cloud.component.prod.yml")
+	extPath := filepath.Join(dir, "cld.prod.yml")
 	err = os.WriteFile(extPath, []byte(ext), 0644)
 	require.NoError(t, err)
 

@@ -95,7 +95,7 @@ func completeComponentNames(cmd *cobra.Command, args []string, toComplete string
 	// In a real implementation, this would list components from the state or local files
 	components := []string{}
 
-	// Try to find local cloud.component.yml files
+	// Try to find local cld.yml files
 	if files, err := findComponentFiles("."); err == nil {
 		components = append(components, files...)
 	}
@@ -129,7 +129,7 @@ func completeEnvironmentNames(cmd *cobra.Command, args []string, toComplete stri
 	return environments, cobra.ShellCompDirectiveNoFileComp
 }
 
-// findComponentFiles finds cloud.component.yml files in a directory.
+// findComponentFiles finds cld.yml files in a directory.
 func findComponentFiles(dir string) ([]string, error) { //nolint:unused
 	var files []string
 
@@ -139,7 +139,7 @@ func findComponentFiles(dir string) ([]string, error) { //nolint:unused
 	}
 
 	for _, entry := range entries {
-		if entry.Name() == "cloud.component.yml" || entry.Name() == "cloud.component.yaml" {
+		if entry.Name() == "cld.yml" || entry.Name() == "cld.yaml" {
 			files = append(files, dir)
 		}
 		if entry.IsDir() {

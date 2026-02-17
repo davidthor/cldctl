@@ -66,10 +66,10 @@ You can specify either a component or an environment file:
   -e, --environment Path to an environment file
 
 If neither flag is provided, the command auto-detects by looking for
-cloud.component.yml or cloud.environment.yml in the current directory.
+cld.yml or cldenv.yml in the current directory.
 
 The up command:
-  1. Parses your cloud.component.yml or cloud.environment.yml file
+  1. Parses your cld.yml or cldenv.yml file
   2. Creates or uses an existing environment with the specified datacenter
   3. Provisions all required resources (databases, etc.) in parallel
   4. Builds and deploys your application(s)
@@ -82,10 +82,10 @@ Examples:
   cldctl up -c ./my-app -d local --var API_KEY=secret
 
   # Environment mode (multi-component)
-  cldctl up -e cloud.environment.yml -d local
+  cldctl up -e cldenv.yml -d local
   cldctl up -e ./envs/dev.yml -d my-datacenter
 
-  # Auto-detect mode (looks for cloud.component.yml or cloud.environment.yml in CWD)
+  # Auto-detect mode (looks for cld.yml or cldenv.yml in CWD)
   cldctl up -d local`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
@@ -431,7 +431,7 @@ func resolveUpMode(componentFile, envFile string) (upMode, string, error) {
 	}
 
 	// Check for component files first
-	for _, filename := range []string{"cloud.component.yml", "cloud.component.yaml"} {
+	for _, filename := range []string{"cld.yml", "cld.yaml"} {
 		candidate := filepath.Join(cwd, filename)
 		if _, err := os.Stat(candidate); err == nil {
 			return upModeComponent, candidate, nil
@@ -439,14 +439,14 @@ func resolveUpMode(componentFile, envFile string) (upMode, string, error) {
 	}
 
 	// Check for environment files
-	for _, filename := range []string{"cloud.environment.yml", "cloud.environment.yaml"} {
+	for _, filename := range []string{"cldenv.yml", "cldenv.yaml"} {
 		candidate := filepath.Join(cwd, filename)
 		if _, err := os.Stat(candidate); err == nil {
 			return upModeEnvironment, candidate, nil
 		}
 	}
 
-	return 0, "", fmt.Errorf("no component or environment file found in current directory\nCreate a cloud.component.yml or cloud.environment.yml, or specify one with -c or -e")
+	return 0, "", fmt.Errorf("no component or environment file found in current directory\nCreate a cld.yml or cldenv.yml, or specify one with -c or -e")
 }
 
 // prepareComponentMode loads a single component and resolves its dependencies,
@@ -474,9 +474,9 @@ func prepareComponentMode(
 		return nil, nil, "", nil, fmt.Errorf("failed to access path: %w", err)
 	}
 	if info.IsDir() {
-		componentFile = filepath.Join(resolvedPath, "cloud.component.yml")
+		componentFile = filepath.Join(resolvedPath, "cld.yml")
 		if _, err := os.Stat(componentFile); os.IsNotExist(err) {
-			componentFile = filepath.Join(resolvedPath, "cloud.component.yaml")
+			componentFile = filepath.Join(resolvedPath, "cld.yaml")
 		}
 	} else {
 		absDir = filepath.Dir(resolvedPath)
