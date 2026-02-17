@@ -6,7 +6,7 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS=-ldflags "-s -w -X github.com/davidthor/cldctl/internal/cli.Version=$(VERSION) -X github.com/davidthor/cldctl/internal/cli.Commit=$(COMMIT) -X github.com/davidthor/cldctl/internal/cli.BuildDate=$(BUILD_DATE)"
 
-.PHONY: all build clean test lint install
+.PHONY: all build clean test lint install playground-wasm
 
 all: build
 
@@ -65,6 +65,15 @@ fmt:
 generate:
 	go generate ./...
 
+WASM_OUT=docs/assets/playground.wasm
+
+## Build WASM module for playground
+playground-wasm:
+	@mkdir -p docs/assets
+	GOOS=js GOARCH=wasm go build -ldflags="-s -w" -o $(WASM_OUT) ./cmd/playground-wasm
+	cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" docs/assets/wasm_exec.js
+	@echo "WASM module built: $(WASM_OUT) ($$(du -h $(WASM_OUT) | cut -f1))"
+
 ## Show help
 help:
 	@echo "Available targets:"
@@ -79,4 +88,5 @@ help:
 	@echo "  run         - Run the application"
 	@echo "  deps        - Download dependencies"
 	@echo "  fmt         - Format code"
+	@echo "  playground-wasm - Build WASM module for docs playground"
 	@echo "  help        - Show this help"

@@ -1,0 +1,17 @@
+---
+title: "Developer Playground"
+description: "Validate component and environment configs and visualize the resource graph"
+---
+
+import { DeveloperPlayground } from "/snippets/playground-developer.jsx";
+
+Paste a **component** or **environment** YAML below and click **Visualize** to see the
+resource dependency graph that cldctl would create. No server required — everything
+runs locally in your browser via WebAssembly.
+
+<Tip>
+  In **Environment** mode, provide each component's YAML inline. Path-based
+  component references are not supported in the playground.
+</Tip>
+
+<DeveloperPlayground />

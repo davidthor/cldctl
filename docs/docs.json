@@ -329,6 +329,18 @@
             ]
           }
         ]
+      },
+      {
+        "tab": "Playground",
+        "groups": [
+          {
+            "group": "Interactive Tools",
+            "pages": [
+              "playground/developer",
+              "playground/operator"
+            ]
+          }
+        ]
       }
     ],
     "global": {

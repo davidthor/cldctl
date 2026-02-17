@@ -14,10 +14,11 @@ cldctl is a Go CLI tool for deploying portable cloud-native applications. The ar
 
 ### Build & Test Commands
 ```bash
-make build    # Build the CLI binary
-make test     # Run unit tests
-make lint     # Run golangci-lint
-go mod tidy   # Clean up dependencies
+make build           # Build the CLI binary
+make test            # Run unit tests
+make lint            # Run golangci-lint
+make playground-wasm # Build WASM module for docs playground
+go mod tidy          # Clean up dependencies
 ```
 
 ### CLI Command Structure
@@ -182,6 +183,7 @@ When deploying a component that declares `dependencies` in its `cld.yml`, cldctl
 | `pkg/logs/` | Log query plugin system (querier interface, Loki adapter) |
 | `pkg/ciworkflow/` | CI workflow generation (GitHub Actions, GitLab CI, CircleCI) |
 | `pkg/graph/visual/` | Graph visualization (Mermaid, PNG image rendering) |
+| `cmd/playground-wasm/` | WASM entry point for the docs playground (build with `make playground-wasm`) |
 | `pkg/errors/` | Structured error types |
 | `testdata/` | Test fixtures |
 | `examples/` | Example component configurations |
@@ -808,6 +810,8 @@ func TestParse(t *testing.T) {
 | `docs/guides/components/` | Step-by-step component authoring guides (Next.js, microservices, dependency deployment, etc.) |
 | `docs/guides/datacenters/` | Step-by-step datacenter authoring guides (local Docker, AWS ECS, etc.) |
 | `docs/concepts/` | High-level conceptual documentation |
+| `docs/playground/` | Interactive WASM-powered playground pages (developer + operator) |
+| `docs/snippets/` | Reusable React components for Mintlify pages (playground UIs) |
 | `examples/` | Example component configurations |
 | `official-templates/` | Official datacenter templates (12 templates across Local, Startup/Vercel, DigitalOcean, AWS, GCP) |
 

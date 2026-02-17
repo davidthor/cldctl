@@ -1,0 +1,18 @@
+---
+title: "Operator Playground"
+description: "Visualize how a datacenter template maps component resources to infrastructure modules"
+---
+
+import { OperatorPlayground } from "/snippets/playground-operator.jsx";
+
+Paste a **datacenter template** (HCL) alongside a **component** or **environment** YAML
+and click **Visualize Infrastructure** to see which infrastructure modules each resource
+would trigger. Everything runs locally in your browser via WebAssembly — no server required.
+
+<Tip>
+  The left panel defines your datacenter hooks and variables. The right panel defines
+  the application resources. The output shows a two-layer graph: application resources
+  on top, infrastructure modules below, with edges showing the mapping.
+</Tip>
+
+<OperatorPlayground />

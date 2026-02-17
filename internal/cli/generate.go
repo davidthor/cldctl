@@ -132,8 +132,8 @@ Examples:
 
 func newGenerateEnvironmentCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "environment",
-		Short: "Generate from an environment definition",
+		Use:     "environment",
+		Short:   "Generate from an environment definition",
 		Aliases: []string{"env"},
 	}
 
@@ -421,8 +421,8 @@ func writeOutput(path string, data []byte) error {
 func buildComponentWorkflow(comp component.Component, compName string, g *graph.Graph, componentTag, installVersion string) (ciworkflow.Workflow, error) {
 	// Build component ref
 	compRef := ciworkflow.ComponentRef{
-		Name:    compName,
-		IsLocal: true,
+		Name:      compName,
+		IsLocal:   true,
 		Variables: make(map[string]string),
 	}
 
@@ -598,9 +598,6 @@ func buildEnvironmentWorkflow(env environment.Environment, components []ciworkfl
 	allJobs = append(allJobs, createEnvJob)
 
 	// Per-component setup jobs (build-and-push for local, pull for OCI)
-	var setupJobIDs []string
-	setupJobIDs = append(setupJobIDs, "create-environment")
-
 	for _, comp := range components {
 		if comp.IsLocal {
 			jobID := fmt.Sprintf("build-%s", sanitizeJobComponent(comp.Name))
@@ -614,7 +611,6 @@ func buildEnvironmentWorkflow(env environment.Environment, components []ciworkfl
 				},
 			}
 			allJobs = append(allJobs, buildJob)
-			setupJobIDs = append(setupJobIDs, jobID)
 		} else if comp.Image != "" {
 			jobID := fmt.Sprintf("pull-%s", sanitizeJobComponent(comp.Name))
 			pullJob := ciworkflow.Job{
@@ -625,7 +621,6 @@ func buildEnvironmentWorkflow(env environment.Environment, components []ciworkfl
 				},
 			}
 			allJobs = append(allJobs, pullJob)
-			setupJobIDs = append(setupJobIDs, jobID)
 		}
 	}
 

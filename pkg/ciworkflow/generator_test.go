@@ -235,9 +235,9 @@ func TestMakeJobID_EnvironmentMode(t *testing.T) {
 
 func TestBuildVarFlags_Sorted(t *testing.T) {
 	vars := map[string]string{
-		"zebra":   "z",
-		"alpha":   "a",
-		"middle":  "m",
+		"zebra":  "z",
+		"alpha":  "a",
+		"middle": "m",
 	}
 
 	flags := buildVarFlags(vars)
