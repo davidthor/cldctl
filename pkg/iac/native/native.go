@@ -555,7 +555,6 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 		OnProgress:       onProgress,
 	}
 
-
 	// Check if container already exists and is running (from state)
 	if existing != nil {
 		if rs, ok := existing.Resources[name]; ok {
@@ -581,7 +580,7 @@ func (p *Plugin) applyDockerContainer(ctx context.Context, name string, props ma
 	// Also check by container name in case state was lost but container exists
 	// This handles orphaned containers from failed previous runs
 	if containerName != "" {
-			if existingID, _ := p.docker.GetContainerByName(ctx, containerName); existingID != "" {
+		if existingID, _ := p.docker.GetContainerByName(ctx, containerName); existingID != "" {
 			running, _ := p.docker.IsContainerRunning(ctx, existingID)
 			if running && p.docker.ContainerMatchesConfig(ctx, existingID, opts) {
 				// Existing container matches config, reuse it

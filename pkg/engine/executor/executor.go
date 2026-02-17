@@ -2421,300 +2421,300 @@ func (e *Executor) resolveComponentExpressions(node *graph.Node, envState *types
 			// Resolve the reference, then apply any pipe functions.
 			resolved := func() string {
 
-			resourceType := parts[0]
-			switch resourceType {
-			case "builds":
-				if len(parts) < 3 {
-					return debugUnresolved("malformed builds expression (expected builds.<name>.<output>)")
-				}
-				buildNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeDockerBuild, parts[1])
-				buildNode, ok := e.graph.Nodes[buildNodeID]
-				if !ok || buildNode.Outputs == nil {
-					return debugUnresolved(fmt.Sprintf("build %q not found or has no outputs", parts[1]))
-				}
-				if val, ok := buildNode.Outputs[parts[2]]; ok {
-					return fmt.Sprintf("%v", val)
-				}
-				return debugUnresolved(fmt.Sprintf("build %q has no output %q", parts[1], parts[2]))
-
-			case "databases":
-				if len(parts) < 3 {
-					return debugUnresolved("malformed databases expression (expected databases.<name>.<output>)")
-				}
-				dbName := parts[1]
-
-				// Resolve the parent database node (always needed as a fallback source).
-				dbNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeDatabase, dbName)
-				dbNode, dbOK := e.graph.Nodes[dbNodeID]
-
-				// If the datacenter defines a databaseUser hook, resolve through the
-				// interposed databaseUser node first for per-consumer credentials.
-				dbUserNodeID := fmt.Sprintf("%s/%s/%s--%s", node.Component, graph.NodeTypeDatabaseUser, dbName, node.Name)
-				depNode, ok := e.graph.Nodes[dbUserNodeID]
-				if !ok || depNode == nil || depNode.Outputs == nil {
-					// No databaseUser node — resolve directly from the database node
-					if !dbOK || dbNode.Outputs == nil {
-						return debugUnresolved(fmt.Sprintf("database %q not found or has no outputs", dbName))
+				resourceType := parts[0]
+				switch resourceType {
+				case "builds":
+					if len(parts) < 3 {
+						return debugUnresolved("malformed builds expression (expected builds.<name>.<output>)")
 					}
-					depNode = dbNode
-				}
-				// Handle read/write sub-objects: databases.<name>.read.<prop> / databases.<name>.write.<prop>
-				if (parts[2] == "read" || parts[2] == "write") && len(parts) >= 4 {
-					if nested, ok := depNode.Outputs[parts[2]]; ok {
-						if nestedMap, ok := nested.(map[string]interface{}); ok {
-							if val, ok := nestedMap[parts[3]]; ok {
-								return fmt.Sprintf("%v", val)
-							}
-						}
+					buildNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeDockerBuild, parts[1])
+					buildNode, ok := e.graph.Nodes[buildNodeID]
+					if !ok || buildNode.Outputs == nil {
+						return debugUnresolved(fmt.Sprintf("build %q not found or has no outputs", parts[1]))
 					}
-					// Fallback to top-level output when read/write is not explicitly set
-					if val, ok := depNode.Outputs[parts[3]]; ok {
+					if val, ok := buildNode.Outputs[parts[2]]; ok {
 						return fmt.Sprintf("%v", val)
 					}
-					// Per-field fallback: if the databaseUser node doesn't have this field,
-					// try the parent database node (e.g., host/port come from the database).
-					if depNode.Type == graph.NodeTypeDatabaseUser && dbOK && dbNode.Outputs != nil {
-						if nested, ok := dbNode.Outputs[parts[2]]; ok {
+					return debugUnresolved(fmt.Sprintf("build %q has no output %q", parts[1], parts[2]))
+
+				case "databases":
+					if len(parts) < 3 {
+						return debugUnresolved("malformed databases expression (expected databases.<name>.<output>)")
+					}
+					dbName := parts[1]
+
+					// Resolve the parent database node (always needed as a fallback source).
+					dbNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeDatabase, dbName)
+					dbNode, dbOK := e.graph.Nodes[dbNodeID]
+
+					// If the datacenter defines a databaseUser hook, resolve through the
+					// interposed databaseUser node first for per-consumer credentials.
+					dbUserNodeID := fmt.Sprintf("%s/%s/%s--%s", node.Component, graph.NodeTypeDatabaseUser, dbName, node.Name)
+					depNode, ok := e.graph.Nodes[dbUserNodeID]
+					if !ok || depNode == nil || depNode.Outputs == nil {
+						// No databaseUser node — resolve directly from the database node
+						if !dbOK || dbNode.Outputs == nil {
+							return debugUnresolved(fmt.Sprintf("database %q not found or has no outputs", dbName))
+						}
+						depNode = dbNode
+					}
+					// Handle read/write sub-objects: databases.<name>.read.<prop> / databases.<name>.write.<prop>
+					if (parts[2] == "read" || parts[2] == "write") && len(parts) >= 4 {
+						if nested, ok := depNode.Outputs[parts[2]]; ok {
 							if nestedMap, ok := nested.(map[string]interface{}); ok {
 								if val, ok := nestedMap[parts[3]]; ok {
 									return fmt.Sprintf("%v", val)
 								}
 							}
 						}
-						if val, ok := dbNode.Outputs[parts[3]]; ok {
+						// Fallback to top-level output when read/write is not explicitly set
+						if val, ok := depNode.Outputs[parts[3]]; ok {
 							return fmt.Sprintf("%v", val)
 						}
-					}
-					return debugUnresolved(fmt.Sprintf("database %q has no output %s.%s", dbName, parts[2], parts[3]))
-				}
-				if val, ok := depNode.Outputs[parts[2]]; ok {
-					return fmt.Sprintf("%v", val)
-				}
-				// Per-field fallback: if the databaseUser node doesn't have this field,
-				// try the parent database node (e.g., host/port come from the database
-				// while username/password/url come from the databaseUser hook).
-				if depNode.Type == graph.NodeTypeDatabaseUser && dbOK && dbNode.Outputs != nil {
-					if val, ok := dbNode.Outputs[parts[2]]; ok {
-						return fmt.Sprintf("%v", val)
-					}
-				}
-				return debugUnresolved(fmt.Sprintf("database %q has no output %q", dbName, parts[2]))
-
-			case "services":
-				if len(parts) < 3 {
-					return debugUnresolved("malformed services expression (expected services.<name>.<output>)")
-				}
-				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeService, parts[1])
-				depNode, ok := e.graph.Nodes[nodeID]
-				if !ok || depNode.Outputs == nil {
-					return debugUnresolved(fmt.Sprintf("service %q not found or has no outputs", parts[1]))
-				}
-				if val, ok := depNode.Outputs[parts[2]]; ok {
-					return fmt.Sprintf("%v", val)
-				}
-				return debugUnresolved(fmt.Sprintf("service %q has no output %q", parts[1], parts[2]))
-
-			case "buckets":
-				if len(parts) < 3 {
-					return debugUnresolved("malformed buckets expression (expected buckets.<name>.<output>)")
-				}
-				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeBucket, parts[1])
-				depNode, ok := e.graph.Nodes[nodeID]
-				if !ok || depNode.Outputs == nil {
-					return debugUnresolved(fmt.Sprintf("bucket %q not found or has no outputs", parts[1]))
-				}
-				if val, ok := depNode.Outputs[parts[2]]; ok {
-					return fmt.Sprintf("%v", val)
-				}
-				return debugUnresolved(fmt.Sprintf("bucket %q has no output %q", parts[1], parts[2]))
-
-			case "routes":
-				if len(parts) < 3 {
-					return debugUnresolved("malformed routes expression (expected routes.<name>.<output>)")
-				}
-				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeRoute, parts[1])
-				depNode, ok := e.graph.Nodes[nodeID]
-				if !ok || depNode.Outputs == nil {
-					return debugUnresolved(fmt.Sprintf("route %q not found or has no outputs", parts[1]))
-				}
-				if val, ok := depNode.Outputs[parts[2]]; ok {
-					return fmt.Sprintf("%v", val)
-				}
-				return debugUnresolved(fmt.Sprintf("route %q has no output %q", parts[1], parts[2]))
-
-			case "ports":
-				if len(parts) < 3 {
-					return debugUnresolved("malformed ports expression (expected ports.<name>.<output>)")
-				}
-				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypePort, parts[1])
-				depNode, ok := e.graph.Nodes[nodeID]
-				if !ok || depNode.Outputs == nil {
-					return debugUnresolved(fmt.Sprintf("port %q not found or has no outputs", parts[1]))
-				}
-				if val, ok := depNode.Outputs[parts[2]]; ok {
-					return fmt.Sprintf("%v", val)
-				}
-				return debugUnresolved(fmt.Sprintf("port %q has no output %q", parts[1], parts[2]))
-
-			case "observability":
-				// observability is a singleton per component
-				obsNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeObservability, "observability")
-				obsNode, ok := e.graph.Nodes[obsNodeID]
-				if !ok || obsNode.Outputs == nil {
-					return "" // No observability hook — resolve silently
-				}
-				prop := parts[1]
-				if val, ok := obsNode.Outputs[prop]; ok {
-					return fmt.Sprintf("%v", val)
-				}
-				return "" // Unknown observability property — resolve silently
-
-			case "variables":
-				// Resolve from component deployment variables
-				if len(parts) < 2 {
-					return debugUnresolved("malformed variables expression (expected variables.<name>)")
-				}
-				varName := parts[1]
-				if val, ok := compVars[varName]; ok {
-					return fmt.Sprintf("%v", val)
-				}
-				// Fallback: check if stored as variables_<name> in node inputs
-				if val, ok := node.Inputs["variables_"+varName]; ok {
-					return fmt.Sprintf("%v", val)
-				}
-				return debugUnresolved(fmt.Sprintf("variable %q not provided", varName))
-
-			case "encryptionKeys":
-				if len(parts) < 3 {
-					return debugUnresolved("malformed encryptionKeys expression (expected encryptionKeys.<name>.<output>)")
-				}
-				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeEncryptionKey, parts[1])
-				depNode, ok := e.graph.Nodes[nodeID]
-				if !ok || depNode.Outputs == nil {
-					return debugUnresolved(fmt.Sprintf("encryptionKey %q not found or has no outputs", parts[1]))
-				}
-				if val, ok := depNode.Outputs[parts[2]]; ok {
-					return fmt.Sprintf("%v", val)
-				}
-				return debugUnresolved(fmt.Sprintf("encryptionKey %q has no output %q", parts[1], parts[2]))
-
-			case "smtp":
-				if len(parts) < 3 {
-					return debugUnresolved("malformed smtp expression (expected smtp.<name>.<output>)")
-				}
-				nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeSMTP, parts[1])
-				depNode, ok := e.graph.Nodes[nodeID]
-				if !ok || depNode.Outputs == nil {
-					return debugUnresolved(fmt.Sprintf("smtp %q not found or has no outputs", parts[1]))
-				}
-				if val, ok := depNode.Outputs[parts[2]]; ok {
-					return fmt.Sprintf("%v", val)
-				}
-				return debugUnresolved(fmt.Sprintf("smtp %q has no output %q", parts[1], parts[2]))
-
-			case "dependencies":
-				// Resolve cross-component dependency outputs.
-				// Format: dependencies.<depAlias>.outputs.<outputKey>
-				// or:     dependencies.<depAlias>.<outputKey>
-				if len(parts) < 3 {
-					return debugUnresolved("malformed dependencies expression (expected dependencies.<name>.outputs.<key>)")
-				}
-				depAlias := parts[1]
-
-				// Resolve the dependency alias to the actual component name.
-				// E.g., "clerk" → "questra/clerk" via DependencyTargets.
-				targetComp := depAlias
-				if e.graph.DependencyTargets != nil {
-					if targets, ok := e.graph.DependencyTargets[node.Component]; ok {
-						if tc, ok := targets[depAlias]; ok {
-							targetComp = tc
-						}
-					}
-				}
-
-				// Determine the output key (handle both with and without "outputs" segment)
-				var outputKey string
-				if len(parts) >= 4 && parts[2] == "outputs" {
-					outputKey = parts[3]
-				} else {
-					outputKey = parts[2]
-				}
-
-				// Try 1: look up component-level outputs from the graph
-				// (for pass-through components with outputs but no resources,
-				// resolved during the current session)
-				if e.graph.ComponentOutputExprs != nil {
-					if outExprs, ok := e.graph.ComponentOutputExprs[targetComp]; ok {
-						if exprStr, ok := outExprs[outputKey]; ok {
-							// Resolve the output expression inline using the
-							// dependency component's variables
-							depVars := make(map[string]interface{})
-							if e.options.ComponentVariables != nil {
-								if vars, ok := e.options.ComponentVariables[targetComp]; ok {
-									depVars = vars
-								}
-							}
-							resolved := exprPattern.ReplaceAllStringFunc(exprStr, func(m string) string {
-								innerM := m[3 : len(m)-2]
-								innerM = strings.TrimSpace(innerM)
-								mParts := strings.Split(innerM, ".")
-								if len(mParts) >= 2 && mParts[0] == "variables" {
-									if v, ok := depVars[mParts[1]]; ok {
-										return fmt.Sprintf("%v", v)
+						// Per-field fallback: if the databaseUser node doesn't have this field,
+						// try the parent database node (e.g., host/port come from the database).
+						if depNode.Type == graph.NodeTypeDatabaseUser && dbOK && dbNode.Outputs != nil {
+							if nested, ok := dbNode.Outputs[parts[2]]; ok {
+								if nestedMap, ok := nested.(map[string]interface{}); ok {
+									if val, ok := nestedMap[parts[3]]; ok {
+										return fmt.Sprintf("%v", val)
 									}
 								}
-								return ""
-							})
-							return resolved
-						}
-					}
-				}
-
-				// Try 2: look up component-level outputs from environment state
-				// (for components deployed in a previous session)
-				if envState != nil {
-					if depComp, ok := envState.Components[targetComp]; ok {
-						// Check component-level outputs first
-						if depComp.Outputs != nil {
-							if val, ok := depComp.Outputs[outputKey]; ok {
+							}
+							if val, ok := dbNode.Outputs[parts[3]]; ok {
 								return fmt.Sprintf("%v", val)
 							}
 						}
-						// Fall back to resource-level outputs
-						for _, res := range depComp.Resources {
-							if res.Outputs != nil {
-								if val, ok := res.Outputs[outputKey]; ok {
+						return debugUnresolved(fmt.Sprintf("database %q has no output %s.%s", dbName, parts[2], parts[3]))
+					}
+					if val, ok := depNode.Outputs[parts[2]]; ok {
+						return fmt.Sprintf("%v", val)
+					}
+					// Per-field fallback: if the databaseUser node doesn't have this field,
+					// try the parent database node (e.g., host/port come from the database
+					// while username/password/url come from the databaseUser hook).
+					if depNode.Type == graph.NodeTypeDatabaseUser && dbOK && dbNode.Outputs != nil {
+						if val, ok := dbNode.Outputs[parts[2]]; ok {
+							return fmt.Sprintf("%v", val)
+						}
+					}
+					return debugUnresolved(fmt.Sprintf("database %q has no output %q", dbName, parts[2]))
+
+				case "services":
+					if len(parts) < 3 {
+						return debugUnresolved("malformed services expression (expected services.<name>.<output>)")
+					}
+					nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeService, parts[1])
+					depNode, ok := e.graph.Nodes[nodeID]
+					if !ok || depNode.Outputs == nil {
+						return debugUnresolved(fmt.Sprintf("service %q not found or has no outputs", parts[1]))
+					}
+					if val, ok := depNode.Outputs[parts[2]]; ok {
+						return fmt.Sprintf("%v", val)
+					}
+					return debugUnresolved(fmt.Sprintf("service %q has no output %q", parts[1], parts[2]))
+
+				case "buckets":
+					if len(parts) < 3 {
+						return debugUnresolved("malformed buckets expression (expected buckets.<name>.<output>)")
+					}
+					nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeBucket, parts[1])
+					depNode, ok := e.graph.Nodes[nodeID]
+					if !ok || depNode.Outputs == nil {
+						return debugUnresolved(fmt.Sprintf("bucket %q not found or has no outputs", parts[1]))
+					}
+					if val, ok := depNode.Outputs[parts[2]]; ok {
+						return fmt.Sprintf("%v", val)
+					}
+					return debugUnresolved(fmt.Sprintf("bucket %q has no output %q", parts[1], parts[2]))
+
+				case "routes":
+					if len(parts) < 3 {
+						return debugUnresolved("malformed routes expression (expected routes.<name>.<output>)")
+					}
+					nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeRoute, parts[1])
+					depNode, ok := e.graph.Nodes[nodeID]
+					if !ok || depNode.Outputs == nil {
+						return debugUnresolved(fmt.Sprintf("route %q not found or has no outputs", parts[1]))
+					}
+					if val, ok := depNode.Outputs[parts[2]]; ok {
+						return fmt.Sprintf("%v", val)
+					}
+					return debugUnresolved(fmt.Sprintf("route %q has no output %q", parts[1], parts[2]))
+
+				case "ports":
+					if len(parts) < 3 {
+						return debugUnresolved("malformed ports expression (expected ports.<name>.<output>)")
+					}
+					nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypePort, parts[1])
+					depNode, ok := e.graph.Nodes[nodeID]
+					if !ok || depNode.Outputs == nil {
+						return debugUnresolved(fmt.Sprintf("port %q not found or has no outputs", parts[1]))
+					}
+					if val, ok := depNode.Outputs[parts[2]]; ok {
+						return fmt.Sprintf("%v", val)
+					}
+					return debugUnresolved(fmt.Sprintf("port %q has no output %q", parts[1], parts[2]))
+
+				case "observability":
+					// observability is a singleton per component
+					obsNodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeObservability, "observability")
+					obsNode, ok := e.graph.Nodes[obsNodeID]
+					if !ok || obsNode.Outputs == nil {
+						return "" // No observability hook — resolve silently
+					}
+					prop := parts[1]
+					if val, ok := obsNode.Outputs[prop]; ok {
+						return fmt.Sprintf("%v", val)
+					}
+					return "" // Unknown observability property — resolve silently
+
+				case "variables":
+					// Resolve from component deployment variables
+					if len(parts) < 2 {
+						return debugUnresolved("malformed variables expression (expected variables.<name>)")
+					}
+					varName := parts[1]
+					if val, ok := compVars[varName]; ok {
+						return fmt.Sprintf("%v", val)
+					}
+					// Fallback: check if stored as variables_<name> in node inputs
+					if val, ok := node.Inputs["variables_"+varName]; ok {
+						return fmt.Sprintf("%v", val)
+					}
+					return debugUnresolved(fmt.Sprintf("variable %q not provided", varName))
+
+				case "encryptionKeys":
+					if len(parts) < 3 {
+						return debugUnresolved("malformed encryptionKeys expression (expected encryptionKeys.<name>.<output>)")
+					}
+					nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeEncryptionKey, parts[1])
+					depNode, ok := e.graph.Nodes[nodeID]
+					if !ok || depNode.Outputs == nil {
+						return debugUnresolved(fmt.Sprintf("encryptionKey %q not found or has no outputs", parts[1]))
+					}
+					if val, ok := depNode.Outputs[parts[2]]; ok {
+						return fmt.Sprintf("%v", val)
+					}
+					return debugUnresolved(fmt.Sprintf("encryptionKey %q has no output %q", parts[1], parts[2]))
+
+				case "smtp":
+					if len(parts) < 3 {
+						return debugUnresolved("malformed smtp expression (expected smtp.<name>.<output>)")
+					}
+					nodeID := fmt.Sprintf("%s/%s/%s", node.Component, graph.NodeTypeSMTP, parts[1])
+					depNode, ok := e.graph.Nodes[nodeID]
+					if !ok || depNode.Outputs == nil {
+						return debugUnresolved(fmt.Sprintf("smtp %q not found or has no outputs", parts[1]))
+					}
+					if val, ok := depNode.Outputs[parts[2]]; ok {
+						return fmt.Sprintf("%v", val)
+					}
+					return debugUnresolved(fmt.Sprintf("smtp %q has no output %q", parts[1], parts[2]))
+
+				case "dependencies":
+					// Resolve cross-component dependency outputs.
+					// Format: dependencies.<depAlias>.outputs.<outputKey>
+					// or:     dependencies.<depAlias>.<outputKey>
+					if len(parts) < 3 {
+						return debugUnresolved("malformed dependencies expression (expected dependencies.<name>.outputs.<key>)")
+					}
+					depAlias := parts[1]
+
+					// Resolve the dependency alias to the actual component name.
+					// E.g., "clerk" → "questra/clerk" via DependencyTargets.
+					targetComp := depAlias
+					if e.graph.DependencyTargets != nil {
+						if targets, ok := e.graph.DependencyTargets[node.Component]; ok {
+							if tc, ok := targets[depAlias]; ok {
+								targetComp = tc
+							}
+						}
+					}
+
+					// Determine the output key (handle both with and without "outputs" segment)
+					var outputKey string
+					if len(parts) >= 4 && parts[2] == "outputs" {
+						outputKey = parts[3]
+					} else {
+						outputKey = parts[2]
+					}
+
+					// Try 1: look up component-level outputs from the graph
+					// (for pass-through components with outputs but no resources,
+					// resolved during the current session)
+					if e.graph.ComponentOutputExprs != nil {
+						if outExprs, ok := e.graph.ComponentOutputExprs[targetComp]; ok {
+							if exprStr, ok := outExprs[outputKey]; ok {
+								// Resolve the output expression inline using the
+								// dependency component's variables
+								depVars := make(map[string]interface{})
+								if e.options.ComponentVariables != nil {
+									if vars, ok := e.options.ComponentVariables[targetComp]; ok {
+										depVars = vars
+									}
+								}
+								resolved := exprPattern.ReplaceAllStringFunc(exprStr, func(m string) string {
+									innerM := m[3 : len(m)-2]
+									innerM = strings.TrimSpace(innerM)
+									mParts := strings.Split(innerM, ".")
+									if len(mParts) >= 2 && mParts[0] == "variables" {
+										if v, ok := depVars[mParts[1]]; ok {
+											return fmt.Sprintf("%v", v)
+										}
+									}
+									return ""
+								})
+								return resolved
+							}
+						}
+					}
+
+					// Try 2: look up component-level outputs from environment state
+					// (for components deployed in a previous session)
+					if envState != nil {
+						if depComp, ok := envState.Components[targetComp]; ok {
+							// Check component-level outputs first
+							if depComp.Outputs != nil {
+								if val, ok := depComp.Outputs[outputKey]; ok {
 									return fmt.Sprintf("%v", val)
+								}
+							}
+							// Fall back to resource-level outputs
+							for _, res := range depComp.Resources {
+								if res.Outputs != nil {
+									if val, ok := res.Outputs[outputKey]; ok {
+										return fmt.Sprintf("%v", val)
+									}
 								}
 							}
 						}
 					}
-				}
 
-				// Try 3: look up resource-level outputs from graph nodes
-				// (for components deployed in the same session with resources)
-				for _, graphNode := range e.graph.Nodes {
-					if graphNode.Component == targetComp && graphNode.Outputs != nil {
-						if val, ok := graphNode.Outputs[outputKey]; ok {
-							return fmt.Sprintf("%v", val)
+					// Try 3: look up resource-level outputs from graph nodes
+					// (for components deployed in the same session with resources)
+					for _, graphNode := range e.graph.Nodes {
+						if graphNode.Component == targetComp && graphNode.Outputs != nil {
+							if val, ok := graphNode.Outputs[outputKey]; ok {
+								return fmt.Sprintf("%v", val)
+							}
 						}
 					}
-				}
 
-				// Dependency not found or doesn't expose this output key.
-				// For optional dependencies this is expected — resolve silently to "".
-				// For required dependencies emit a debug warning.
-				isOptional := e.graph.OptionalDependencies != nil &&
-					e.graph.OptionalDependencies[node.Component] != nil &&
-					e.graph.OptionalDependencies[node.Component][depAlias]
-				if isOptional {
-					return "" // Silently resolve optional dep to empty string
-				}
-				return debugUnresolved(fmt.Sprintf("dependency %q (component %q) output %q not available", depAlias, targetComp, outputKey))
+					// Dependency not found or doesn't expose this output key.
+					// For optional dependencies this is expected — resolve silently to "".
+					// For required dependencies emit a debug warning.
+					isOptional := e.graph.OptionalDependencies != nil &&
+						e.graph.OptionalDependencies[node.Component] != nil &&
+						e.graph.OptionalDependencies[node.Component][depAlias]
+					if isOptional {
+						return "" // Silently resolve optional dep to empty string
+					}
+					return debugUnresolved(fmt.Sprintf("dependency %q (component %q) output %q not available", depAlias, targetComp, outputKey))
 
-			default:
-				return debugUnresolved(fmt.Sprintf("unknown expression prefix %q", resourceType))
-			}
+				default:
+					return debugUnresolved(fmt.Sprintf("unknown expression prefix %q", resourceType))
+				}
 
 			}() // end resolved func
 			return applyPipeFuncs(resolved, pipeFuncs)
