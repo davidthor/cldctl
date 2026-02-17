@@ -1,0 +1,258 @@
+---
+title: "Workflow Generation"
+description: "Auto-generate CI/CD workflow files from component and environment definitions"
+---
+
+# CI/CD Workflow Generation
+
+The `cldctl generate` command converts your component and environment definitions into ready-to-use CI/CD workflow files. Each resource in the dependency graph becomes an independent CI job, maximizing parallelism while respecting dependency ordering.
+
+## Why Generate Workflows?
+
+Writing CI/CD pipelines by hand requires duplicating the dependency knowledge already encoded in your component definitions. As your application grows, keeping pipelines in sync with resource dependencies becomes error-prone.
+
+`cldctl generate` solves this by:
+- **Extracting the dependency graph** from your component or environment definition
+- **Generating parallel jobs** for independent resources (databases, caches, etc.)
+- **Sequencing dependent jobs** automatically (deployments wait for their databases)
+- **Handling variables** by mapping them to CI secrets and variables
+
+## Quick Start
+
+```bash
+# Generate a GitHub Actions workflow from a component
+cldctl generate component workflow ./my-app --type github-actions \
+  -o .github/workflows/deploy.yml
+
+# Generate from an environment (multi-component)
+cldctl generate environment workflow ./environment.yml --type github-actions \
+  -o .github/workflows/deploy.yml
+
+# Visualize the graph as a Mermaid diagram
+cldctl generate component workflow ./my-app --type mermaid
+
+# Export a PNG image of the graph
+cldctl generate component workflow ./my-app --type image -o graph.png
+```
+
+## Output Types
+
+| Type | Description | File Extension |
+|------|-------------|----------------|
+| `github-actions` | GitHub Actions workflow | `.yml` |
+| `gitlab-ci` | GitLab CI pipeline | `.yml` |
+| `circleci` | CircleCI configuration | `.yml` |
+| `mermaid` | Mermaid flowchart (text) | `.mmd` |
+| `image` | PNG image of the graph | `.png` |
+
+## Component vs Environment Mode
+
+### Component Mode
+
+Generates a workflow for a single component. Best for repositories that contain one application:
+
+```bash
+cldctl generate component workflow ./my-app --type github-actions
+```
+
+The generated workflow includes:
+- A **build-and-push** job that builds and pushes the component artifact
+- A **check-dependencies** job (if the component has `dependencies`) that verifies external dependencies are deployed
+- One **resource job** per graph node, each calling `cldctl apply`
+
+### Environment Mode
+
+Generates a workflow for an entire environment, combining all components into a unified graph. Best for monorepos or preview environment automation:
+
+```bash
+cldctl generate environment workflow ./environment.yml --type github-actions
+```
+
+The generated workflow includes:
+- A **build-and-push** job per component
+- Resource jobs across all components with cross-component dependencies resolved
+- A separate **teardown workflow** for cleaning up the environment
+
+## How Variables Work
+
+Variables declared in your component or environment configuration are mapped to CI platform constructs:
+
+### Sensitive Variables
+
+Sensitive variables (e.g., API keys, passwords) are referenced from CI secrets:
+
+| Platform | Reference |
+|----------|-----------|
+| GitHub Actions | `${{ secrets.API_KEY }}` |
+| GitLab CI | `$API_KEY` (CI/CD variable, masked) |
+| CircleCI | `$API_KEY` (environment variable) |
+
+### Non-Sensitive Variables
+
+Non-sensitive variables are referenced from CI variables:
+
+| Platform | Reference |
+|----------|-----------|
+| GitHub Actions | `${{ vars.LOG_LEVEL }}` |
+| GitLab CI | `$LOG_LEVEL` (CI/CD variable) |
+| CircleCI | `$LOG_LEVEL` (environment variable) |
+
+### Standard Variables
+
+Two standard variables are always included:
+
+| Variable | Purpose |
+|----------|---------|
+| `ENVIRONMENT` | Target environment name |
+| `DATACENTER` | Target datacenter name |
+
+Each `cldctl apply` step explicitly passes variables using `--var` flags:
+
+```yaml
+- name: Apply deployment/api
+  run: >-
+    cldctl apply $COMPONENT_IMAGE deployment/api
+    -e $ENVIRONMENT -d $DATACENTER
+    --var api_key=$API_KEY --var log_level=$LOG_LEVEL
+```
+
+## The `cldctl apply` Command
+
+Generated workflows use `cldctl apply` under the hood. This command applies changes to a **single resource node** in the dependency graph:
+
+```bash
+cldctl apply <component-ref> <node-path> -e <env> -d <datacenter> [--var key=value]
+```
+
+The `apply` command is datacenter-agnostic -- it delegates to whatever datacenter is configured for the target environment. This means your generated workflow files don't need to change when you switch datacenters.
+
+Implicit graph nodes (like `databaseUser` and `networkPolicy`) are automatically discovered and included when applying a node that requires them.
+
+## Keeping Workflows in Sync
+
+Generated workflows are static snapshots. When your component definition changes (new resources, updated dependencies), you need to regenerate the workflow.
+
+### Pre-Commit Hook (Recommended)
+
+Use a pre-commit hook to automatically regenerate on commit:
+
+```bash
+#!/bin/sh
+# .git/hooks/pre-commit
+
+# Regenerate if component file changed
+if git diff --cached --name-only | grep -q "cloud.component.yml"; then
+  cldctl generate component workflow . --type github-actions \
+    -o .github/workflows/deploy.yml
+  git add .github/workflows/deploy.yml
+fi
+```
+
+Or with [pre-commit](https://pre-commit.com/):
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: local
+    hooks:
+      - id: generate-workflow
+        name: Regenerate CI workflow
+        entry: bash -c 'cldctl generate component workflow . --type github-actions -o .github/workflows/deploy.yml && git add .github/workflows/deploy.yml'
+        language: system
+        files: 'cloud\.component\.yml$'
+        pass_filenames: false
+```
+
+### VS Code File Watcher
+
+Install the [Run on Save](https://marketplace.visualstudio.com/items?itemName=emeraldwalk.RunOnSave) extension and add to `.vscode/settings.json`:
+
+```json
+{
+  "emeraldwalk.runonsave": {
+    "commands": [
+      {
+        "match": "cloud\\.component\\.yml$",
+        "cmd": "cldctl generate component workflow . --type github-actions -o .github/workflows/deploy.yml"
+      }
+    ]
+  }
+}
+```
+
+### JetBrains File Watcher
+
+In **Settings > Tools > File Watchers**, create a new watcher:
+
+| Field | Value |
+|-------|-------|
+| File type | YAML |
+| Scope | File: `cloud.component.yml` |
+| Program | `cldctl` |
+| Arguments | `generate component workflow . --type github-actions -o .github/workflows/deploy.yml` |
+| Working directory | `$ProjectFileDir$` |
+
+### Terminal File Watcher
+
+Using `fswatch` (macOS) or `inotifywait` (Linux):
+
+```bash
+# macOS
+fswatch -o cloud.component.yml | xargs -n1 -I{} \
+  cldctl generate component workflow . --type github-actions \
+    -o .github/workflows/deploy.yml
+
+# Linux
+while inotifywait -e modify cloud.component.yml; do
+  cldctl generate component workflow . --type github-actions \
+    -o .github/workflows/deploy.yml
+done
+```
+
+Using `entr`:
+
+```bash
+echo cloud.component.yml | entr -p \
+  cldctl generate component workflow . --type github-actions \
+    -o .github/workflows/deploy.yml
+```
+
+## Visualization
+
+Use the `mermaid` and `image` output types to visualize your dependency graph for documentation or debugging:
+
+```bash
+# Text-based Mermaid diagram (paste into GitHub markdown, Notion, etc.)
+cldctl generate component workflow ./my-app --type mermaid
+
+# PNG image for documentation
+cldctl generate component workflow ./my-app --type image -o docs/workflow.png
+
+# Environment-level graph
+cldctl generate environment workflow ./environment.yml --type mermaid
+```
+
+The `mermaid` output can be pasted directly into GitHub Markdown files, Notion pages, or any tool that supports Mermaid rendering.
+
+The `image` output requires the [Mermaid CLI](https://github.com/mermaid-js/mermaid-cli):
+
+```bash
+npm install -g @mermaid-js/mermaid-cli
+```
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="generate component workflow" icon="terminal" href="/cli/generate/component-workflow">
+    CLI reference for component workflow generation
+  </Card>
+  <Card title="generate environment workflow" icon="terminal" href="/cli/generate/environment-workflow">
+    CLI reference for environment workflow generation
+  </Card>
+  <Card title="apply" icon="terminal" href="/cli/apply">
+    CLI reference for the single-node apply command
+  </Card>
+  <Card title="CI/CD Best Practices" icon="shield-check" href="/guides/ci-cd/best-practices">
+    State backends, secrets, and deployment strategies for CI
+  </Card>
+</CardGroup>

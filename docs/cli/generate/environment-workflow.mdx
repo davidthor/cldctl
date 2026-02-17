@@ -1,0 +1,160 @@
+---
+title: "generate environment workflow"
+description: "Generate a CI/CD workflow file from an environment definition"
+---
+
+# cldctl generate environment workflow
+
+Generate a CI/CD workflow file from an environment definition. All components in the environment are combined into a single unified dependency graph, producing a workflow that deploys the entire environment with proper cross-component ordering.
+
+<Note>
+Use `cldctl generate env workflow` as shorthand for `cldctl generate environment workflow`.
+</Note>
+
+## Synopsis
+
+```bash
+cldctl generate environment workflow <path> [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<path>` | Path to the environment configuration file (e.g., `environment.yml`) |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--type <type>` | Output type (required). One of: `github-actions`, `gitlab-ci`, `circleci`, `mermaid`, `image` |
+| `-o, --output <path>` | Write output to a file instead of stdout |
+
+## Output Types
+
+| Type | Description |
+|------|-------------|
+| `github-actions` | GitHub Actions workflow YAML |
+| `gitlab-ci` | GitLab CI pipeline YAML |
+| `circleci` | CircleCI configuration YAML |
+| `mermaid` | Mermaid flowchart diagram (text) |
+| `image` | PNG image of the workflow graph (requires `mmdc` CLI) |
+
+## Generated Workflow Structure
+
+Environment mode produces two workflows:
+
+### Deploy Workflow
+
+1. **build-and-push-\<component\>** -- One build job per component that has Docker builds
+2. **\<component\>--\<type\>-\<name\>** -- One job per resource node across all components, with cross-component dependencies resolved
+
+### Teardown Workflow
+
+A separate teardown workflow is also generated (for CI providers that support it). It executes `cldctl destroy` for each resource in reverse dependency order, making it ideal for cleaning up preview environments.
+
+For GitHub Actions, the teardown workflow is written to a separate file (the deploy output path with `-teardown` suffix). For GitLab CI and CircleCI, teardown jobs are included in the same file.
+
+### Cross-Component Dependencies
+
+When Component A depends on Component B (via the `dependencies` block), all of Component A's resource jobs will wait for Component B's resources to be deployed first. The unified graph ensures correct ordering across component boundaries.
+
+### Variable Handling
+
+Variables from the environment configuration and each component are merged:
+- Environment-level variables are declared as workflow-level environment variables
+- Component-level variables are passed through to each `cldctl apply` call
+- Sensitive variables reference CI secrets; non-sensitive variables reference CI variables
+
+## Examples
+
+### Generate GitHub Actions Workflow for Preview Environments
+
+```bash
+cldctl generate environment workflow ./envs/preview.yml --type github-actions \
+  -o .github/workflows/preview-deploy.yml
+```
+
+This generates two files:
+- `.github/workflows/preview-deploy.yml` -- Deploy workflow
+- `.github/workflows/preview-deploy-teardown.yml` -- Teardown workflow
+
+### Mermaid Diagram of the Environment Graph
+
+```bash
+cldctl generate environment workflow ./environment.yml --type mermaid
+```
+
+Produces a Mermaid diagram with nodes grouped by component:
+
+```
+---
+title: my-environment
+---
+flowchart TD
+    subgraph auth
+        auth--database-main["database/main"]
+        auth--deployment-api["deployment/api"]
+        auth--service-api["service/api"]
+    end
+
+    subgraph web-app
+        web-app--database-postgres["database/postgres"]
+        web-app--deployment-frontend["deployment/frontend"]
+    end
+
+    auth--database-main --> auth--deployment-api
+    auth--deployment-api --> auth--service-api
+    auth--service-api --> web-app--deployment-frontend
+    web-app--database-postgres --> web-app--deployment-frontend
+```
+
+### Generate PNG Image
+
+```bash
+cldctl generate environment workflow ./environment.yml --type image \
+  -o environment-graph.png
+```
+
+<Note>
+The `image` output type requires the [Mermaid CLI](https://github.com/mermaid-js/mermaid-cli) (`mmdc`) to be installed. Install it with `npm install -g @mermaid-js/mermaid-cli`.
+</Note>
+
+## Preview Environment Pattern
+
+A common use case for environment workflows is automating preview environments for pull requests:
+
+```yaml
+# environment.yml
+variables:
+  stripe_key:
+    required: true
+    sensitive: true
+
+components:
+  auth:
+    image: ghcr.io/myorg/auth:latest
+  web-app:
+    image: ghcr.io/myorg/web-app:latest
+    variables:
+      api_url: ${{ dependencies.auth.api_url }}
+```
+
+Generate the workflow:
+
+```bash
+cldctl generate environment workflow ./environment.yml --type github-actions \
+  -o .github/workflows/preview.yml
+```
+
+Then customize the generated workflow to trigger on pull request events, create the environment dynamically, and use the teardown workflow to clean up on PR close.
+
+## Auto-Regeneration
+
+Since generated workflows are static snapshots, they need to be regenerated whenever the environment or its component definitions change. See the [CI/CD Workflow Generation Guide](/guides/ci-cd/workflow-generation) for tips on setting up file watchers and pre-commit hooks.
+
+## See Also
+
+- [`cldctl generate component workflow`](/cli/generate/component-workflow) - Generate CI workflow from a single component
+- [`cldctl apply`](/cli/apply) - Apply a single resource node
+- [`cldctl deploy component`](/cli/deploy/component) - Deploy all resources in a component

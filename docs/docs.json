@@ -127,6 +127,7 @@
             "group": "CI/CD",
             "pages": [
               "guides/ci-cd/overview",
+              "guides/ci-cd/workflow-generation",
               "guides/ci-cd/github-actions",
               "guides/ci-cd/gitlab-ci",
               "guides/ci-cd/circleci",
@@ -312,6 +313,19 @@
               "cli/validate/component",
               "cli/validate/datacenter",
               "cli/validate/environment"
+            ]
+          },
+          {
+            "group": "apply",
+            "pages": [
+              "cli/apply"
+            ]
+          },
+          {
+            "group": "generate",
+            "pages": [
+              "cli/generate/component-workflow",
+              "cli/generate/environment-workflow"
             ]
           }
         ]

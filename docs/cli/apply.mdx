@@ -1,0 +1,96 @@
+---
+title: "apply"
+description: "Apply changes to a single resource node in a component"
+---
+
+# cldctl apply
+
+Apply changes to a single resource node in a component's dependency graph. This command is designed for CI/CD workflows where each graph node runs as an independent job.
+
+<Note>
+This command is primarily used by CI workflow files generated with `cldctl generate`. You typically don't need to run it manually.
+</Note>
+
+## Synopsis
+
+```bash
+cldctl apply <component-ref> <node-path> [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<component-ref>` | OCI image reference or local path to the component (e.g., `ghcr.io/myorg/myapp:v1.0.0` or `./my-app`) |
+| `<node-path>` | Path to the resource node in the format `<type>/<name>` (e.g., `database/main`, `deployment/api`) |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-e, --environment <name>` | Target environment (required) |
+| `-d, --datacenter <name>` | Target datacenter (resolved from flag, `CLDCTL_DATACENTER` env var, or CLI config default) |
+| `--var <key=value>` | Set a component variable (repeatable) |
+| `--backend <type>` | State backend type |
+| `--backend-config <key=value>` | Backend configuration |
+
+## Node Path Format
+
+The node path identifies a specific resource in the component's dependency graph. The format is `<type>/<name>` where type matches one of the component resource types:
+
+| Type | Description |
+|------|-------------|
+| `database` | Database resource |
+| `bucket` | Object storage bucket |
+| `encryptionKey` | Encryption key |
+| `smtp` | SMTP email provider |
+| `deployment` | Container or process deployment |
+| `function` | Serverless function |
+| `service` | Internal service endpoint |
+| `route` | External HTTP route |
+| `cronjob` | Scheduled job |
+| `task` | One-time task (e.g., migration) |
+| `dockerBuild` | Docker image build |
+| `observability` | OpenTelemetry configuration |
+| `port` | Dynamic port allocation |
+
+## Implicit Node Handling
+
+When applying a node that has implicit dependencies (like `databaseUser` or `networkPolicy` nodes created by datacenter hooks), `cldctl apply` automatically discovers and includes these nodes in the execution plan. You don't need to apply implicit nodes separately.
+
+For example, when applying `deployment/api` which references `databases.main`, if the datacenter defines a `databaseUser` hook, the apply command will automatically include the `main--api` databaseUser node.
+
+## Examples
+
+```bash
+# Apply a database resource
+cldctl apply ghcr.io/myorg/myapp:v1 database/main -e staging -d my-dc
+
+# Apply a deployment with variables
+cldctl apply ghcr.io/myorg/myapp:v1 deployment/api -e staging -d my-dc \
+  --var api_key=$API_KEY
+
+# Apply from a local path
+cldctl apply ./my-app dockerBuild/api -e staging -d my-dc
+
+# Apply a route
+cldctl apply ghcr.io/myorg/myapp:v1 route/public -e staging -d my-dc
+
+# Apply an observability node
+cldctl apply ghcr.io/myorg/myapp:v1 observability/observability -e staging
+```
+
+## How It Works
+
+1. **Graph Construction** -- The full dependency graph is built from the component definition, just as in `cldctl deploy component`
+2. **Node Selection** -- The target node is located in the graph, along with any implicit nodes it requires
+3. **Filtered Plan** -- An execution plan is created that only includes the target node (and its implicit dependencies)
+4. **Execution** -- The plan is executed against the datacenter, applying only the targeted resource
+
+This means the datacenter hook evaluation, expression resolution, and state management all work identically to a full deployment -- only the scope is narrowed to a single node.
+
+## See Also
+
+- [`cldctl generate component workflow`](/cli/generate/component-workflow) - Generate CI workflow from a component
+- [`cldctl generate environment workflow`](/cli/generate/environment-workflow) - Generate CI workflow from an environment
+- [`cldctl deploy component`](/cli/deploy/component) - Deploy all resources in a component

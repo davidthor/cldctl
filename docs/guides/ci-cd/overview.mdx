@@ -66,9 +66,28 @@ Choose your CI/CD platform for complete pipeline examples:
   </Card>
 </CardGroup>
 
+## Auto-Generated Workflows
+
+Instead of writing CI pipelines by hand, use `cldctl generate` to automatically create workflow files from your component or environment definitions:
+
+```bash
+# Generate a GitHub Actions workflow from a component
+cldctl generate component workflow ./my-app --type github-actions \
+  -o .github/workflows/deploy.yml
+
+# Generate from an environment (multi-component)
+cldctl generate environment workflow ./environment.yml --type github-actions \
+  -o .github/workflows/deploy.yml
+```
+
+Each resource in the dependency graph becomes an independent CI job, maximizing parallelism while respecting dependency ordering. See the [Workflow Generation Guide](/guides/ci-cd/workflow-generation) for full details.
+
 ## Next Steps
 
 <CardGroup cols={2}>
+  <Card title="Workflow Generation" icon="wand-magic-sparkles" href="/guides/ci-cd/workflow-generation">
+    Auto-generate CI workflows from component and environment definitions
+  </Card>
   <Card title="Best Practices" icon="shield-check" href="/guides/ci-cd/best-practices">
     State backends, secrets, and deployment strategies for CI
   </Card>

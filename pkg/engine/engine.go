@@ -398,6 +398,217 @@ func (e *Engine) Deploy(ctx context.Context, opts DeployOptions) (*DeployResult,
 	return result, nil
 }
 
+// ApplyNodeOptions configures a single-node apply operation.
+type ApplyNodeOptions struct {
+	// Environment name
+	Environment string
+
+	// Datacenter name
+	Datacenter string
+
+	// ComponentName is the component name (e.g., "my-app")
+	ComponentName string
+
+	// ComponentPath is the path to the component config file
+	ComponentPath string
+
+	// NodePath identifies the target node as "type/name" (e.g., "database/main")
+	NodePath string
+
+	// Variables to pass to the component
+	Variables map[string]interface{}
+
+	// Output writer for progress
+	Output io.Writer
+
+	// OnProgress is called when resource status changes
+	OnProgress executor.ProgressCallback
+}
+
+// ApplyNodeResult contains the result of a single-node apply.
+type ApplyNodeResult struct {
+	Success  bool
+	Duration time.Duration
+	NodeID   string
+	Action   string // "create", "update", "noop"
+}
+
+// ApplyNode executes a single logical resource node from a component's dependency graph.
+// This is used by CI workflows that distribute graph nodes across separate jobs.
+// The method builds the full graph (including implicit nodes), locates the target node,
+// resolves upstream dependency outputs from state, and executes only the target node
+// plus any implicit nodes that bridge to it.
+func (e *Engine) ApplyNode(ctx context.Context, opts ApplyNodeOptions) (*ApplyNodeResult, error) {
+	startTime := time.Now()
+
+	// Parse node path (type/name)
+	parts := strings.SplitN(opts.NodePath, "/", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid node path %q: expected format type/name (e.g., database/main)", opts.NodePath)
+	}
+	targetType := graph.NodeType(parts[0])
+	targetName := parts[1]
+
+	// Load datacenter configuration from state
+	dcState, err := e.stateManager.GetDatacenter(ctx, opts.Datacenter)
+	if err != nil {
+		return nil, fmt.Errorf("datacenter %q not found: %w", opts.Datacenter, err)
+	}
+
+	dcPath := dcState.Version
+	if dcPath == "" {
+		return nil, fmt.Errorf("datacenter %q has no source path configured", opts.Datacenter)
+	}
+
+	dc, err := e.loadDatacenterConfig(dcPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load datacenter configuration: %w", err)
+	}
+
+	// Build the full graph (including implicit nodes from datacenter hooks)
+	builder := graph.NewBuilder(opts.Environment, opts.Datacenter)
+
+	if env := dc.Environment(); env != nil {
+		if hooks := env.Hooks(); hooks != nil {
+			if dbUserHooks := hooks.DatabaseUser(); len(dbUserHooks) > 0 {
+				builder.SetDatabaseUserFilter(makeHookFilter(dbUserHooks))
+			}
+			if npHooks := hooks.NetworkPolicy(); len(npHooks) > 0 {
+				builder.SetNetworkPolicyFilter(makeHookFilter(npHooks))
+			}
+		}
+	}
+
+	comp, err := e.compLoader.Load(opts.ComponentPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load component: %w", err)
+	}
+
+	if err := builder.AddComponent(opts.ComponentName, comp); err != nil {
+		return nil, fmt.Errorf("failed to add component to graph: %w", err)
+	}
+
+	g := builder.Build()
+
+	// Find the target node
+	targetNodeID := fmt.Sprintf("%s/%s/%s", opts.ComponentName, targetType, targetName)
+	targetNode := g.GetNode(targetNodeID)
+	if targetNode == nil {
+		// List available nodes for a helpful error
+		var available []string
+		for _, n := range g.GetNodesByComponent(opts.ComponentName) {
+			available = append(available, fmt.Sprintf("%s/%s", n.Type, n.Name))
+		}
+		sort.Strings(available)
+		return nil, fmt.Errorf("node %q not found in component %q\n\nAvailable nodes:\n  %s",
+			opts.NodePath, opts.ComponentName, strings.Join(available, "\n  "))
+	}
+
+	// Collect nodes to execute: target + any unprovisioned implicit nodes
+	nodesToExecute := map[string]bool{targetNodeID: true}
+
+	// Check for implicit databaseUser nodes that bridge to the target
+	for _, n := range g.GetNodesByType(graph.NodeTypeDatabaseUser) {
+		if n.Component == opts.ComponentName {
+			for _, depID := range targetNode.DependsOn {
+				if depID == n.ID {
+					nodesToExecute[n.ID] = true
+				}
+			}
+		}
+	}
+
+	// Check for implicit networkPolicy nodes that depend on the target
+	for _, n := range g.GetNodesByType(graph.NodeTypeNetworkPolicy) {
+		if n.Component == opts.ComponentName {
+			for _, depID := range n.DependsOn {
+				if depID == targetNodeID {
+					nodesToExecute[n.ID] = true
+				}
+			}
+		}
+	}
+
+	// Filter the graph to only include nodes we want to execute.
+	// Create a filtered graph with just the target nodes.
+	filteredGraph := graph.NewGraph(opts.Environment, opts.Datacenter)
+	for nodeID := range nodesToExecute {
+		node := g.GetNode(nodeID)
+		if node != nil {
+			_ = filteredGraph.AddNode(node)
+		}
+	}
+
+	// Get current state
+	currentState, _ := e.stateManager.GetEnvironment(ctx, opts.Datacenter, opts.Environment)
+
+	// Create plan for the filtered graph
+	p := planner.NewPlanner()
+	plan, err := p.Plan(filteredGraph, currentState)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create plan: %w", err)
+	}
+
+	if plan.IsEmpty() {
+		return &ApplyNodeResult{
+			Success:  true,
+			Duration: time.Since(startTime),
+			NodeID:   targetNodeID,
+			Action:   "noop",
+		}, nil
+	}
+
+	// Build datacenter variables map
+	dcVars := make(map[string]interface{})
+	for k, v := range dcState.Variables {
+		dcVars[k] = v
+	}
+	for _, v := range dc.Variables() {
+		if _, ok := dcVars[v.Name()]; !ok && v.Default() != nil {
+			dcVars[v.Name()] = v.Default()
+		}
+	}
+
+	// Build component variables
+	compVars := map[string]map[string]interface{}{
+		opts.ComponentName: opts.Variables,
+	}
+
+	// Execute
+	execOpts := executor.Options{
+		Parallelism:         1,
+		Output:              opts.Output,
+		DryRun:              false,
+		StopOnError:         true,
+		OnProgress:          opts.OnProgress,
+		Datacenter:          dc,
+		DatacenterVariables: dcVars,
+		ComponentSources:    map[string]string{opts.ComponentName: opts.ComponentPath},
+		ComponentVariables:  compVars,
+	}
+
+	exec := executor.NewExecutor(e.stateManager, e.iacRegistry, execOpts)
+	execResult, err := exec.Execute(ctx, plan, filteredGraph)
+	if err != nil {
+		return nil, fmt.Errorf("execution failed: %w", err)
+	}
+
+	action := "update"
+	for _, change := range plan.Changes {
+		if change.Node != nil && change.Node.ID == targetNodeID {
+			action = string(change.Action)
+			break
+		}
+	}
+
+	return &ApplyNodeResult{
+		Success:  execResult.Success,
+		Duration: time.Since(startTime),
+		NodeID:   targetNodeID,
+		Action:   action,
+	}, nil
+}
+
 // loadDatacenterConfig loads a datacenter configuration from a path or OCI reference.
 // Resolution order: local filesystem path → unified artifact registry → remote OCI pull.
 // If the loaded datacenter uses image-based extends, the parent is resolved recursively

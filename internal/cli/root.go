@@ -100,6 +100,12 @@ func init() {
 	// Observability commands
 	rootCmd.AddCommand(newLogsCmd())
 	rootCmd.AddCommand(newObservabilityCmd())
+
+	// Single-node execution (for CI workflows)
+	rootCmd.AddCommand(newApplyCmd())
+
+	// CI workflow generation
+	rootCmd.AddCommand(newGenerateCmd())
 }
 
 func initConfig() {

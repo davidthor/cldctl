@@ -122,6 +122,22 @@ cldctl logs -e staging my-app/deployment/api      # A specific deployment
 cldctl logs -e staging -f                         # Stream logs in real-time
 cldctl logs -e staging --since 5m                 # Logs from the last 5 minutes
 cldctl observability dashboard -e staging         # Open observability UI in browser
+
+# Single-node apply (for CI workflows)
+cldctl apply ghcr.io/org/app:v1 database/main -e staging -d my-dc
+cldctl apply ghcr.io/org/app:v1 deployment/api -e staging -d my-dc --var api_key=$API_KEY
+cldctl apply ./my-app dockerBuild/api -e staging -d my-dc
+
+# CI workflow generation
+cldctl generate component workflow ./my-app --type github-actions
+cldctl generate component workflow ./my-app --type gitlab-ci -o .gitlab-ci.yml
+cldctl generate component workflow ./my-app --type circleci -o .circleci/config.yml
+cldctl generate component workflow ./my-app --type mermaid
+cldctl generate component workflow ./my-app --type image -o workflow.png
+cldctl generate environment workflow ./environment.yml --type github-actions
+cldctl generate environment workflow ./envs/preview.yml --type github-actions -o .github/workflows/preview.yml
+cldctl generate environment workflow ./environment.yml --type mermaid
+cldctl generate environment workflow ./environment.yml --type image -o preview-workflow.png
 ```
 
 Aliases: `comp` for `component`, `dc` for `datacenter`, `env` for `environment`, `ls` for `list`, `obs` for `observability`
@@ -164,6 +180,8 @@ When deploying a component that declares `dependencies` in its `cld.yml`, cldctl
 | `pkg/engine/` | Execution engine (graph, planner, executor, expressions, import) |
 | `pkg/iac/` | IaC plugins (native, pulumi, opentofu) |
 | `pkg/logs/` | Log query plugin system (querier interface, Loki adapter) |
+| `pkg/ciworkflow/` | CI workflow generation (GitHub Actions, GitLab CI, CircleCI) |
+| `pkg/graph/visual/` | Graph visualization (Mermaid, PNG image rendering) |
 | `pkg/errors/` | Structured error types |
 | `testdata/` | Test fixtures |
 | `examples/` | Example component configurations |

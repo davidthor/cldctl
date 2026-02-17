@@ -1,0 +1,179 @@
+---
+title: "generate component workflow"
+description: "Generate a CI/CD workflow file from a component definition"
+---
+
+# cldctl generate component workflow
+
+Generate a CI/CD workflow file from a component's dependency graph. Each resource in the component becomes an independent job with proper dependency ordering.
+
+<Note>
+Use `cldctl generate comp workflow` as shorthand for `cldctl generate component workflow`.
+</Note>
+
+## Synopsis
+
+```bash
+cldctl generate component workflow <path> [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<path>` | Path to the component directory containing a `cloud.component.yml` file |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--type <type>` | Output type (required). One of: `github-actions`, `gitlab-ci`, `circleci`, `mermaid`, `image` |
+| `-o, --output <path>` | Write output to a file instead of stdout |
+
+## Output Types
+
+| Type | Description |
+|------|-------------|
+| `github-actions` | GitHub Actions workflow YAML (`.github/workflows/deploy.yml`) |
+| `gitlab-ci` | GitLab CI pipeline YAML (`.gitlab-ci.yml`) |
+| `circleci` | CircleCI configuration YAML (`.circleci/config.yml`) |
+| `mermaid` | Mermaid flowchart diagram (text) |
+| `image` | PNG image of the workflow graph (requires `mmdc` CLI) |
+
+## Generated Workflow Structure
+
+The generated workflow includes these jobs in dependency order:
+
+1. **build-and-push** -- Checks out the code, builds the component OCI artifact, and pushes it to the registry
+2. **check-dependencies** -- Verifies that external dependencies (from the component's `dependencies` block) are already deployed in the target environment
+3. **Resource jobs** -- One job per resource node (e.g., `database-main`, `deployment-api`), each calling `cldctl apply` to provision that specific resource
+
+### Job Dependencies
+
+Jobs respect the component's dependency graph:
+- All resource jobs depend on `build-and-push`
+- If the component has dependencies, all resource jobs also depend on `check-dependencies`
+- Resource jobs that depend on other resources (e.g., a deployment that references a database) depend on the corresponding resource jobs
+
+### Variable Handling
+
+Variables declared in the component are added as workflow-level environment variables:
+- **Sensitive variables** reference CI secrets (e.g., `${{ secrets.API_KEY }}` in GitHub Actions)
+- **Non-sensitive variables** reference CI variables (e.g., `${{ vars.LOG_LEVEL }}` in GitHub Actions)
+
+Each `cldctl apply` step passes variables explicitly using `--var key=$ENV_VAR` flags.
+
+## Examples
+
+### Generate GitHub Actions Workflow
+
+```bash
+cldctl generate component workflow ./my-app --type github-actions \
+  -o .github/workflows/deploy.yml
+```
+
+Produces a workflow like:
+
+```yaml
+name: Deploy my-app
+on:
+  push:
+    branches: [main]
+
+env:
+  COMPONENT_IMAGE: $COMPONENT_IMAGE
+  DATACENTER: ${{ vars.CLDCTL_DATACENTER }}
+  ENVIRONMENT: ${{ vars.CLDCTL_ENVIRONMENT }}
+  API_KEY: ${{ secrets.API_KEY }}
+  LOG_LEVEL: ${{ vars.LOG_LEVEL }}
+
+jobs:
+  build-and-push:
+    name: Build & Push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cldctl
+        run: curl -sSL https://get.cldctl.dev | sh
+      - name: Build component
+        run: cldctl build component . -t $COMPONENT_IMAGE
+      - name: Push component
+        run: cldctl push component $COMPONENT_IMAGE
+
+  database-main:
+    name: Apply database/main
+    needs: [build-and-push]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install cldctl
+        run: curl -sSL https://get.cldctl.dev | sh
+      - name: Apply database/main
+        run: >-
+          cldctl apply $COMPONENT_IMAGE database/main
+          -e $ENVIRONMENT -d $DATACENTER
+          --var api_key=$API_KEY --var log_level=$LOG_LEVEL
+
+  deployment-api:
+    name: Apply deployment/api
+    needs: [build-and-push, database-main]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install cldctl
+        run: curl -sSL https://get.cldctl.dev | sh
+      - name: Apply deployment/api
+        run: >-
+          cldctl apply $COMPONENT_IMAGE deployment/api
+          -e $ENVIRONMENT -d $DATACENTER
+          --var api_key=$API_KEY --var log_level=$LOG_LEVEL
+```
+
+### Generate Mermaid Diagram
+
+```bash
+cldctl generate component workflow ./my-app --type mermaid
+```
+
+Produces:
+
+```
+---
+title: my-app
+---
+flowchart TD
+    database-main["database/main"]
+    deployment-api["deployment/api"]
+
+    database-main --> deployment-api
+```
+
+### Generate PNG Image
+
+```bash
+cldctl generate component workflow ./my-app --type image -o workflow.png
+```
+
+<Note>
+The `image` output type requires the [Mermaid CLI](https://github.com/mermaid-js/mermaid-cli) (`mmdc`) to be installed. Install it with `npm install -g @mermaid-js/mermaid-cli`.
+</Note>
+
+### Generate GitLab CI Pipeline
+
+```bash
+cldctl generate component workflow ./my-app --type gitlab-ci -o .gitlab-ci.yml
+```
+
+### Generate CircleCI Config
+
+```bash
+cldctl generate component workflow ./my-app --type circleci -o .circleci/config.yml
+```
+
+## Auto-Regeneration
+
+Since generated workflows are static snapshots of the dependency graph, they need to be regenerated whenever the component definition changes. See the [CI/CD Workflow Generation Guide](/guides/ci-cd/workflow-generation) for tips on setting up file watchers, pre-commit hooks, and IDE integrations.
+
+## See Also
+
+- [`cldctl generate environment workflow`](/cli/generate/environment-workflow) - Generate CI workflow from an environment
+- [`cldctl apply`](/cli/apply) - Apply a single resource node
+- [`cldctl deploy component`](/cli/deploy/component) - Deploy all resources in a component
